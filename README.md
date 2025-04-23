@@ -11,7 +11,7 @@ helper to assist Gemini by providing compiling error, running result, and
 debugging image uploading. This work cycle repeats for hundreds of times and 
 finally it begins to work.
 
-##Why##
+## Why ##
 A friend of mine wants to develop a special machine to record game playing of GO 
 by using webcam. So, we need to transfer image of board of GO into a state of game 
 playing in SGF format.
