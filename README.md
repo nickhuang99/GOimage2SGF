@@ -15,3 +15,10 @@ finally it begins to work.
 A friend of mine wants to develop a special machine to record game playing of GO 
 by using webcam. So, we need to transfer image of board of GO into a state of game 
 playing in SGF format.
+
+## How ##
+Compiling by *g++ -o gem.exe gem.cpp utility.cpp `pkg-config --cflags --libs opencv4*
+
+## What ##
+It depends on opencv, possibly opencv4/ubuntu22.04. Other platform maybe work out of 
+box, but not tested yet.
