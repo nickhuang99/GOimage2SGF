@@ -24,7 +24,7 @@ struct SGFHeader {
 
 // Structure to represent a single move, including captured stones
 struct Move {
-    int player; // 1 for Black, 2 for White
+    int player; // 1 for Black, 2 for White, 0 for remove
     int row;
     int col;
     vector<pair<int, int>> capturedStones; // Coordinates of captured stones
@@ -101,11 +101,36 @@ void parseSGFGame(const string& sgfContent, vector<pair<int, int>>& setupBlack, 
     // Helper function to convert SGF coordinates (e.g., "ab") to row and column
     auto sgfCoordToRowCol = [](const string& coord) -> pair<int, int> {
         if (coord.size() != 2 || !islower(coord[0]) || !islower(coord[1])) {
+            cout << "sgfCoordToRowCol: Invalid coordinate: " << coord << endl; // Debug
             return {-1, -1}; // Invalid coordinate
         }
         int col = coord[0] - 'a';
         int row = coord[1] - 'a';
+        cout << "sgfCoordToRowCol: coord=" << coord << ", row=" << row << ", col=" << col << endl; // Debug
         return {row, col};
+    };
+
+    // Helper function to parse a sequence of coordinates within a property (e.g., AB[ab][cd][ef])
+    auto parseCoordinateSequence = [&](const string& property, size_t startPos, vector<pair<int, int>>& coordinates) -> size_t {
+        size_t pos = startPos;
+        cout << "parseCoordinateSequence: property=" << property << ", startPos=" << startPos << endl; // Debug
+        while (pos < sgfContent.length() && sgfContent[pos] == '[') {
+            size_t end = pos + 3; //  [xy]  -> 4 bytes, pos + 3 is ']'
+            if (end >= sgfContent.length() || sgfContent[end] != ']') {
+                cout << "parseCoordinateSequence: Invalid coordinate format at pos=" << pos << endl; // Debug
+                return sgfContent.length(); // Invalid SGF, stop parsing
+            }
+            string coordStr = sgfContent.substr(pos + 1, 2);
+            cout << "parseCoordinateSequence: coordStr=" << coordStr << endl; // Debug
+            pair<int, int> coord = sgfCoordToRowCol(coordStr);
+            if (coord.first != -1 && coord.second != -1) {
+                coordinates.push_back(coord);
+                cout << "parseCoordinateSequence: Parsed coord=(" << coord.first << ", " << coord.second << ")" << endl; // Debug
+            }
+            pos = end + 1;
+        }
+        cout << "parseCoordinateSequence: returning pos=" << pos << endl; // Debug
+        return pos;
     };
 
     while (pos < sgfContent.length()) {
@@ -144,95 +169,72 @@ void parseSGFGame(const string& sgfContent, vector<pair<int, int>>& setupBlack, 
         }
 
         pos = minPos;
+        cout << "parseSGFGame: type=" << type << ", pos=" << pos << endl; // Debug
 
         switch (type) {
-            case 1: { // AB - Black setup stone
-                size_t start = pos + 4;
-                size_t end = sgfContent.find("]", start);
-                if (end != string::npos) {
-                    string coordStr = sgfContent.substr(start, end - start);
-                    pair<int, int> coord = sgfCoordToRowCol(coordStr);
-                    if (coord.first != -1 && coord.second != -1) {
-                        setupBlack.push_back(coord);
-                    }
-                    pos = end + 1;
-                } else {
-                    pos = sgfContent.length(); // Invalid SGF, stop parsing
+            case 1: { // AB - Black setup stones
+                size_t start = pos + 3; // Start parsing at ";AB["  //pos is 18, ";AB[" is 4 bytes, '[' is at 3.
+                cout << "parseSGFGame: AB start = " << start << endl;
+                size_t nextPos = parseCoordinateSequence("AB", start, setupBlack);
+                if (nextPos == sgfContent.length()) {
+                    pos = nextPos; // Error occurred in parsing, stop.
+                }
+                else{
+                     pos = nextPos;
                 }
                 break;
             }
-            case 2: { // AW - White setup stone
-                size_t start = pos + 4;
-                size_t end = sgfContent.find("]", start);
-                if (end != string::npos) {
-                    string coordStr = sgfContent.substr(start, end - start);
-                    pair<int, int> coord = sgfCoordToRowCol(coordStr);
-                    if (coord.first != -1 && coord.second != -1) {
-                        setupWhite.push_back(coord);
-                    }
-                    pos = end + 1;
-                } else {
-                    pos = sgfContent.length(); // Invalid SGF, stop parsing
+            case 2: { // AW - White setup stones
+                size_t start = pos + 3;
+                size_t nextPos = parseCoordinateSequence("AW", start, setupWhite);
+                 if (nextPos == sgfContent.length()) {
+                    pos = nextPos; // Error occurred in parsing, stop.
+                }
+                else{
+                     pos = nextPos;
                 }
                 break;
             }
             case 3: { // B - Black move
-                size_t start = pos + 3;
-                size_t end = sgfContent.find("]", start);
-                if (end != string::npos) {
-                    string coordStr = sgfContent.substr(start, end - start);
-                    pair<int, int> coord = sgfCoordToRowCol(coordStr);
-                    if (coord.first != -1 && coord.second != -1) {
-                        Move move;
-                        move.player = 1;
-                        move.row = coord.first;
-                        move.col = coord.second;
-                        // TODO: Parse captured stones if present (not in basic SGF)
-                        moves.push_back(move);
-                    }
-                    pos = end + 1;
-                } else {
-                    pos = sgfContent.length(); // Invalid SGF, stop parsing
+                size_t start = pos + 2;
+                vector<pair<int,int>> blackMoves;
+                size_t nextPos = parseCoordinateSequence("B", start, blackMoves);
+                if(blackMoves.size() > 0){
+                    Move move;
+                    move.player = 1;
+                    move.row = blackMoves[0].first;
+                    move.col = blackMoves[0].second;
+                    moves.push_back(move);
                 }
+                pos = nextPos;
                 break;
             }
             case 4: { // W - White move
-                size_t start = pos + 3;
-                size_t end = sgfContent.find("]", start);
-                if (end != string::npos) {
-                    string coordStr = sgfContent.substr(start, end - start);
-                    pair<int, int> coord = sgfCoordToRowCol(coordStr);
-                    if (coord.first != -1 && coord.second != -1) {
-                        Move move;
-                        move.player = 2;
-                        move.row = coord.first;
-                        move.col = coord.second;
-                        // TODO: Parse captured stones if present (not in basic SGF)
-                        moves.push_back(move);
-                    }
-                    pos = end + 1;
-                } else {
-                    pos = sgfContent.length(); // Invalid SGF, stop parsing
+                size_t start = pos + 2;
+                vector<pair<int,int>> whiteMoves;
+                size_t nextPos = parseCoordinateSequence("W", start, whiteMoves);
+                if(whiteMoves.size() > 0){
+                    Move move;
+                    move.player = 2;
+                    move.row = whiteMoves[0].first;
+                    move.col = whiteMoves[0].second;
+                    moves.push_back(move);
                 }
+                pos = nextPos;
                 break;
             }
              case 5: { // AE - Remove Stones.
-                size_t start = pos + 4;
-                size_t end = sgfContent.find("]", start);
-                if (end != string::npos) {
-                    string coordStr = sgfContent.substr(start, end - start);
-                    pair<int, int> coord = sgfCoordToRowCol(coordStr);
-                    if (coord.first != -1 && coord.second != -1) {
-                        Move move;
-                        move.player = 0;  // 0 indicates removal.
-                        move.row = coord.first;
-                        move.col = coord.second;
-                        moves.push_back(move);
-                    }
-                    pos = end + 1;
-                } else {
-                    pos = sgfContent.length(); // Invalid SGF, stop parsing.
+                size_t start = pos + 3;
+                vector<pair<int,int>> removedStones;
+                size_t nextPos = parseCoordinateSequence("AE", start, removedStones);
+                if(removedStones.size() > 0){
+                    Move move;
+                    move.player = 0;
+                    move.row = removedStones[0].first;
+                    move.col = removedStones[0].second;
+                    moves.push_back(move);
                 }
+                pos = nextPos;
                 break;
             }
             default:
@@ -337,6 +339,40 @@ void verifySGF(const Mat& image, const string& sgf_data, const vector<Point2f>& 
 
 
 
+void testParseSGFGame() {
+    string sgfContent = "(;GM[1]FF[4]SZ[19];AB[cb][gb][hb][ib][mb];AW[ma][jb][kb][nb][ob];B[ab];W[cd];AE[ef][fg])";
+    vector<pair<int, int>> setupBlack;
+    vector<pair<int, int>> setupWhite;
+    vector<Move> moves;
+
+    parseSGFGame(sgfContent, setupBlack, setupWhite, moves);
+
+    cout << "Black Setup Stones:" << endl;
+    for (const auto& stone : setupBlack) {
+        cout << "(" << stone.first << ", " << stone.second << ") ";
+    }
+    cout << endl;
+
+    cout << "White Setup Stones:" << endl;
+    for (const auto& stone : setupWhite) {
+        cout << "(" << stone.first << ", " << stone.second << ") ";
+    }
+    cout << endl;
+
+    cout << "Moves:" << endl;
+    for (const auto& move : moves) {
+        cout << "Player: " << move.player << ", Row: " << move.row << ", Col: " << move.col;
+        if (!move.capturedStones.empty()) {
+            cout << "  Captured: ";
+            for (const auto& captured : move.capturedStones) {
+                cout << "(" << captured.first << ", " << captured.second << ") ";
+            }
+        }
+        cout << endl;
+    }
+}
+
+
 int main() {
     // 1. Load the Go board image.
     Mat image_bgr = imread("go_board.jpg"); // Hardcoded file name
@@ -353,13 +389,13 @@ int main() {
     vector<double> horizontal_lines = grid_lines.first;
     vector<double> vertical_lines = grid_lines.second;
     vector<Point2f> intersection_points = findIntersections(horizontal_lines, vertical_lines);
-    Mat previous_board_state = board_state.clone();
+    //Mat previous_board_state = board_state.clone();
 
 
     // 3. Generate the SGF for the current board state.
     string generated_sgf = generateSGF(board_state, intersection_points);
     cout << "Generated SGF:\n" << generated_sgf << endl;
-
+    
     // 4. Load the "correct" SGF from the file.
     // ifstream correct_sgf_file("ScreenToSGF.sgf.txt");
     // if (!correct_sgf_file.is_open()) {
@@ -367,7 +403,7 @@ int main() {
     //     return -1;
     // }
     // stringstream correct_sgf_stream;
-    // correct_sgf_stream << correct_sgf_file.rdbuf();
+    // stringstream correct_sgf_stream << correct_sgf_file.rdbuf();
     // string correct_sgf = correct_sgf_stream.str();
     // correct_sgf_file.close();
 
@@ -387,6 +423,7 @@ int main() {
 
     // 6. Verify the SGF data.
     verifySGF(image_bgr, generated_sgf, intersection_points);
+    //testParseSGFGame();
 
     return 0;
 }
