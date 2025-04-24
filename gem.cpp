@@ -72,7 +72,7 @@ string determineSGFMove(const Mat& before_board_state, const Mat& next_board_sta
 }
 
 // Function to generate SGF for the current board state
-string generateSGF(const Mat& board_state) {
+string generateSGF(const Mat& board_state,  const vector<Point2f>& intersections) {
     ostringstream sgf;
     sgf << "(;FF[4]GM[1]SZ[19]AP[GoBoardAnalyzer:1.0]\n"; // SGF Header
 
@@ -82,9 +82,9 @@ string generateSGF(const Mat& board_state) {
             char sgf_col = 'a' + col;
             char sgf_row = 'a' + row;
             if (stone == 1) { // Black stone
-                sgf << "B[" << sgf_col << sgf_row << "]";
+                sgf << ";B[" << sgf_col << sgf_row << "]"; // Added semicolon
             } else if (stone == 2) { // White stone
-                sgf << "W[" << sgf_col << sgf_row << "]";
+                sgf << ";W[" << sgf_col << sgf_row << "]"; // Added semicolon
             }
             // 0 (empty) is skipped
         }
@@ -94,7 +94,7 @@ string generateSGF(const Mat& board_state) {
 }
 
 // Function to visually verify SGF data on the original image
-void verifySGF(const Mat& image, const string& sgf_data) {
+void verifySGF(const Mat& image, const string& sgf_data, const vector<Point2f>& intersections) {
     Mat verification_image = image.clone(); // Create a copy to draw on
 
     // Parse the SGF data to extract stone positions.  A very basic parser is implemented.
@@ -120,16 +120,24 @@ void verifySGF(const Mat& image, const string& sgf_data) {
             string coord = sgf_data.substr(black_pos + 3, 2);
             int col = coord[0] - 'a';
             int row = coord[1] - 'a';
-            if (row >= 0 && row < 19 && col >= 0 && col < 19)
-                putText(verification_image, "B", Point(col * 35 + 10, row * 35 + 20), FONT_HERSHEY_SIMPLEX, 0.5, Scalar(0, 0, 255), 2); // Mark with 'B'
+            if (row >= 0 && row < 19 && col >= 0 && col < 19) {
+                Point2f pt = intersections[row * 19 + col];  // Use intersection points
+                //Try draw a circle instead of text.
+                circle(verification_image, pt, 10, Scalar(0, 0, 255), 2);
+                 cout << "Black stone at (" << col << ", " << row << ") - Pixel: (" << pt.x << ", " << pt.y << ")" << endl;
+            }
             pos = black_pos + 5; // Move past this 'B[..]'
         } else {
             // White stone
             string coord = sgf_data.substr(white_pos + 3, 2);
             int col = coord[0] - 'a';
             int row = coord[1] - 'a';
-            if (row >= 0 && row < 19 && col >= 0 && col < 19)
-                putText(verification_image, "W", Point(col * 35 + 10, row * 35 + 20), FONT_HERSHEY_SIMPLEX, 0.5, Scalar(255, 0, 0), 2); // Mark with 'W'
+            if (row >= 0 && row < 19 && col >= 0 && col < 19) {
+                Point2f pt = intersections[row * 19 + col]; // Use intersection points
+                 //Try draw a circle instead of text.
+                circle(verification_image, pt, 10, Scalar(255, 0, 0), 2);
+                cout << "White stone at (" << col << ", " << row << ") - Pixel: (" << pt.x << ", " << pt.y << ")" << endl;
+            }
             pos = white_pos + 5; // Move past this 'W[..]'
         }
     }
@@ -150,9 +158,13 @@ int main() {
     Mat board_state;
     Mat board_with_stones;
     processGoBoard(image_bgr, board_state, board_with_stones);
+     pair<vector<double>, vector<double>> grid_lines = detectUniformGrid(image_bgr);
+    vector<double> horizontal_lines = grid_lines.first;
+    vector<double> vertical_lines = grid_lines.second;
+    vector<Point2f> intersection_points = findIntersections(horizontal_lines, vertical_lines);
 
     // 3. Generate the SGF for the current board state.
-    string initial_sgf = generateSGF(board_state);
+    string initial_sgf = generateSGF(board_state, intersection_points);
 
     // 4. Write the SGF to a file.
     ofstream sgf_file("current_board_state.sgf"); // Changed filename
@@ -166,7 +178,7 @@ int main() {
     cout << "SGF file (current_board_state.sgf) generated.\n";
 
     // 5. Verify the SGF data.
-    verifySGF(image_bgr, initial_sgf);
+    verifySGF(image_bgr, initial_sgf, intersection_points);
 
     return 0;
 }
