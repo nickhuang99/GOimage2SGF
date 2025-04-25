@@ -92,7 +92,7 @@ pair<vector<double>, vector<double>> detectUniformGrid(const Mat &image) {
     return clustered_values;
   };
 
-  double cluster_threshold = 15.0;
+  double cluster_threshold = 5.0;
   vector<double> clustered_horizontal_y =
       cluster_and_average_lines(horizontal_lines_raw, cluster_threshold);
   vector<double> clustered_vertical_x =
@@ -165,6 +165,9 @@ pair<vector<double>, vector<double>> detectUniformGrid(const Mat &image) {
     }
 
     if (average_distance <= 0) {
+      if (bDebug) {
+        cout << "average_distance is negative:" << average_distance << endl;
+      }
       return values; // Fallback
     }
 
@@ -207,24 +210,36 @@ pair<vector<double>, vector<double>> detectUniformGrid(const Mat &image) {
       uniform_lines.push_back(values[best_start_index + i]);
     }
     sort(uniform_lines.begin(), uniform_lines.end());
-
-    for (int i = 0; i < expand_needed; ++i) {
-      if (i % 2 == 0 && uniform_lines.front() - average_distance >=
-                            lo_boundary - tolerance * average_distance) {
+    int i = 0;
+    while (i < expand_needed) {
+      if (uniform_lines.front() - average_distance >=
+          lo_boundary - tolerance * average_distance) {
         uniform_lines.insert(uniform_lines.begin(),
                              uniform_lines.front() - average_distance);
-      } else if (uniform_lines.back() + average_distance <=
-                 hi_boundary + tolerance * average_distance) {
+        i++;
+        if (i < expand_needed)
+          break;
+      }
+      if (uniform_lines.back() + average_distance <=
+          hi_boundary + tolerance * average_distance) {
         uniform_lines.push_back(uniform_lines.back() + average_distance);
+        i++;
+        if (i < expand_needed)
+          break;
       }
     }
     sort(uniform_lines.begin(), uniform_lines.end());
-
+    if (bDebug) {
+      cout << "uniform_lines:" << uniform_lines.size() << endl;
+    }
     if (uniform_lines.size() > target_count) {
       size_t start = (uniform_lines.size() - target_count) / 2;
       uniform_lines.assign(uniform_lines.begin() + start,
                            uniform_lines.begin() + start + target_count);
     } else if (uniform_lines.size() < target_count && !values.empty()) {
+      if (bDebug) {
+        cout << "uniform_lines is less than target: " << uniform_lines.size() << endl;
+      }
       return values; // Fallback
     }
 
