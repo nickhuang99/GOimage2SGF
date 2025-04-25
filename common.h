@@ -35,7 +35,8 @@ std::vector<cv::Point2f>
 findIntersections(const std::vector<double> &horizontal_lines,
                   const std::vector<double> &vertical_lines);
 void processGoBoard(const cv::Mat &image_bgr, cv::Mat &board_state,
-                    cv::Mat &board_with_stones);
+                    cv::Mat &board_with_stones,
+                    std::vector<cv::Point2f> &intersection_points);
 std::string generateSGF(const cv::Mat &board_state,
                         const std::vector<cv::Point2f> &intersections);
 std::string determineSGFMove(const cv::Mat &before_board_state,
