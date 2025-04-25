@@ -1,5 +1,6 @@
 #include "common.h"
 #include <algorithm>
+#include <cassert>
 #include <cmath>
 #include <fstream>
 #include <iomanip>
@@ -8,6 +9,7 @@
 #include <map>
 #include <numeric>
 #include <opencv2/opencv.hpp>
+#include <ostream>
 #include <regex> // Include the regex library
 #include <set>
 #include <vector>
@@ -32,7 +34,8 @@ pair<vector<double>, vector<double>> detectUniformGrid(const Mat &image) {
   vector<Vec4i> line_segments;
   HoughLinesP(edges, line_segments, 1, CV_PI / 180, 50, 30, 10);
   if (bDebug) {
-    cout << "Number of line segments detected: " << line_segments.size() << endl;
+    cout << "Number of line segments detected: " << line_segments.size()
+         << endl;
   }
 
   vector<Line> horizontal_lines_raw, vertical_lines_raw;
@@ -54,7 +57,8 @@ pair<vector<double>, vector<double>> detectUniformGrid(const Mat &image) {
   sort(horizontal_lines_raw.begin(), horizontal_lines_raw.end(), compareLines);
   sort(vertical_lines_raw.begin(), vertical_lines_raw.end(), compareLines);
   if (bDebug) {
-    cout << "Raw horizontal lines count: " << horizontal_lines_raw.size() << endl;
+    cout << "Raw horizontal lines count: " << horizontal_lines_raw.size()
+         << endl;
     cout << "Raw vertical lines count: " << vertical_lines_raw.size() << endl;
   }
 
@@ -94,193 +98,155 @@ pair<vector<double>, vector<double>> detectUniformGrid(const Mat &image) {
   vector<double> clustered_vertical_x =
       cluster_and_average_lines(vertical_lines_raw, cluster_threshold);
   if (bDebug) {
-    cout << "Clustered horizontal lines count: " << clustered_horizontal_y.size() << endl;
-    cout << "Clustered vertical lines count: " << clustered_vertical_x.size() << endl;
+    cout << "Clustered horizontal lines count: "
+         << clustered_horizontal_y.size() << endl;
+    cout << "Clustered vertical lines count: " << clustered_vertical_x.size()
+         << endl;
     cout << "Clustered horizontal lines (y): ";
-    for (double y : clustered_horizontal_y) cout << y << " ";
+    for (double y : clustered_horizontal_y)
+      cout << y << " ";
     cout << endl;
     cout << "Clustered vertical lines (x): ";
-    for (double x : clustered_vertical_x) cout << x << " ";
+    for (double x : clustered_vertical_x)
+      cout << x << " ";
     cout << endl;
   }
 
   int imageHeight = image.rows;
   int imageWidth = image.cols;
 
-  auto find_uniform_spacing =
-      [imageHeight](vector<double> values, int target_count, double tolerance) {
-        if (bDebug) {
-          cout << "\n--- find_uniform_spacing (Horizontal) ---" << endl;
-          cout << "Input values size: " << values.size() << ", Target count: " << target_count << ", Tolerance: " << tolerance << endl;
-          cout << "Input values: ";
-          for (double v : values) cout << v << " ";
-          cout << endl;
-        }
-        if (target_count != 19 || values.size() < 5) {
-          if (bDebug) cout << "Not enough horizontal lines to estimate spacing." << endl;
-          return values; // Need enough lines to estimate spacing
-        }
-
-        sort(values.begin(), values.end());
-        int center_start = values.size() / 3;
-        int center_end = 2 * values.size() / 3;
-        vector<double> central_lines;
-        for (int i = center_start; i < center_end; ++i) {
-          central_lines.push_back(values[i]);
-        }
-        if (bDebug) {
-          cout << "Central horizontal lines size: " << central_lines.size() << endl;
-          cout << "Central horizontal lines: ";
-          for (double v : central_lines) cout << v << " ";
-          cout << endl;
-        }
-        if (central_lines.size() < 2) {
-          if (bDebug) cout << "Not enough central horizontal lines to estimate spacing." << endl;
-          return values;
-        }
-
-        double total_spacing = 0;
-        for (size_t i = 1; i < central_lines.size(); ++i) {
-          total_spacing += central_lines[i] - central_lines[i - 1];
-        }
-        double estimated_spacing = total_spacing / (central_lines.size() - 1);
-        if (bDebug) {
-          cout << "Estimated horizontal spacing: " << estimated_spacing << endl;
-        }
-
-        vector<double> extrapolated_lines;
-        double middle_line = central_lines[central_lines.size() / 2];
-        int middle_index = 9; // For 19 lines, the middle is at index 9
-
-        for (int i = 0; i < target_count; ++i) {
-          extrapolated_lines.push_back(middle_line +
-                                       (i - middle_index) * estimated_spacing);
-        }
-        sort(extrapolated_lines.begin(), extrapolated_lines.end());
-        if (bDebug) {
-          cout << "Extrapolated horizontal lines: ";
-          for (double v : extrapolated_lines) cout << v << " ";
-          cout << endl;
-        }
-
-        vector<double> final_lines;
-        vector<bool> used(values.size(), false);
-        for (double extrapolated_y : extrapolated_lines) {
-          double min_diff = 1e9;
-          int best_index = -1;
-          for (size_t i = 0; i < values.size(); ++i) {
-            if (!used[i]) {
-              double diff = abs(values[i] - extrapolated_y);
-              if (diff < min_diff) {
-                min_diff = diff;
-                best_index = i;
-              }
-            }
-          }
-          if (best_index != -1) {
-            final_lines.push_back(values[best_index]);
-            used[best_index] = true;
-          }
-        }
-        sort(final_lines.begin(), final_lines.end());
-        if (bDebug) {
-          cout << "Final uniform horizontal lines: ";
-          for (double v : final_lines) cout << v << " ";
-          cout << endl;
-        }
-        return final_lines;
-      };
-
-  auto find_uniform_spacing_vertical = [imageWidth](vector<double> values,
-                                          int target_count, double tolerance) {
-    if (bDebug) {
-      cout << "\n--- find_uniform_spacing_vertical (Vertical) ---" << endl;
-      cout << "Input values size: " << values.size() << ", Target count: " << target_count << ", Tolerance: " << tolerance << endl;
-      cout << "Input values: ";
-      for (double v : values) cout << v << " ";
-      cout << endl;
+  auto find_uniform_grid_lines = [](vector<double> values, int target_count,
+                                    double tolerance) {
+    if (values.size() < target_count / 2) {
+      return vector<double>{}; // Return empty if too few lines
     }
-    vector<double> best_group;
-    double min_deviation = 1e9;
-
     sort(values.begin(), values.end());
 
-    for (size_t i = 0; i <= values.size() - target_count; ++i) {
-      if (i + target_count > values.size()) break; // Prevent out-of-bounds access
-      vector<double> current_group;
-      for (int k = 0; k < target_count; ++k) {
-        current_group.push_back(values[i + k]);
+    if (bDebug && !values.empty()) {
+      cout << "Sorted clustered values of size: {" << values.size() << "}:\n";
+      for (size_t i = 0; i < values.size() - 1; ++i) {
+        cout << "value[" << i << "]: " << values[i]
+             << " distance: " << values[i + 1] - values[i] << endl;
       }
-      if (bDebug && current_group.size() == target_count) {
-        cout << "Considering vertical group: ";
-        for (double v : current_group) cout << v << " ";
-        cout << endl;
+      cout << "value: " << values[values.size() - 1] << endl;
+    }
+
+    if (values.size() < 2) {
+      return values;
+    }
+
+    vector<double> distances;
+    for (size_t i = 0; i < values.size() - 1; ++i) {
+      distances.push_back(values[i + 1] - values[i]);
+    }
+
+    vector<double> sorted_distances = distances;
+    sort(sorted_distances.begin(), sorted_distances.end());
+
+    double average_distance = 0;
+    if (!sorted_distances.empty()) {
+      size_t i = 0;
+      size_t j = sorted_distances.size() - 1;
+      while (j - i > target_count / 2 && i < j &&
+             abs(sorted_distances[i] - sorted_distances[j]) /
+                     sorted_distances[i] >
+                 tolerance) {
+        j--;
+        i++;
       }
 
-      if (current_group.size() < 2)
-        continue;
-
-      double initial_spacing = current_group[1] - current_group[0];
-      double max_deviation = 0;
-      for (size_t j = 2; j < current_group.size(); ++j) {
-        max_deviation =
-            max(max_deviation, abs((current_group[j] - current_group[j - 1]) -
-                                   initial_spacing));
-      }
-      if (bDebug && current_group.size() == target_count) {
-        cout << "  Initial vertical spacing: " << initial_spacing << endl;
-        cout << "  Max vertical deviation: " << max_deviation << endl;
-        cout << "  Tolerance * initial spacing: " << tolerance * initial_spacing << endl;
-        cout << "  2 * Tolerance * initial spacing: " << 2 * tolerance * initial_spacing << endl;
-      }
-
-      if (max_deviation <= tolerance * initial_spacing) {
-        if (current_group.size() == target_count &&
-            max_deviation < min_deviation) {
-          min_deviation = max_deviation;
-          best_group = current_group;
-          if (bDebug) cout << "  Found a better matching vertical group (strict)." << endl;
+      if (i <= j) {
+        double sum_middle_distances = 0;
+        for (size_t k = i; k <= j; ++k) {
+          sum_middle_distances += sorted_distances[k];
         }
-      } else if (best_group.empty() &&
-                 current_group.size() >= target_count / 2 &&
-                 max_deviation <= 2 * tolerance * initial_spacing) {
-        best_group = current_group;
-        if (bDebug) cout << "  Found a potential vertical group (relaxed)." << endl;
+        average_distance = sum_middle_distances / (j - i + 1);
       }
     }
-    if (!best_group.empty()) {
-      sort(best_group.begin(), best_group.end());
-      if (bDebug) {
-        cout << "Final uniform vertical lines (best group): ";
-        for (double v : best_group) cout << v << " ";
-        cout << endl;
+
+    if (average_distance <= 0) {
+      return values; // Fallback
+    }
+
+    int best_continuous_count = 0;
+    int best_start_index = -1;
+
+    for (size_t i = 0; i < distances.size(); ++i) {
+      int current_continuous_count = 0;
+      for (size_t j = i; j < distances.size(); ++j) {
+        if (abs(distances[j] - average_distance) / average_distance <=
+            tolerance) {
+          current_continuous_count++;
+        } else {
+          break;
+        }
       }
-      return best_group;
+      if (current_continuous_count >= target_count / 2.0 &&
+          current_continuous_count > best_continuous_count) {
+        best_continuous_count = current_continuous_count;
+        best_start_index = i;
+      }
     }
     if (bDebug) {
-      cout << "Falling back to clustered vertical lines." << endl;
-      cout << "Clustered vertical lines (fallback): ";
-      for (double v : values) cout << v << " ";
-      cout << endl;
+      cout << "best_start_index: " << best_start_index << endl
+           << "best_continuous_count: " << best_continuous_count << endl;
     }
-    return values; // Fallback
-  };
+    if (best_start_index == -1) {
+      return values; // Could not find a good continuous group with average
+                     // distance
+    }
 
+    vector<double> uniform_lines;
+    double lowest_val = values[best_start_index];
+    double highest_val = values[best_start_index + best_continuous_count - 1];
+    double lo_boundary = values.front();
+    double hi_boundary = values.back();
+    int expand_needed = target_count - best_continuous_count;
+
+    for (int i = 0; i < best_continuous_count; ++i) {
+      uniform_lines.push_back(values[best_start_index + i]);
+    }
+    sort(uniform_lines.begin(), uniform_lines.end());
+
+    for (int i = 0; i < expand_needed; ++i) {
+      if (i % 2 == 0 && uniform_lines.front() - average_distance >=
+                            lo_boundary - tolerance * average_distance) {
+        uniform_lines.insert(uniform_lines.begin(),
+                             uniform_lines.front() - average_distance);
+      } else if (uniform_lines.back() + average_distance <=
+                 hi_boundary + tolerance * average_distance) {
+        uniform_lines.push_back(uniform_lines.back() + average_distance);
+      }
+    }
+    sort(uniform_lines.begin(), uniform_lines.end());
+
+    if (uniform_lines.size() > target_count) {
+      size_t start = (uniform_lines.size() - target_count) / 2;
+      uniform_lines.assign(uniform_lines.begin() + start,
+                           uniform_lines.begin() + start + target_count);
+    } else if (uniform_lines.size() < target_count && !values.empty()) {
+      return values; // Fallback
+    }
+
+    return uniform_lines;
+  };
   double spacing_tolerance = 0.4;
   vector<double> final_horizontal_y =
-      find_uniform_spacing(clustered_horizontal_y, 19, spacing_tolerance);
-  vector<double> final_vertical_x = find_uniform_spacing_vertical(
-      clustered_vertical_x, 19,
-      spacing_tolerance); // Use a separate function for vertical
-
+      find_uniform_grid_lines(clustered_horizontal_y, 19, spacing_tolerance);
+  vector<double> final_vertical_x =
+      find_uniform_grid_lines(clustered_vertical_x, 19, spacing_tolerance);
+  assert(final_vertical_x.size() == 19);
+  assert(final_horizontal_y.size() == 19);
   sort(final_horizontal_y.begin(), final_horizontal_y.end());
   sort(final_vertical_x.begin(), final_vertical_x.end());
   if (bDebug) {
     cout << "Final sorted horizontal lines (y): ";
-    for (double y : final_horizontal_y) cout << y << " ";
+    for (double y : final_horizontal_y)
+      cout << y << " ";
     cout << endl;
     cout << "Final sorted vertical lines (x): ";
-    for (double x : final_vertical_x) cout << x << " ";
+    for (double x : final_vertical_x)
+      cout << x << " ";
     cout << endl;
   }
 
@@ -485,16 +451,19 @@ void processGoBoard(const Mat &image_bgr, Mat &board_state,
   if (bDebug) {
     Mat debug_lines = image_bgr.clone();
     for (double y : vertical_lines) {
-      line(debug_lines, Point(0, y), Point(debug_lines.cols - 1, y), Scalar(255, 0, 0), 2); // Red for horizontal
+      line(debug_lines, Point(0, y), Point(debug_lines.cols - 1, y),
+           Scalar(255, 0, 0), 2); // Red for horizontal
     }
     for (double x : horizontal_lines) {
-      line(debug_lines, Point(x, 0), Point(x, debug_lines.rows - 1), Scalar(0, 0, 255), 2); // Blue for vertical
+      line(debug_lines, Point(x, 0), Point(x, debug_lines.rows - 1),
+           Scalar(0, 0, 255), 2); // Blue for vertical
     }
     imshow("Detected Grid Lines", debug_lines);
 
     Mat debug_intersections = image_bgr.clone();
-    for (const auto& p : intersection_points) {
-      circle(debug_intersections, p, 10, Scalar(0, 255, 0), 2); // Green for detected intersections
+    for (const auto &p : intersection_points) {
+      circle(debug_intersections, p, 10, Scalar(0, 255, 0),
+             2); // Green for detected intersections
     }
     imshow("Detected Intersections (Raw)", debug_intersections);
   }
