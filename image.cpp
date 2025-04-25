@@ -31,6 +31,9 @@ pair<vector<double>, vector<double>> detectUniformGrid(const Mat &image) {
 
   vector<Vec4i> line_segments;
   HoughLinesP(edges, line_segments, 1, CV_PI / 180, 50, 30, 10);
+  if (bDebug) {
+    cout << "Number of line segments detected: " << line_segments.size() << endl;
+  }
 
   vector<Line> horizontal_lines_raw, vertical_lines_raw;
 
@@ -50,6 +53,10 @@ pair<vector<double>, vector<double>> detectUniformGrid(const Mat &image) {
 
   sort(horizontal_lines_raw.begin(), horizontal_lines_raw.end(), compareLines);
   sort(vertical_lines_raw.begin(), vertical_lines_raw.end(), compareLines);
+  if (bDebug) {
+    cout << "Raw horizontal lines count: " << horizontal_lines_raw.size() << endl;
+    cout << "Raw vertical lines count: " << vertical_lines_raw.size() << endl;
+  }
 
   auto cluster_and_average_lines = [](const vector<Line> &raw_lines,
                                       double threshold) {
@@ -86,13 +93,33 @@ pair<vector<double>, vector<double>> detectUniformGrid(const Mat &image) {
       cluster_and_average_lines(horizontal_lines_raw, cluster_threshold);
   vector<double> clustered_vertical_x =
       cluster_and_average_lines(vertical_lines_raw, cluster_threshold);
+  if (bDebug) {
+    cout << "Clustered horizontal lines count: " << clustered_horizontal_y.size() << endl;
+    cout << "Clustered vertical lines count: " << clustered_vertical_x.size() << endl;
+    cout << "Clustered horizontal lines (y): ";
+    for (double y : clustered_horizontal_y) cout << y << " ";
+    cout << endl;
+    cout << "Clustered vertical lines (x): ";
+    for (double x : clustered_vertical_x) cout << x << " ";
+    cout << endl;
+  }
 
   int imageHeight = image.rows;
+  int imageWidth = image.cols;
 
   auto find_uniform_spacing =
       [imageHeight](vector<double> values, int target_count, double tolerance) {
-        if (target_count != 19 || values.size() < 5)
+        if (bDebug) {
+          cout << "\n--- find_uniform_spacing (Horizontal) ---" << endl;
+          cout << "Input values size: " << values.size() << ", Target count: " << target_count << ", Tolerance: " << tolerance << endl;
+          cout << "Input values: ";
+          for (double v : values) cout << v << " ";
+          cout << endl;
+        }
+        if (target_count != 19 || values.size() < 5) {
+          if (bDebug) cout << "Not enough horizontal lines to estimate spacing." << endl;
           return values; // Need enough lines to estimate spacing
+        }
 
         sort(values.begin(), values.end());
         int center_start = values.size() / 3;
@@ -101,14 +128,25 @@ pair<vector<double>, vector<double>> detectUniformGrid(const Mat &image) {
         for (int i = center_start; i < center_end; ++i) {
           central_lines.push_back(values[i]);
         }
-        if (central_lines.size() < 2)
+        if (bDebug) {
+          cout << "Central horizontal lines size: " << central_lines.size() << endl;
+          cout << "Central horizontal lines: ";
+          for (double v : central_lines) cout << v << " ";
+          cout << endl;
+        }
+        if (central_lines.size() < 2) {
+          if (bDebug) cout << "Not enough central horizontal lines to estimate spacing." << endl;
           return values;
+        }
 
         double total_spacing = 0;
         for (size_t i = 1; i < central_lines.size(); ++i) {
           total_spacing += central_lines[i] - central_lines[i - 1];
         }
         double estimated_spacing = total_spacing / (central_lines.size() - 1);
+        if (bDebug) {
+          cout << "Estimated horizontal spacing: " << estimated_spacing << endl;
+        }
 
         vector<double> extrapolated_lines;
         double middle_line = central_lines[central_lines.size() / 2];
@@ -119,6 +157,11 @@ pair<vector<double>, vector<double>> detectUniformGrid(const Mat &image) {
                                        (i - middle_index) * estimated_spacing);
         }
         sort(extrapolated_lines.begin(), extrapolated_lines.end());
+        if (bDebug) {
+          cout << "Extrapolated horizontal lines: ";
+          for (double v : extrapolated_lines) cout << v << " ";
+          cout << endl;
+        }
 
         vector<double> final_lines;
         vector<bool> used(values.size(), false);
@@ -140,20 +183,38 @@ pair<vector<double>, vector<double>> detectUniformGrid(const Mat &image) {
           }
         }
         sort(final_lines.begin(), final_lines.end());
+        if (bDebug) {
+          cout << "Final uniform horizontal lines: ";
+          for (double v : final_lines) cout << v << " ";
+          cout << endl;
+        }
         return final_lines;
       };
 
-  auto find_uniform_spacing_vertical = [](vector<double> values,
+  auto find_uniform_spacing_vertical = [imageWidth](vector<double> values,
                                           int target_count, double tolerance) {
+    if (bDebug) {
+      cout << "\n--- find_uniform_spacing_vertical (Vertical) ---" << endl;
+      cout << "Input values size: " << values.size() << ", Target count: " << target_count << ", Tolerance: " << tolerance << endl;
+      cout << "Input values: ";
+      for (double v : values) cout << v << " ";
+      cout << endl;
+    }
     vector<double> best_group;
     double min_deviation = 1e9;
 
     sort(values.begin(), values.end());
 
     for (size_t i = 0; i <= values.size() - target_count; ++i) {
+      if (i + target_count > values.size()) break; // Prevent out-of-bounds access
       vector<double> current_group;
       for (int k = 0; k < target_count; ++k) {
         current_group.push_back(values[i + k]);
+      }
+      if (bDebug && current_group.size() == target_count) {
+        cout << "Considering vertical group: ";
+        for (double v : current_group) cout << v << " ";
+        cout << endl;
       }
 
       if (current_group.size() < 2)
@@ -166,22 +227,41 @@ pair<vector<double>, vector<double>> detectUniformGrid(const Mat &image) {
             max(max_deviation, abs((current_group[j] - current_group[j - 1]) -
                                    initial_spacing));
       }
+      if (bDebug && current_group.size() == target_count) {
+        cout << "  Initial vertical spacing: " << initial_spacing << endl;
+        cout << "  Max vertical deviation: " << max_deviation << endl;
+        cout << "  Tolerance * initial spacing: " << tolerance * initial_spacing << endl;
+        cout << "  2 * Tolerance * initial spacing: " << 2 * tolerance * initial_spacing << endl;
+      }
 
       if (max_deviation <= tolerance * initial_spacing) {
         if (current_group.size() == target_count &&
             max_deviation < min_deviation) {
           min_deviation = max_deviation;
           best_group = current_group;
-        } else if (best_group.empty() &&
-                   current_group.size() >= target_count / 2 &&
-                   max_deviation <= 2 * tolerance * initial_spacing) {
-          best_group = current_group;
+          if (bDebug) cout << "  Found a better matching vertical group (strict)." << endl;
         }
+      } else if (best_group.empty() &&
+                 current_group.size() >= target_count / 2 &&
+                 max_deviation <= 2 * tolerance * initial_spacing) {
+        best_group = current_group;
+        if (bDebug) cout << "  Found a potential vertical group (relaxed)." << endl;
       }
     }
     if (!best_group.empty()) {
       sort(best_group.begin(), best_group.end());
+      if (bDebug) {
+        cout << "Final uniform vertical lines (best group): ";
+        for (double v : best_group) cout << v << " ";
+        cout << endl;
+      }
       return best_group;
+    }
+    if (bDebug) {
+      cout << "Falling back to clustered vertical lines." << endl;
+      cout << "Clustered vertical lines (fallback): ";
+      for (double v : values) cout << v << " ";
+      cout << endl;
     }
     return values; // Fallback
   };
@@ -195,6 +275,14 @@ pair<vector<double>, vector<double>> detectUniformGrid(const Mat &image) {
 
   sort(final_horizontal_y.begin(), final_horizontal_y.end());
   sort(final_vertical_x.begin(), final_vertical_x.end());
+  if (bDebug) {
+    cout << "Final sorted horizontal lines (y): ";
+    for (double y : final_horizontal_y) cout << y << " ";
+    cout << endl;
+    cout << "Final sorted vertical lines (x): ";
+    for (double x : final_vertical_x) cout << x << " ";
+    cout << endl;
+  }
 
   return make_pair(final_horizontal_y, final_vertical_x);
 }
@@ -317,26 +405,30 @@ void processGoBoard(const Mat &image_bgr, Mat &board_state,
   kmeans(samples, num_clusters, labels,
          TermCriteria(TermCriteria::EPS + TermCriteria::MAX_ITER, 100, 1.0), 3,
          KMEANS_PP_CENTERS, centers);
-
-  // cout << "\n--- K-Means Cluster Centers (HSV) ---\n" << centers << endl;
-  // cout << "\n--- Raw K-Means Labels (first 20) ---\n";
-  // for (int i = 0; i < min(20, num_intersections); ++i) {
-  //     cout << labels.at<int>(i, 0) << " ";
-  // }
-  // cout << "...\n";
-
+  if (bDebug) {
+    cout << "\n--- K-Means Cluster Centers (HSV) ---\n" << centers << endl;
+    cout << "\n--- Raw K-Means Labels (first 20) ---\n";
+    for (int i = 0; i < min(20, num_intersections); ++i) {
+      cout << labels.at<int>(i, 0) << " ";
+    }
+    cout << "...\n";
+  }
   int label_black = -1, label_white = -1, label_board = -1;
   classifyClusters(centers, label_black, label_white, label_board);
-
-  // cout << "\n--- Assigned Labels (Direct Value Based) ---\n";
-  // cout << "Black Cluster ID: " << label_black << endl;
-  // cout << "White Cluster ID: " << label_white << endl;
-  // cout << "Board Cluster ID: " << label_board << endl;
+  if (bDebug) {
+    cout << "\n--- Assigned Labels (Direct Value Based) ---\n";
+    cout << "Black Cluster ID: " << label_black << endl;
+    cout << "White Cluster ID: " << label_white << endl;
+    cout << "Board Cluster ID: " << label_board << endl;
+  }
 
   board_state = Mat(19, 19, CV_8U, Scalar(0));
   board_with_stones = image_bgr.clone();
-  // cout << "\n--- Intersection HSV and Assigned Cluster (Weighted Distance)
-  // ---" << endl;
+  if (bDebug) {
+    cout << "\n--- Intersection HSV and Assigned Cluster (Weighted Distance)"
+         << "-- -" << endl;
+  }
+
   cout << fixed << setprecision(2);
 
   float weight_h = 0.10f;
@@ -360,9 +452,11 @@ void processGoBoard(const Mat &image_bgr, Mat &board_state,
         closest_cluster = j;
       }
     }
-
-    // cout << "[" << row << "," << col << "] HSV: [" << hsv[0] << ", " <<
-    // hsv[1] << ", " << hsv[2] << "] Cluster (Weighted): " << closest_cluster;
+    if (bDebug) {
+      cout << "[" << row << "," << col << "] HSV: [" << hsv[0] << ", " << hsv[1]
+           << ", " << hsv[2] << "] Cluster (Weighted): " << closest_cluster
+           << std::endl;
+    }
 
     if (closest_cluster == label_black) {
       board_state.at<uchar>(row, col) = 1; // Black
@@ -387,5 +481,21 @@ void processGoBoard(const Mat &image_bgr, Mat &board_state,
   if (bDebug) {
     imshow("processGoBoard", board_with_stones);
     waitKey(0);
+  }
+  if (bDebug) {
+    Mat debug_lines = image_bgr.clone();
+    for (double y : vertical_lines) {
+      line(debug_lines, Point(0, y), Point(debug_lines.cols - 1, y), Scalar(255, 0, 0), 2); // Red for horizontal
+    }
+    for (double x : horizontal_lines) {
+      line(debug_lines, Point(x, 0), Point(x, debug_lines.rows - 1), Scalar(0, 0, 255), 2); // Blue for vertical
+    }
+    imshow("Detected Grid Lines", debug_lines);
+
+    Mat debug_intersections = image_bgr.clone();
+    for (const auto& p : intersection_points) {
+      circle(debug_intersections, p, 10, Scalar(0, 255, 0), 2); // Green for detected intersections
+    }
+    imshow("Detected Intersections (Raw)", debug_intersections);
   }
 }
