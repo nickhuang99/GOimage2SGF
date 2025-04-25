@@ -15,10 +15,7 @@
 using namespace std;
 using namespace cv;
 
-
-// Global debug variable
-bool bDebug = true;
-
+extern bool bDebug;
 
 // Function to determine the SGF move between two board states
 string determineSGFMove(const Mat &before_board_state,
@@ -483,57 +480,57 @@ void testParseSGFGame() {
   }
 }
 
-int run() {
-  // 1. Load the Go board image.
-  Mat image_bgr = imread("go_board.jpg"); // Hardcoded file name
-  if (image_bgr.empty()) {
-    cerr << "Error loading image\n";
-    return -1;
-  }
+// int run() {
+//   // 1. Load the Go board image.
+//   Mat image_bgr = imread("go_board.jpg"); // Hardcoded file name
+//   if (image_bgr.empty()) {
+//     cerr << "Error loading image\n";
+//     return -1;
+//   }
 
-  // 2. Process the image to get the board state.
-  Mat board_state;
-  Mat board_with_stones;
-  processGoBoard(image_bgr, board_state, board_with_stones);
-  pair<vector<double>, vector<double>> grid_lines =
-      detectUniformGrid(image_bgr);
-  vector<double> horizontal_lines = grid_lines.first;
-  vector<double> vertical_lines = grid_lines.second;
-  vector<Point2f> intersection_points =
-      findIntersections(horizontal_lines, vertical_lines);
-  // Mat previous_board_state = board_state.clone();
+//   // 2. Process the image to get the board state.
+//   Mat board_state;
+//   Mat board_with_stones;
+//   processGoBoard(image_bgr, board_state, board_with_stones);
+//   pair<vector<double>, vector<double>> grid_lines =
+//       detectUniformGrid(image_bgr);
+//   vector<double> horizontal_lines = grid_lines.first;
+//   vector<double> vertical_lines = grid_lines.second;
+//   vector<Point2f> intersection_points =
+//       findIntersections(horizontal_lines, vertical_lines);
+//   // Mat previous_board_state = board_state.clone();
 
-  // 3. Generate the SGF for the current board state.
-  string generated_sgf = generateSGF(board_state, intersection_points);
-  cout << "Generated SGF:\n" << generated_sgf << endl;
+//   // 3. Generate the SGF for the current board state.
+//   string generated_sgf = generateSGF(board_state, intersection_points);
+//   cout << "Generated SGF:\n" << generated_sgf << endl;
 
-  // 4. Load the "correct" SGF from the file.
-  ifstream correct_sgf_file("ScreenToSGF.sgf.txt");
-  if (!correct_sgf_file.is_open()) {
-    cerr << "Error opening correct SGF file\n";
-    return -1;
-  }
-  stringstream correct_sgf_stream;
-  correct_sgf_stream << correct_sgf_file.rdbuf();
-  string correct_sgf = correct_sgf_stream.str();
-  correct_sgf_file.close();
+//   // 4. Load the "correct" SGF from the file.
+//   ifstream correct_sgf_file("ScreenToSGF.sgf.txt");
+//   if (!correct_sgf_file.is_open()) {
+//     cerr << "Error opening correct SGF file\n";
+//     return -1;
+//   }
+//   stringstream correct_sgf_stream;
+//   correct_sgf_stream << correct_sgf_file.rdbuf();
+//   string correct_sgf = correct_sgf_stream.str();
+//   correct_sgf_file.close();
 
-  cout << "\nCorrect SGF:\n" << correct_sgf << endl;
+//   cout << "\nCorrect SGF:\n" << correct_sgf << endl;
 
-  // 5. Compare the generated SGF with the correct SGF.
-  // if (generated_sgf == correct_sgf) {
-  //    cout << "\nSGF generation is correct!\n";
-  //} else {
-  //    cout << "\nSGF generation is incorrect.\n";
-  //}
-  bool areEquivalent = compareSGF(generated_sgf, correct_sgf);
-  if (areEquivalent)
-    cout << "The two SGF are equivalent" << endl;
-  else
-    cout << "The two SGF are NOT equivalent" << endl;
+//   // 5. Compare the generated SGF with the correct SGF.
+//   // if (generated_sgf == correct_sgf) {
+//   //    cout << "\nSGF generation is correct!\n";
+//   //} else {
+//   //    cout << "\nSGF generation is incorrect.\n";
+//   //}
+//   bool areEquivalent = compareSGF(generated_sgf, correct_sgf);
+//   if (areEquivalent)
+//     cout << "The two SGF are equivalent" << endl;
+//   else
+//     cout << "The two SGF are NOT equivalent" << endl;
 
-  // 6. Verify the SGF data.
-  verifySGF(image_bgr, generated_sgf, intersection_points);
-  // testParseSGFGame();
-  return 0;
-}
+//   // 6. Verify the SGF data.
+//   verifySGF(image_bgr, generated_sgf, intersection_points);
+//   // testParseSGFGame();
+//   return 0;
+// }

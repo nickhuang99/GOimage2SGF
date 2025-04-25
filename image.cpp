@@ -1,16 +1,16 @@
-#include <cmath>
-#include <numeric>
-#include <opencv2/opencv.hpp>
-#include <vector>
+#include "common.h"
 #include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <limits>
 #include <map>
+#include <numeric>
+#include <opencv2/opencv.hpp>
 #include <regex> // Include the regex library
 #include <set>
-#include "common.h"
+#include <vector>
 
 using namespace std;
 using namespace cv;
@@ -18,6 +18,8 @@ struct Line {
   double value; // y for horizontal, x for vertical
   double angle;
 };
+
+extern bool bDebug;
 
 bool compareLines(const Line &a, const Line &b) { return a.value < b.value; }
 
@@ -284,7 +286,8 @@ Vec3f getAverageHSV(const Mat &image, Point2f center, int radius) {
 
 // Function to process the Go board image and determine the board state
 void processGoBoard(const Mat &image_bgr, Mat &board_state,
-                    Mat &board_with_stones) {
+                    Mat &board_with_stones,
+                    vector<Point2f> &intersection_points) {
   Mat image_hsv;
   cvtColor(image_bgr, image_hsv, COLOR_BGR2HSV);
 
@@ -293,8 +296,7 @@ void processGoBoard(const Mat &image_bgr, Mat &board_state,
   vector<double> horizontal_lines = grid_lines.first;
   vector<double> vertical_lines = grid_lines.second;
 
-  vector<Point2f> intersection_points =
-      findIntersections(horizontal_lines, vertical_lines);
+  intersection_points = findIntersections(horizontal_lines, vertical_lines);
   int num_intersections = intersection_points.size();
   int sample_radius = 8;
 
@@ -381,5 +383,9 @@ void processGoBoard(const Mat &image_bgr, Mat &board_state,
              2); // Magenta for unclassified
                  // cout << " (Unclassified - Error?)" << endl;
     }
+  }
+  if (bDebug) {
+    imshow("processGoBoard", board_with_stones);
+    waitKey(0);
   }
 }
