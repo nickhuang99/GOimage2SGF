@@ -1,13 +1,23 @@
 #ifndef UTILITY_H
 #define UTILITY_H
 
-#include <opencv2/opencv.hpp>
 #include <linux/videodev2.h>
+#include <map>
+#include <opencv2/opencv.hpp>
 #include <set>
 #include <string>
 #include <vector>
-#include <map>
 
+// Custom exception class for GEM errors
+class GEMError : public std::runtime_error {
+public:
+  GEMError(const std::string &message) : std::runtime_error(message) {}
+};
+
+class SGFError : public std::runtime_error {
+public:
+  SGFError(const std::string &message) : std::runtime_error(message) {}
+};
 struct SGFHeader {
   int gm;         // Game
   int ff;         // File Format
@@ -15,7 +25,6 @@ struct SGFHeader {
   std::string ap; // Application
   int sz;         // Size of the board
 };
-
 
 // Structure to hold video device information
 struct VideoDeviceInfo {
@@ -63,5 +72,7 @@ void parseSGFGame(const std::string &sgfContent,
                   std::vector<Move> &moves);
 SGFHeader parseSGFHeader(const std::string &sgf_content);
 std::vector<VideoDeviceInfo> probeVideoDevices(int max_devices = 256);
-bool captureSnapshot(const std::string& device_path, const std::string& output_path);
+bool captureSnapshot(const std::string &device_path,
+                     const std::string &output_path);
+bool captureFrame(const std::string &device_path, cv::Mat &frame);
 #endif // UTILITY_H

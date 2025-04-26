@@ -20,12 +20,6 @@ using namespace std;
 // Global debug variable
 bool bDebug = false;
 
-// Custom exception class for GEM errors
-class GEMError : public std::runtime_error {
-public:
-  GEMError(const std::string &message) : std::runtime_error(message) {}
-};
-
 void displayHelpMessage() {
   cout << "Go Environment Manager (GEM)" << endl;
   cout << "Usage: gem [options]" << endl;
@@ -51,10 +45,14 @@ void displayHelpMessage() {
   cout << "  -s, --snapshot <output_file>    : Capture a snapshot from the "
           "webcam. Requires root privileges."
        << endl;
+  cout << "  -r, --record-sgf <output_sgf>    : Capture a snapshot, process it, "
+          "and generate an SGF file. Requires root privileges."
+       << endl;
   cout << "  -h, --help                        : Display this help message."
        << endl;
-  cout << "\n  Note: Snapshot operations (--probe-devices, -s/--snapshot) often "
-          "require root privileges (use sudo).\n";
+  cout << "\n  Note: Snapshot and recording operations (--probe-devices, "
+          "-s/--snapshot, -r/--record-sgf) often require root privileges (use "
+          "sudo).\n";
 }
 
 void processImageWorkflow(const std::string &imagePath) {
@@ -63,15 +61,20 @@ void processImageWorkflow(const std::string &imagePath) {
   if (image_bgr.empty()) {
     throw GEMError("Could not open or find the image: " + imagePath);
   } else {
-    cv::Mat board_state, board_with_stones;
-    vector<Point2f> intersection_points;
-    processGoBoard(image_bgr, board_state, board_with_stones,
-                   intersection_points);
-    // Further processing or display (could be moved to another function if
-    // needed)
-    if (bDebug) {
-      imshow("processGoBoard", board_with_stones);
-      waitKey(0);
+    try {
+      cv::Mat board_state, board_with_stones;
+      vector<Point2f> intersection_points;
+      processGoBoard(image_bgr, board_state, board_with_stones,
+                     intersection_points);
+      // Further processing or display (could be moved to another function if
+      // needed)
+      if (bDebug) {
+        imshow("processGoBoard", board_with_stones);
+        waitKey(0);
+      }
+    } catch (const cv::Exception &e) {
+      throw GEMError("OpenCV error in processImageWorkflow: " +
+                     string(e.what())); // Wrap OpenCV exceptions
     }
   }
 }
@@ -84,17 +87,22 @@ void generateSGFWorkflow(const std::string &inputImagePath,
   if (image_bgr.empty()) {
     throw GEMError("Could not open or find the input image: " + inputImagePath);
   } else {
-    cv::Mat board_state, board_with_stones;
-    std::vector<cv::Point2f> intersections;
-    processGoBoard(image_bgr, board_state, board_with_stones, intersections);
-    std::string sgf_content = generateSGF(board_state, intersections);
-    std::ofstream outfile(outputSGFPath);
-    if (!outfile.is_open()) {
-      throw GEMError("Could not open SGF file for writing: " + outputSGFPath);
+    try {
+      cv::Mat board_state, board_with_stones;
+      std::vector<cv::Point2f> intersections;
+      processGoBoard(image_bgr, board_state, board_with_stones, intersections);
+      std::string sgf_content = generateSGF(board_state, intersections);
+      std::ofstream outfile(outputSGFPath);
+      if (!outfile.is_open()) {
+        throw GEMError("Could not open SGF file for writing: " + outputSGFPath);
+      }
+      outfile << sgf_content << endl;
+      outfile.close();
+      cout << "SGF content written to: " << outputSGFPath << endl;
+    } catch (const cv::Exception &e) {
+      throw GEMError("OpenCV error in generateSGFWorkflow: " +
+                     string(e.what())); // Wrap OpenCV exceptions
     }
-    outfile << sgf_content << endl;
-    outfile.close();
-    cout << "SGF content written to: " << outputSGFPath << endl;
   }
 }
 
@@ -105,22 +113,27 @@ void verifySGFWorkflow(const std::string &imagePath,
   cv::Mat image_bgr = imread(imagePath);
   if (image_bgr.empty()) {
     throw GEMError("Could not open or find the image: " + imagePath);
-  }
-  cv::Mat board_state, board_with_stones;
-  std::vector<cv::Point2f> intersections;
-  processGoBoard(image_bgr, board_state, board_with_stones, intersections);
+  } else {
+    try {
+      cv::Mat board_state, board_with_stones;
+      std::vector<cv::Point2f> intersections;
+      processGoBoard(image_bgr, board_state, board_with_stones, intersections);
 
-  std::ifstream infile(sgfPath);
-  if (!infile.is_open()) {
-    throw GEMError("Could not open SGF file: " + sgfPath);
+      std::ifstream infile(sgfPath);
+      if (!infile.is_open()) {
+        throw GEMError("Could not open SGF file: " + sgfPath);
+      }
+      std::stringstream buffer;
+      buffer << infile.rdbuf();
+      std::string sgf_data = buffer.str();
+      if (sgf_data.empty()) {
+        throw GEMError("Could not read SGF data from: " + sgfPath);
+      }
+      verifySGF(image_bgr, sgf_data, intersections);
+    } catch (const cv::Exception &e) {
+      throw GEMError("OpenCV error in verifySGFWorkflow: " + string(e.what()));
+    }
   }
-  std::stringstream buffer;
-  buffer << infile.rdbuf();
-  std::string sgf_data = buffer.str();
-  if (sgf_data.empty()) {
-    throw GEMError("Could not read SGF data from: " + sgfPath);
-  }
-  verifySGF(image_bgr, sgf_data, intersections);
 }
 
 void compareSGFWorkflow(const std::string &sgfPath1,
@@ -170,39 +183,43 @@ void parseSGFWorkflow(const std::string &sgfPath) {
 
   std::set<std::pair<int, int>> setupBlack, setupWhite;
   std::vector<Move> moves;
-  parseSGFGame(sgf_content, setupBlack, setupWhite, moves);
-  SGFHeader header = parseSGFHeader(sgf_content);
+  try {
+    parseSGFGame(sgf_content, setupBlack, setupWhite, moves);
+    SGFHeader header = parseSGFHeader(sgf_content);
 
-  cout << "SGF Header:" << endl;
-  cout << "  Game: " << header.gm << endl;
-  cout << "  File Format: " << header.ff << endl;
-  cout << "  Character Set: " << header.ca << endl;
-  cout << "  Application: " << header.ap << endl;
-  cout << "  Board Size: " << header.sz << endl;
+    cout << "SGF Header:" << endl;
+    cout << "  Game: " << header.gm << endl;
+    cout << "  File Format: " << header.ff << endl;
+    cout << "  Character Set: " << header.ca << endl;
+    cout << "  Application: " << header.ap << endl;
+    cout << "  Board Size: " << header.sz << endl;
 
-  cout << "\nSetup Black: ";
-  for (const auto &stone : setupBlack) {
-    cout << "(" << stone.first << "," << stone.second << ") ";
-  }
-  cout << endl;
-
-  cout << "Setup White: ";
-  for (const auto &stone : setupWhite) {
-    cout << "(" << stone.first << "," << stone.second << ") ";
-  }
-  cout << endl;
-
-  cout << "\nMoves:" << endl;
-  for (const auto &move : moves) {
-    cout << "  Player: " << move.player << ", Row: " << move.row
-         << ", Col: " << move.col;
-    if (!move.capturedStones.empty()) {
-      cout << ", Captured: ";
-      for (const auto &captured : move.capturedStones) {
-        cout << "(" << captured.first << "," << captured.second << ") ";
-      }
+    cout << "\nSetup Black: ";
+    for (const auto &stone : setupBlack) {
+      cout << "(" << stone.first << "," << stone.second << ") ";
     }
     cout << endl;
+
+    cout << "Setup White: ";
+    for (const auto &stone : setupWhite) {
+      cout << "(" << stone.first << "," << stone.second << ") ";
+    }
+    cout << endl;
+
+    cout << "\nMoves:" << endl;
+    for (const auto &move : moves) {
+      cout << "  Player: " << move.player << ", Row: " << move.row
+           << ", Col: " << move.col;
+      if (!move.capturedStones.empty()) {
+        cout << ", Captured: ";
+        for (const auto &captured : move.capturedStones) {
+          cout << "(" << captured.first << "," << captured.second << ") ";
+        }
+        cout << endl;
+      }
+    }
+  } catch (const SGFError &e) {
+    throw GEMError("SGF parsing error: " + string(e.what())); // Wrap SGF errors
   }
 }
 void probeVideoDevicesWorkflow() {
@@ -239,6 +256,36 @@ void captureSnapshotWorkflow(const std::string &selected_device,
   }
 }
 
+void recordSGFWorkflow(const std::string &device_path,
+                       const std::string &output_sgf) {
+  cout << "Capturing snapshot, processing, and generating SGF to: "
+       << output_sgf << " from device: " << device_path << endl;
+
+  Mat captured_image;
+  try {
+    if (!captureFrame(device_path, captured_image)) { // Use captureFrame
+      throw GEMError("Failed to capture frame from device.");
+    }
+
+    Mat board_state, board_with_stones;
+    vector<Point2f> intersections;
+    processGoBoard(captured_image, board_state, board_with_stones,
+                   intersections); // Process the captured image
+
+    string sgf_content = generateSGF(board_state, intersections); // Generate SGF
+
+    ofstream outfile(output_sgf);
+    if (!outfile.is_open()) {
+      throw GEMError("Could not open SGF file for writing: " + output_sgf);
+    }
+    outfile << sgf_content << endl;
+    outfile.close();
+    cout << "SGF content written to: " << output_sgf << endl;
+  } catch (const cv::Exception &e) {
+    throw GEMError("OpenCV error in recordSGFWorkflow: " + string(e.what()));
+  }
+}
+
 int main(int argc, char *argv[]) {
   try {
     if (argc == 1) {
@@ -248,6 +295,7 @@ int main(int argc, char *argv[]) {
     int option_index = 0;
     std::string device_path = "/dev/video0"; // Default device
     std::string snapshot_output;
+    std::string record_sgf_output;
     bool probe_only = false;
     bool device_specified = false; // Flag to track if --device is used
 
@@ -262,6 +310,7 @@ int main(int argc, char *argv[]) {
         {"probe-devices", no_argument, nullptr, 1},
         {"snapshot", required_argument, nullptr, 's'},
         {"device", required_argument, nullptr, 'D'},
+        {"record-sgf", required_argument, nullptr, 'r'},
         {nullptr, 0, nullptr, 0}};
 
     int c;
@@ -287,7 +336,7 @@ int main(int argc, char *argv[]) {
     optind = 1; // Reset getopt_long to parse the rest of the options
 
     // Process the remaining options
-    while ((c = getopt_long(argc, argv, "p:g:v:c:hs:", long_options,
+    while ((c = getopt_long(argc, argv, "p:g:v:c:hs:r:", long_options,
                             &option_index)) != -1) {
       switch (c) {
       case 'p':
@@ -332,6 +381,9 @@ int main(int argc, char *argv[]) {
       case 's':
         snapshot_output = optarg;
         break;
+      case 'r':
+        record_sgf_output = optarg;
+        break;
       case '?':
       default:
         displayHelpMessage();
@@ -347,6 +399,9 @@ int main(int argc, char *argv[]) {
       captureSnapshotWorkflow(device_path, snapshot_output);
     }
 
+    if (!record_sgf_output.empty()) {
+      recordSGFWorkflow(device_path, record_sgf_output);
+    }
   } catch (const GEMError &e) {
     cerr << "Error: " << e.what() << endl;
     return 1;
