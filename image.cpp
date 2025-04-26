@@ -16,12 +16,12 @@
 
 using namespace std;
 using namespace cv;
+
+extern bool bDebug;
 struct Line {
   double value; // y for horizontal, x for vertical
   double angle;
 };
-
-extern bool bDebug;
 
 bool compareLines(const Line &a, const Line &b) { return a.value < b.value; }
 
