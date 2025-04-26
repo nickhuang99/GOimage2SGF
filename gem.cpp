@@ -30,6 +30,12 @@ void displayHelpMessage() {
   cout << "Go Environment Manager (GEM)" << endl;
   cout << "Usage: gem [options]" << endl;
   cout << "Options:" << endl;
+  cout << "  -d, --debug                       : Enable debug output (must be "
+          "at the beginning)."
+       << endl;
+  cout << "  -D, --device <device_path>      : Specify the video device path "
+          "(default: /dev/video0). Must be at the beginning."
+       << endl;
   cout << "  -p, --process-image <image_path> : Process the Go board image."
        << endl;
   cout << "  -g, --generate-sgf <input_image> <output_sgf>"
@@ -39,11 +45,16 @@ void displayHelpMessage() {
   cout << "  -c, --compare <sgf_path1> <sgf_path2>"
        << " : Compare two SGF files." << endl;
   cout << "  --parse <sgf_path>              : Parse an SGF file." << endl;
+  cout << "  --probe-devices                 : List available video devices. "
+          "Requires root privileges."
+       << endl;
+  cout << "  -s, --snapshot <output_file>    : Capture a snapshot from the "
+          "webcam. Requires root privileges."
+       << endl;
   cout << "  -h, --help                        : Display this help message."
        << endl;
-  cout << "  -d, --debug                       : Enable debug output (must be "
-          "at the beginning)."
-       << endl;
+  cout << "\n  Note: Snapshot operations (--probe-devices, -s/--snapshot) often "
+          "require root privileges (use sudo).\n";
 }
 
 void processImageWorkflow(const std::string &imagePath) {
@@ -73,7 +84,7 @@ void generateSGFWorkflow(const std::string &inputImagePath,
   if (image_bgr.empty()) {
     throw GEMError("Could not open or find the input image: " + inputImagePath);
   } else {
-    cv::Mat board_state, board_with_stones;    
+    cv::Mat board_state, board_with_stones;
     std::vector<cv::Point2f> intersections;
     processGoBoard(image_bgr, board_state, board_with_stones, intersections);
     std::string sgf_content = generateSGF(board_state, intersections);
@@ -95,7 +106,7 @@ void verifySGFWorkflow(const std::string &imagePath,
   if (image_bgr.empty()) {
     throw GEMError("Could not open or find the image: " + imagePath);
   }
-  cv::Mat board_state, board_with_stones;    
+  cv::Mat board_state, board_with_stones;
   std::vector<cv::Point2f> intersections;
   processGoBoard(image_bgr, board_state, board_with_stones, intersections);
 
@@ -194,6 +205,39 @@ void parseSGFWorkflow(const std::string &sgfPath) {
     cout << endl;
   }
 }
+void probeVideoDevicesWorkflow() {
+  std::vector<VideoDeviceInfo> available_devices = probeVideoDevices();
+
+  if (available_devices.empty()) {
+    std::cout << "No video capture devices found.\n";
+    return;
+  }
+  std::cout << "Available video capture devices:\n";
+  for (size_t i = 0; i < available_devices.size(); ++i) {
+    std::cout << "[" << i << "] Path: " << available_devices[i].device_path
+              << ", Driver: " << available_devices[i].driver_name
+              << ", Card: " << available_devices[i].card_name
+              << ", Capabilities: "
+              << getCapabilityDescription(available_devices[i].capabilities)
+              << " (0x" << std::hex << available_devices[i].capabilities
+              << std::dec << "), Supported Formats:";
+    for (uint32_t format : available_devices[i].supported_formats) {
+      std::cout << " " << getFormatDescription(format);
+    }
+    std::cout << "\n";
+  }
+}
+
+void captureSnapshotWorkflow(const std::string &selected_device,
+                            const std::string &output) {
+  // For now, let's just try to capture from the first available device
+  std::cout << "\nAttempting to capture from: " << selected_device << "\n";
+  if (captureSnapshot(selected_device, output)) {
+    std::cout << "Snapshot saved to " << output << std::endl;
+  } else {
+    std::cout << "Failed to capture snapshot from " << selected_device << ".\n";
+  }
+}
 
 int main(int argc, char *argv[]) {
   try {
@@ -202,6 +246,11 @@ int main(int argc, char *argv[]) {
       return 0;
     }
     int option_index = 0;
+    std::string device_path = "/dev/video0"; // Default device
+    std::string snapshot_output;
+    bool probe_only = false;
+    bool device_specified = false; // Flag to track if --device is used
+
     struct option long_options[] = {
         {"process-image", required_argument, nullptr, 'p'},
         {"generate-sgf", required_argument, nullptr, 'g'},
@@ -210,16 +259,37 @@ int main(int argc, char *argv[]) {
         {"parse", required_argument, nullptr, 0},
         {"help", no_argument, nullptr, 'h'},
         {"debug", no_argument, nullptr, 'd'},
+        {"probe-devices", no_argument, nullptr, 1},
+        {"snapshot", required_argument, nullptr, 's'},
+        {"device", required_argument, nullptr, 'D'},
         {nullptr, 0, nullptr, 0}};
 
     int c;
-    while ((c = getopt_long(argc, argv, "p:g:v:c:hd", long_options,
-                            &option_index)) != -1) {
+    // Process initial options (debug and device)
+    while ((c = getopt_long(argc, argv, "dD:", long_options, &option_index)) !=
+           -1) {
       switch (c) {
       case 'd':
         bDebug = true;
         cout << "Debug mode enabled." << endl;
         break;
+      case 'D':
+        device_path = optarg;
+        device_specified = true;
+        break;
+      case '?':
+        displayHelpMessage();
+        return 1;
+      default:
+        break;
+      }
+    }
+    optind = 1; // Reset getopt_long to parse the rest of the options
+
+    // Process the remaining options
+    while ((c = getopt_long(argc, argv, "p:g:v:c:hs:", long_options,
+                            &option_index)) != -1) {
+      switch (c) {
       case 'p':
         processImageWorkflow(optarg);
         break;
@@ -253,6 +323,15 @@ int main(int argc, char *argv[]) {
           parseSGFWorkflow(optarg);
         }
         break;
+      case 1: // Long-only option
+        if (strcmp(long_options[option_index].name, "probe-devices") == 0) {
+          probe_only = true;
+          probeVideoDevicesWorkflow();
+        }
+        break;
+      case 's':
+        snapshot_output = optarg;
+        break;
       case '?':
       default:
         displayHelpMessage();
@@ -260,6 +339,13 @@ int main(int argc, char *argv[]) {
       }
     }
     // Handle any remaining non-option arguments here if needed
+    if (probe_only) {
+      return 0; // Exit if only probing devices
+    }
+
+    if (!snapshot_output.empty()) {
+      captureSnapshotWorkflow(device_path, snapshot_output);
+    }
 
   } catch (const GEMError &e) {
     cerr << "Error: " << e.what() << endl;

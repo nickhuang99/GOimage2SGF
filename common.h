@@ -2,9 +2,11 @@
 #define UTILITY_H
 
 #include <opencv2/opencv.hpp>
+#include <linux/videodev2.h>
 #include <set>
 #include <string>
 #include <vector>
+#include <map>
 
 struct SGFHeader {
   int gm;         // Game
@@ -12,6 +14,16 @@ struct SGFHeader {
   std::string ca; // Character Set
   std::string ap; // Application
   int sz;         // Size of the board
+};
+
+
+// Structure to hold video device information
+struct VideoDeviceInfo {
+  std::string device_path;
+  std::string driver_name;
+  std::string card_name;
+  uint32_t capabilities;
+  std::vector<uint32_t> supported_formats;
 };
 
 // Structure to represent a single move, including captured stones
@@ -28,7 +40,8 @@ struct Move {
             capturedStones == other.capturedStones);
   }
 };
-
+std::string getFormatDescription(uint32_t format);
+std::string getCapabilityDescription(uint32_t cap);
 std::pair<std::vector<double>, std::vector<double>>
 detectUniformGrid(const cv::Mat &image);
 std::vector<cv::Point2f>
@@ -49,5 +62,6 @@ void parseSGFGame(const std::string &sgfContent,
                   std::set<std::pair<int, int>> &setupWhite,
                   std::vector<Move> &moves);
 SGFHeader parseSGFHeader(const std::string &sgf_content);
-
+std::vector<VideoDeviceInfo> probeVideoDevices(int max_devices = 256);
+bool captureSnapshot(const std::string& device_path, const std::string& output_path);
 #endif // UTILITY_H
