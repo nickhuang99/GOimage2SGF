@@ -45,9 +45,10 @@ void displayHelpMessage() {
   cout << "  -s, --snapshot <output_file>    : Capture a snapshot from the "
           "webcam. Requires root privileges."
        << endl;
-  cout << "  -r, --record-sgf <output_sgf>    : Capture a snapshot, process it, "
-          "and generate an SGF file. Requires root privileges."
-       << endl;
+  cout
+      << "  -r, --record-sgf <output_sgf>    : Capture a snapshot, process it, "
+         "and generate an SGF file. Requires root privileges."
+      << endl;
   cout << "  -h, --help                        : Display this help message."
        << endl;
   cout << "\n  Note: Snapshot and recording operations (--probe-devices, "
@@ -246,7 +247,7 @@ void probeVideoDevicesWorkflow() {
 }
 
 void captureSnapshotWorkflow(const std::string &selected_device,
-                            const std::string &output) {
+                             const std::string &output) {
   // For now, let's just try to capture from the first available device
   std::cout << "\nAttempting to capture from: " << selected_device << "\n";
   if (captureSnapshot(selected_device, output)) {
@@ -272,7 +273,8 @@ void recordSGFWorkflow(const std::string &device_path,
     processGoBoard(captured_image, board_state, board_with_stones,
                    intersections); // Process the captured image
 
-    string sgf_content = generateSGF(board_state, intersections); // Generate SGF
+    string sgf_content =
+        generateSGF(board_state, intersections); // Generate SGF
 
     ofstream outfile(output_sgf);
     if (!outfile.is_open()) {
