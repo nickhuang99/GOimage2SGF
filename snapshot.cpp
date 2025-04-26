@@ -76,6 +76,10 @@ VideoDeviceInfo probeSingleDevice(const std::string &device_path) {
   try {
     fd = open(device_path.c_str(), O_RDWR | O_NONBLOCK, 0);
     if (fd < 0) {
+      if (bDebug) {
+        std::cerr << "Debug: Failed to open device " << device_path
+                  << " (" << strerror(errno) << ")\n";
+      }
       return deviceInfo;
     }
 
@@ -88,6 +92,10 @@ VideoDeviceInfo probeSingleDevice(const std::string &device_path) {
     }
 
     if (!(cap.capabilities & V4L2_CAP_VIDEO_CAPTURE)) {
+      if (bDebug) {
+        std::cerr << "Debug: Device " << device_path
+                  << " does not support video capture\n";
+      }
       close(fd);
       return deviceInfo;
     }
@@ -95,6 +103,14 @@ VideoDeviceInfo probeSingleDevice(const std::string &device_path) {
     deviceInfo.driver_name = reinterpret_cast<char *>(cap.driver);
     deviceInfo.card_name = reinterpret_cast<char *>(cap.card);
     deviceInfo.capabilities = cap.capabilities;
+
+    if (bDebug) {
+      std::cout << "Debug: Device " << device_path << " opened. Driver: "
+                << deviceInfo.driver_name << ", Card: "
+                << deviceInfo.card_name
+                << ", Capabilities: " << getCapabilityDescription(cap.capabilities)
+                << " (0x" << std::hex << cap.capabilities << std::dec << ")\n";
+    }
 
     struct v4l2_fmtdesc fmtdesc;
     memset(&fmtdesc, 0, sizeof(fmtdesc));
@@ -104,9 +120,13 @@ VideoDeviceInfo probeSingleDevice(const std::string &device_path) {
           format_descriptions.end()) {
         deviceInfo.supported_formats.push_back(fmtdesc.pixelformat);
       }
+      if (bDebug) {
+        std::cout << "  Debug: Supported format " << fmtdesc.index << ": "
+                  << getFormatDescription(fmtdesc.pixelformat) << " (0x"
+                  << std::hex << fmtdesc.pixelformat << std::dec << ")\n";
+      }
       fmtdesc.index++;
     }
-
   } catch (const std::runtime_error &e) {
     std::cerr << "Error probing " << device_path << ": " << e.what()
               << std::endl;
@@ -129,6 +149,12 @@ std::vector<VideoDeviceInfo> probeVideoDevices(int max_devices) {
         devices.push_back(deviceInfo);
       }
     }
+    if (bDebug) {
+      std::cout << "Debug: Device " << device_path
+                << (stat(device_path.c_str(), &buffer) == 0
+                        ? " exists\n"
+                        : " does not exist\n");
+    }
   }
   return devices;
 }
@@ -145,8 +171,8 @@ bool captureSnapshot(const std::string &device_path,
         std::cerr << "Warning: No frame data to save.\n";
         return false;
       }
-    } else return false;
-
+    } else
+      return false;
   } catch (const std::runtime_error &e) {
     std::cerr << "Error during capture: " << e.what() << std::endl;
     return false;
@@ -161,18 +187,30 @@ bool captureFrame(const std::string &device_path, cv::Mat &frame) {
     if (fd < 0) {
       errno_exit("Failed to open device for capture");
     }
+    if (bDebug) {
+      std::cout << "Debug: Device " << device_path << " opened for capture.\n";
+    }
 
     struct v4l2_capability cap;
     if (ioctl(fd, VIDIOC_QUERYCAP, &cap) < 0) {
       errno_exit("VIDIOC_QUERYCAP during capture");
     }
+    if (bDebug) {
+      std::cout << "Debug: VIDIOC_QUERYCAP successful.\n";
+    }
 
     if (!(cap.capabilities & V4L2_CAP_VIDEO_CAPTURE)) {
       throw std::runtime_error("Device does not support video capture");
     }
+    if (bDebug) {
+      std::cout << "Debug: Device supports video capture.\n";
+    }
 
     if (!(cap.capabilities & V4L2_CAP_STREAMING)) {
       throw std::runtime_error("Device does not support streaming");
+    }
+    if (bDebug) {
+      std::cout << "Debug: Device supports streaming.\n";
     }
 
     // Set video format to MJPEG
@@ -191,10 +229,13 @@ bool captureFrame(const std::string &device_path, cv::Mat &frame) {
         errno_exit("Failed to set YUYV format");
       }
     }
-    std::cerr << "Using format: Width=" << fmt.fmt.pix.width
-              << ", Height=" << fmt.fmt.pix.height << ", PixelFormat="
-              << getFormatDescription(fmt.fmt.pix.pixelformat) << " (0x"
-              << std::hex << fmt.fmt.pix.pixelformat << std::dec << ")\n";
+    if (bDebug) {
+      std::cout << "Debug: VIDIOC_S_FMT successful. Using format: Width="
+                << fmt.fmt.pix.width << ", Height=" << fmt.fmt.pix.height
+                << ", PixelFormat=" << getFormatDescription(fmt.fmt.pix.pixelformat)
+                << " (0x" << std::hex << fmt.fmt.pix.pixelformat << std::dec
+                << ")\n";
+    }
 
     // Request buffers
     struct v4l2_requestbuffers req;
@@ -205,9 +246,16 @@ bool captureFrame(const std::string &device_path, cv::Mat &frame) {
     if (ioctl(fd, VIDIOC_REQBUFS, &req) < 0) {
       errno_exit("VIDIOC_REQBUFS");
     }
+    if (bDebug) {
+      std::cout << "Debug: VIDIOC_REQBUFS successful. Requested " << req.count
+                << " buffers.\n";
+    }
 
     if (req.count < 1) {
       throw std::runtime_error("Insufficient buffer memory");
+    }
+    if (bDebug) {
+      std::cout << "Debug: At least 1 buffer allocated.\n";
     }
 
     // Map the buffer to user space
@@ -219,22 +267,35 @@ bool captureFrame(const std::string &device_path, cv::Mat &frame) {
     if (ioctl(fd, VIDIOC_QUERYBUF, &buf) < 0) {
       errno_exit("VIDIOC_QUERYBUF");
     }
+    if (bDebug) {
+      std::cout << "Debug: VIDIOC_QUERYBUF successful.\n";
+    }
 
     void *buffer = mmap(NULL, buf.length, PROT_READ | PROT_WRITE, MAP_SHARED,
                         fd, buf.m.offset);
     if (buffer == MAP_FAILED) {
       errno_exit("mmap");
     }
+    if (bDebug) {
+      std::cout << "Debug: mmap successful. Buffer address: " << buffer
+                << ", Length: " << buf.length << "\n";
+    }
 
     // Queue the buffer
     if (ioctl(fd, VIDIOC_QBUF, &buf) < 0) {
       errno_exit("VIDIOC_QBUF");
+    }
+    if (bDebug) {
+      std::cout << "Debug: VIDIOC_QBUF successful.\n";
     }
 
     // Start capturing
     enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     if (ioctl(fd, VIDIOC_STREAMON, &type) < 0) {
       errno_exit("VIDIOC_STREAMON");
+    }
+    if (bDebug) {
+      std::cout << "Debug: VIDIOC_STREAMON successful.\n";
     }
 
     // Wait for a frame to be ready
@@ -251,10 +312,16 @@ bool captureFrame(const std::string &device_path, cv::Mat &frame) {
     if (r == 0) {
       throw std::runtime_error("Timeout waiting for frame");
     }
+    if (bDebug) {
+      std::cout << "Debug: select successful. A frame is ready.\n";
+    }
 
     // Dequeue the buffer
     if (ioctl(fd, VIDIOC_DQBUF, &buf) < 0) {
       errno_exit("VIDIOC_DQBUF");
+    }
+    if (bDebug) {
+      std::cout << "Debug: VIDIOC_DQBUF successful.\n";
     }
 
     // Save the captured frame to a file using OpenCV
@@ -266,10 +333,16 @@ bool captureFrame(const std::string &device_path, cv::Mat &frame) {
       if (frame.empty()) {
         throw std::runtime_error("Error decoding MJPEG frame");
       }
+      if (bDebug) {
+        std::cout << "Debug: MJPEG frame decoded.\n";
+      }
     } else if (fmt.fmt.pix.pixelformat == V4L2_PIX_FMT_YUYV) {
       cv::Mat yuyv_frame(cv::Size(fmt.fmt.pix.width, fmt.fmt.pix.height),
                          CV_8UC2, buffer);
       cv::cvtColor(yuyv_frame, frame, cv::COLOR_YUV2BGR_YUYV);
+      if (bDebug) {
+        std::cout << "Debug: YUYV frame converted to BGR.\n";
+      }
     } else {
       std::cerr << "Error: Unsupported pixel format 0x" << std::hex
                 << fmt.fmt.pix.pixelformat << std::dec
@@ -279,15 +352,24 @@ bool captureFrame(const std::string &device_path, cv::Mat &frame) {
     if (frame.empty()) {
       errno_exit("error: No frame data captured.");
     }
+    if (bDebug) {
+      std::cout << "Debug: Frame data captured.\n";
+    }
 
     // Stop capturing
     if (ioctl(fd, VIDIOC_STREAMOFF, &type) < 0) {
       errno_exit("VIDIOC_STREAMOFF");
     }
+    if (bDebug) {
+      std::cout << "Debug: VIDIOC_STREAMOFF successful.\n";
+    }
 
     // Unmap the buffer
     if (munmap(buffer, buf.length) < 0) {
       errno_exit("munmap");
+    }
+    if (bDebug) {
+      std::cout << "Debug: munmap successful.\n";
     }
 
     close(fd);
@@ -301,3 +383,4 @@ bool captureFrame(const std::string &device_path, cv::Mat &frame) {
     return false;
   }
 }
+
