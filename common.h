@@ -5,19 +5,36 @@
 #include <map>
 #include <opencv2/opencv.hpp>
 #include <set>
+#include <stdexcept>
 #include <string>
+#include <sstream>
 #include <vector>
 
 // Custom exception class for GEM errors
 class GEMError : public std::runtime_error {
-public:
-  GEMError(const std::string &message) : std::runtime_error(message) {}
-};
+  public:
+    GEMError(const std::string &message, const char* file, int line, const char* function)
+        : std::runtime_error(constructMessage(message, file, line, function)) {}
+  
+  private:
+    static std::string constructMessage(const std::string &message, const char* file, int line, const char* function) {
+      std::stringstream ss;
+      ss << message << " in " << function << " at " << file << ":" << line;
+      return ss.str();
+    }
+  };
+  
+  // Macro for throwing GEMError exceptions with source code information
+  #define THROWGEMERROR(message) \
+  throw GEMError(message, __FILE__, __LINE__, __PRETTY_FUNCTION__);
+  
+  class SGFError : public std::runtime_error {
+  public:
+    SGFError(const std::string &message) : std::runtime_error(message) {}
+  };
 
-class SGFError : public std::runtime_error {
-public:
-  SGFError(const std::string &message) : std::runtime_error(message) {}
-};
+
+
 struct SGFHeader {
   int gm;         // Game
   int ff;         // File Format
