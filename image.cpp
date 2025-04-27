@@ -150,42 +150,127 @@ Mat correctPerspective(const Mat &image) {
 }
 
 pair<vector<double>, vector<double>> detectUniformGrid(const Mat &image) {
-  Mat gray, blurred, edges;
+  // Mat gray, blurred, edges;
+  // cvtColor(image, gray, COLOR_BGR2GRAY);
+  // GaussianBlur(gray, blurred, Size(5, 5), 0);
+  
+  // //Canny(blurred, edges, 50, 150);
+  // /*Experiment with ADAPTIVE_THRESH_MEAN_C vs. ADAPTIVE_THRESH_GAUSSIAN_C, 
+  // and carefully tune the blockSize (e.g., 11, 15, 21 - must be odd) and C
+  // (a constant subtracted from the mean/weighted sum) parameters.*/  
+  // adaptiveThreshold(gray, edges, 255, ADAPTIVE_THRESH_GAUSSIAN_C, THRESH_BINARY, 11, 2);
+
+  // Mat kernel = getStructuringElement(MORPH_RECT, Size(3, 3)); // Adjust kernel size
+  // morphologyEx(edges, edges, MORPH_CLOSE, kernel);
+
+  Mat gray, blurred, edges, morph; // Add morph
+
   cvtColor(image, gray, COLOR_BGR2GRAY);
-  GaussianBlur(gray, blurred, Size(5, 5), 0);
-  
-  //Canny(blurred, edges, 50, 150);
-  /*Experiment with ADAPTIVE_THRESH_MEAN_C vs. ADAPTIVE_THRESH_GAUSSIAN_C, 
-  and carefully tune the blockSize (e.g., 11, 15, 21 - must be odd) and C
-  (a constant subtracted from the mean/weighted sum) parameters.*/  
-  adaptiveThreshold(gray, edges, 255, ADAPTIVE_THRESH_GAUSSIAN_C, THRESH_BINARY, 11, 2);
-  
-  Mat kernel = getStructuringElement(MORPH_RECT, Size(3, 3)); // Adjust kernel size
-  morphologyEx(edges, edges, MORPH_CLOSE, kernel);
 
+  // Stronger Blur (Experiment - But Don't Over-Blur)
+  GaussianBlur(gray, blurred, Size(5, 5), 0); // Or Size(7, 7)
 
-  vector<Vec4i> line_segments;
-  HoughLinesP(edges, line_segments, 1, CV_PI / 180, 50, 30, 10);
+  // Debug: Show blurred
   if (bDebug) {
-    cout << "Number of line segments detected: " << line_segments.size()
-         << endl;
+    imshow("Blurred", blurred);
+    waitKey(0);
   }
+
+  // Adaptive Thresholding (CRITICAL - TUNE CAREFULLY)
+  adaptiveThreshold(blurred, edges, 255, ADAPTIVE_THRESH_GAUSSIAN_C, THRESH_BINARY, 11, 2);
+
+  // Debug: Show edges (before morphology)
+  if (bDebug) {
+    imshow("Edges (Before Morph)", edges);
+    waitKey(0);
+  }
+
+  // Morphological Operations (NUANCED - TUNE VERY CAREFULLY)
+  Mat kernel = getStructuringElement(MORPH_RECT, Size(3, 3)); // Smaller kernel
+  morphologyEx(edges, morph, MORPH_CLOSE, kernel, Point(-1,-1), 1); // 1 iteration
+
+  // Debug: Show morphological output
+  if (bDebug) {
+    imshow("Morph", morph);
+    waitKey(0);
+  }
+
+  edges = morph.clone(); // Use the morphological output for HoughLinesP
+
+
+//  // HoughLinesP Parameters (TUNE THESE CAREFULLY)
+//   int threshold = 10;       // Start low, adjust as needed
+//   int minLineLength = 20;   // Moderate, adjust as needed
+//   int maxLineGap = 15;      // Start higher, adjust as needed
+
+//   vector<Vec4i> line_segments;
+//   HoughLinesP(edges, line_segments, 1, CV_PI / 180, threshold, minLineLength, maxLineGap);
+
+//   if (bDebug) {
+//     cout << "Number of line segments detected: " << line_segments.size() << endl;
+//   }
+int width = edges.cols;
+int height = edges.rows;
+
+// Masks for horizontal and vertical line detection
+Mat horizontal_mask = Mat::zeros(height, width, CV_8U);
+horizontal_mask(Rect(0, height / 2 - 5, width, 10)) = 255; // Horizontal strip
+
+Mat vertical_mask = Mat::zeros(height, width, CV_8U);
+vertical_mask(Rect(width / 2 - 5, 0, 10, height)) = 255;   // Vertical strip
+
+Mat masked_edges;
+vector<Vec4i> horizontal_lines_segments, vertical_lines_segments;
+
+// Detect Horizontal Lines
+bitwise_and(edges, horizontal_mask, masked_edges);
+HoughLinesP(masked_edges, horizontal_lines_segments, 1, CV_PI / 180, 10, 20, 5); // TUNE
+if (bDebug) {
+  cout << "Horizontal line segments: " << horizontal_lines_segments.size() << endl;
+}
+
+// Detect Vertical Lines
+bitwise_and(edges, vertical_mask, masked_edges);
+HoughLinesP(masked_edges, vertical_lines_segments, 1, CV_PI / 180, 10, 20, 5); // TUNE
+if (bDebug) {
+  cout << "Vertical line segments: " << vertical_lines_segments.size() << endl;
+}
 
   vector<Line> horizontal_lines_raw, vertical_lines_raw;
 
-  for (const auto &segment : line_segments) {
-    Point pt1(segment[0], segment[1]);
-    Point pt2(segment[2], segment[3]);
-    double angle = atan2(pt2.y - pt1.y, pt2.x - pt1.x);
-    double center_y = (pt1.y + pt2.y) / 2.0;
-    double center_x = (pt1.x + pt2.x) / 2.0;
+  auto process_segment_labda = [&horizontal_lines_raw,
+                                &vertical_lines_raw](const vector<Vec4i> &in) {
+    for (const auto &segment : in) {
+      Point pt1(segment[0], segment[1]);
+      Point pt2(segment[2], segment[3]);
+      double angle = atan2(pt2.y - pt1.y, pt2.x - pt1.x);
+      double center_y = (pt1.y + pt2.y) / 2.0;
+      double center_x = (pt1.x + pt2.x) / 2.0;
 
-    if (abs(angle) < CV_PI / 18 || abs(abs(angle) - CV_PI) < CV_PI / 18) {
-      horizontal_lines_raw.push_back({center_y, angle});
-    } else if (abs(abs(angle) - CV_PI / 2) < CV_PI / 18) {
-      vertical_lines_raw.push_back({center_x, angle});
+      if (abs(angle) < CV_PI / 18 || abs(abs(angle) - CV_PI) < CV_PI / 18) {
+        horizontal_lines_raw.push_back({center_y, angle});
+      } else if (abs(abs(angle) - CV_PI / 2) < CV_PI / 18) {
+        vertical_lines_raw.push_back({center_x, angle});
+      }
     }
-  }
+  };
+  process_segment_labda(horizontal_lines_segments);
+  process_segment_labda(vertical_lines_segments);
+  // for (const auto &segment : line_segments) {
+  //   Point pt1(segment[0], segment[1]);
+  //   Point pt2(segment[2], segment[3]);
+  //   double angle = atan2(pt2.y - pt1.y, pt2.x - pt1.x);
+  //   double center_y = (pt1.y + pt2.y) / 2.0;
+  //   double center_x = (pt1.x + pt2.x) / 2.0;
+
+  //   if (abs(angle) < CV_PI / 18 || abs(abs(angle) - CV_PI) < CV_PI / 18) {
+  //     horizontal_lines_raw.push_back({center_y, angle});
+  //   } else if (abs(abs(angle) - CV_PI / 2) < CV_PI / 18) {
+  //     vertical_lines_raw.push_back({center_x, angle});
+  //   }
+  // }
+
+
 
   sort(horizontal_lines_raw.begin(), horizontal_lines_raw.end(), compareLines);
   sort(vertical_lines_raw.begin(), vertical_lines_raw.end(), compareLines);
