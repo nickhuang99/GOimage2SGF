@@ -25,12 +25,12 @@ struct Line {
 
 bool compareLines(const Line &a, const Line &b) { return a.value < b.value; }
 
-
-// Helper function to order corners (top-left, top-right, bottom-right, bottom-left)
-void orderCorners(vector<Point2f>& corners) {
+// Helper function to order corners (top-left, top-right, bottom-right,
+// bottom-left)
+void orderCorners(vector<Point2f> &corners) {
   // Calculate centroid
   Point2f centroid(0, 0);
-  for (const auto& p : corners) {
+  for (const auto &p : corners) {
     centroid.x += p.x;
     centroid.y += p.y;
   }
@@ -38,7 +38,7 @@ void orderCorners(vector<Point2f>& corners) {
   centroid.y /= corners.size();
 
   std::sort(corners.begin(), corners.end(),
-            [centroid](const Point2f& a, const Point2f& b) {
+            [centroid](const Point2f &a, const Point2f &b) {
               // Sort by angle from centroid
               return atan2(a.y - centroid.y, a.x - centroid.x) <
                      atan2(b.y - centroid.y, b.x - centroid.x);
@@ -62,7 +62,7 @@ vector<Point2f> getBoardCorners(const Mat &inputImage) {
 }
 
 // Function to correct perspective using hardcoded percentage-based corners
-Mat correctPerspectiveHardcoded(const Mat& inputImage, int dest_percent) {
+Mat correctPerspectiveHardcoded(const Mat &inputImage, int dest_percent) {
   int width = inputImage.cols;
   int height = inputImage.rows;
 
@@ -81,20 +81,22 @@ Mat correctPerspectiveHardcoded(const Mat& inputImage, int dest_percent) {
       Point2f(width * tl_x_percent / 100.0f, height * tl_y_percent / 100.0f),
       Point2f(width * tr_x_percent / 100.0f, height * tr_y_percent / 100.0f),
       Point2f(width * br_x_percent / 100.0f, height * br_y_percent / 100.0f),
-      Point2f(width * bl_x_percent / 100.0f, height * bl_y_percent / 100.0f)
-  };
+      Point2f(width * bl_x_percent / 100.0f, height * bl_y_percent / 100.0f)};
 
   vector<Point2f> output_corners = {
       Point2f(width * dest_percent / 100.0f, height * dest_percent / 100.0f),
-      Point2f(width * (100 - dest_percent) / 100.0f, height * dest_percent / 100.0f),
-      Point2f(width * (100 - dest_percent) / 100.0f, height * (100 - dest_percent) / 100.0f),
-      Point2f(width * dest_percent / 100.0f, height * (100 - dest_percent) / 100.0f)
-  };
+      Point2f(width * (100 - dest_percent) / 100.0f,
+              height * dest_percent / 100.0f),
+      Point2f(width * (100 - dest_percent) / 100.0f,
+              height * (100 - dest_percent) / 100.0f),
+      Point2f(width * dest_percent / 100.0f,
+              height * (100 - dest_percent) / 100.0f)};
 
-
-  Mat perspective_matrix = getPerspectiveTransform(input_corners, output_corners);
+  Mat perspective_matrix =
+      getPerspectiveTransform(input_corners, output_corners);
   Mat outputImage;
-  warpPerspective(inputImage, outputImage, perspective_matrix, Size(width, height));
+  warpPerspective(inputImage, outputImage, perspective_matrix,
+                  Size(width, height));
 
   return outputImage;
 }
@@ -150,19 +152,7 @@ Mat correctPerspective(const Mat &image) {
 }
 
 pair<vector<double>, vector<double>> detectUniformGrid(const Mat &image) {
-  // Mat gray, blurred, edges;
-  // cvtColor(image, gray, COLOR_BGR2GRAY);
-  // GaussianBlur(gray, blurred, Size(5, 5), 0);
-  
-  // //Canny(blurred, edges, 50, 150);
-  // /*Experiment with ADAPTIVE_THRESH_MEAN_C vs. ADAPTIVE_THRESH_GAUSSIAN_C, 
-  // and carefully tune the blockSize (e.g., 11, 15, 21 - must be odd) and C
-  // (a constant subtracted from the mean/weighted sum) parameters.*/  
-  // adaptiveThreshold(gray, edges, 255, ADAPTIVE_THRESH_GAUSSIAN_C, THRESH_BINARY, 11, 2);
-
-  // Mat kernel = getStructuringElement(MORPH_RECT, Size(3, 3)); // Adjust kernel size
-  // morphologyEx(edges, edges, MORPH_CLOSE, kernel);
-
+ 
   Mat gray, blurred, edges, morph; // Add morph
 
   cvtColor(image, gray, COLOR_BGR2GRAY);
@@ -177,7 +167,8 @@ pair<vector<double>, vector<double>> detectUniformGrid(const Mat &image) {
   }
 
   // Adaptive Thresholding (CRITICAL - TUNE CAREFULLY)
-  adaptiveThreshold(blurred, edges, 255, ADAPTIVE_THRESH_GAUSSIAN_C, THRESH_BINARY, 11, 2);
+  adaptiveThreshold(blurred, edges, 255, ADAPTIVE_THRESH_GAUSSIAN_C,
+                    THRESH_BINARY, 11, 2);
 
   // Debug: Show edges (before morphology)
   if (bDebug) {
@@ -187,7 +178,8 @@ pair<vector<double>, vector<double>> detectUniformGrid(const Mat &image) {
 
   // Morphological Operations (NUANCED - TUNE VERY CAREFULLY)
   Mat kernel = getStructuringElement(MORPH_RECT, Size(3, 3)); // Smaller kernel
-  morphologyEx(edges, morph, MORPH_CLOSE, kernel, Point(-1,-1), 1); // 1 iteration
+  morphologyEx(edges, morph, MORPH_CLOSE, kernel, Point(-1, -1),
+               1); // 1 iteration
 
   // Debug: Show morphological output
   if (bDebug) {
@@ -197,44 +189,36 @@ pair<vector<double>, vector<double>> detectUniformGrid(const Mat &image) {
 
   edges = morph.clone(); // Use the morphological output for HoughLinesP
 
+  int width = edges.cols;
+  int height = edges.rows;
 
-//  // HoughLinesP Parameters (TUNE THESE CAREFULLY)
-//   int threshold = 10;       // Start low, adjust as needed
-//   int minLineLength = 20;   // Moderate, adjust as needed
-//   int maxLineGap = 15;      // Start higher, adjust as needed
+  // Masks for horizontal and vertical line detection
+  Mat horizontal_mask = Mat::zeros(height, width, CV_8U);
+  horizontal_mask(Rect(0, height / 2 - 5, width, 10)) = 255; // Horizontal strip
 
-//   vector<Vec4i> line_segments;
-//   HoughLinesP(edges, line_segments, 1, CV_PI / 180, threshold, minLineLength, maxLineGap);
+  Mat vertical_mask = Mat::zeros(height, width, CV_8U);
+  vertical_mask(Rect(width / 2 - 5, 0, 10, height)) = 255; // Vertical strip
 
-//   if (bDebug) {
-//     cout << "Number of line segments detected: " << line_segments.size() << endl;
-//   }
-int width = edges.cols;
-int height = edges.rows;
+  Mat masked_edges;
+  vector<Vec4i> horizontal_lines_segments, vertical_lines_segments;
 
-// Masks for horizontal and vertical line detection
-Mat horizontal_mask = Mat::zeros(height, width, CV_8U);
-horizontal_mask(Rect(0, height / 2 - 5, width, 10)) = 255; // Horizontal strip
+  // Detect Horizontal Lines
+  bitwise_and(edges, horizontal_mask, masked_edges);
+  HoughLinesP(masked_edges, horizontal_lines_segments, 1, CV_PI / 180, 10, 20,
+              5); // TUNE
+  if (bDebug) {
+    cout << "Horizontal line segments: " << horizontal_lines_segments.size()
+         << endl;
+  }
 
-Mat vertical_mask = Mat::zeros(height, width, CV_8U);
-vertical_mask(Rect(width / 2 - 5, 0, 10, height)) = 255;   // Vertical strip
-
-Mat masked_edges;
-vector<Vec4i> horizontal_lines_segments, vertical_lines_segments;
-
-// Detect Horizontal Lines
-bitwise_and(edges, horizontal_mask, masked_edges);
-HoughLinesP(masked_edges, horizontal_lines_segments, 1, CV_PI / 180, 10, 20, 5); // TUNE
-if (bDebug) {
-  cout << "Horizontal line segments: " << horizontal_lines_segments.size() << endl;
-}
-
-// Detect Vertical Lines
-bitwise_and(edges, vertical_mask, masked_edges);
-HoughLinesP(masked_edges, vertical_lines_segments, 1, CV_PI / 180, 10, 20, 5); // TUNE
-if (bDebug) {
-  cout << "Vertical line segments: " << vertical_lines_segments.size() << endl;
-}
+  // Detect Vertical Lines
+  bitwise_and(edges, vertical_mask, masked_edges);
+  HoughLinesP(masked_edges, vertical_lines_segments, 1, CV_PI / 180, 10, 20,
+              5); // TUNE
+  if (bDebug) {
+    cout << "Vertical line segments: " << vertical_lines_segments.size()
+         << endl;
+  }
 
   vector<Line> horizontal_lines_raw, vertical_lines_raw;
 
@@ -256,21 +240,6 @@ if (bDebug) {
   };
   process_segment_labda(horizontal_lines_segments);
   process_segment_labda(vertical_lines_segments);
-  // for (const auto &segment : line_segments) {
-  //   Point pt1(segment[0], segment[1]);
-  //   Point pt2(segment[2], segment[3]);
-  //   double angle = atan2(pt2.y - pt1.y, pt2.x - pt1.x);
-  //   double center_y = (pt1.y + pt2.y) / 2.0;
-  //   double center_x = (pt1.x + pt2.x) / 2.0;
-
-  //   if (abs(angle) < CV_PI / 18 || abs(abs(angle) - CV_PI) < CV_PI / 18) {
-  //     horizontal_lines_raw.push_back({center_y, angle});
-  //   } else if (abs(abs(angle) - CV_PI / 2) < CV_PI / 18) {
-  //     vertical_lines_raw.push_back({center_x, angle});
-  //   }
-  // }
-
-
 
   sort(horizontal_lines_raw.begin(), horizontal_lines_raw.end(), compareLines);
   sort(vertical_lines_raw.begin(), vertical_lines_raw.end(), compareLines);
@@ -296,6 +265,11 @@ if (bDebug) {
       for (size_t j = i + 1; j < raw_lines.size(); ++j) {
         if (!processed[j] &&
             abs(raw_lines[j].value - raw_lines[i].value) < threshold) {
+          if (bDebug) {
+            cout << "Clustering: " << raw_lines[j].value << " and "
+                 << raw_lines[i].value << " (diff: "
+                 << abs(raw_lines[j].value - raw_lines[i].value) << ")" << endl;
+          }
           current_cluster.push_back(raw_lines[j].value);
           processed[j] = true;
         }
@@ -309,8 +283,8 @@ if (bDebug) {
     sort(clustered_values.begin(), clustered_values.end());
     return clustered_values;
   };
-
-  double cluster_threshold = 5.0;
+  // Experiment with values like 0.5, 1.0, 1.5
+  double cluster_threshold = 1.0;
   vector<double> clustered_horizontal_y =
       cluster_and_average_lines(horizontal_lines_raw, cluster_threshold);
   vector<double> clustered_vertical_x =
@@ -478,7 +452,7 @@ if (bDebug) {
     THROWGEMERROR(
         std::string("find_uniform_grid_lines find final_horizontal_y ") +
         Int2Str(final_horizontal_y.size()).str());
-  }  
+  }
   sort(final_horizontal_y.begin(), final_horizontal_y.end());
   sort(final_vertical_x.begin(), final_vertical_x.end());
   if (bDebug) {
@@ -582,7 +556,6 @@ Vec3f getAverageHSV(const Mat &image, Point2f center, int radius) {
 
 // New function for testing perspective transform
 
-
 // Function to process the Go board image and determine the board state
 void processGoBoard(const Mat &image_bgr_in, Mat &board_state,
                     Mat &board_with_stones,
@@ -599,7 +572,22 @@ void processGoBoard(const Mat &image_bgr_in, Mat &board_state,
       detectUniformGrid(image_bgr);
   vector<double> horizontal_lines = grid_lines.first;
   vector<double> vertical_lines = grid_lines.second;
+  if (bDebug) {
+    Mat debug_lines = image_bgr.clone(); // Create a copy for drawing lines
+    // Draw Horizontal Lines
+    for (double y : horizontal_lines) {
+      line(debug_lines, Point(0, y), Point(image_bgr.cols - 1, y),
+          Scalar(0, 0, 255), 2); // Red lines
+    }
 
+    // Draw Vertical Lines
+    for (double x : vertical_lines) {
+      line(debug_lines, Point(x, 0), Point(x, image_bgr.rows - 1),
+          Scalar(0, 255, 0), 2); // Green lines
+    }   
+    imshow("Detected Grid Lines", debug_lines);
+    waitKey(0);    
+  }               
   intersection_points = findIntersections(horizontal_lines, vertical_lines);
   int num_intersections = intersection_points.size();
   int sample_radius = 8;
@@ -647,9 +635,13 @@ void processGoBoard(const Mat &image_bgr_in, Mat &board_state,
 
   cout << fixed << setprecision(2);
 
-  float weight_h = 0.10f;
-  float weight_s = 0.45f;
-  float weight_v = 0.45f;
+  // float weight_h = 0.10f;
+  // float weight_s = 0.45f;
+  // float weight_v = 0.45f;
+
+  float weight_h = 0.60f; // Example: Increased Hue weight
+  float weight_s = 0.20f; // Example: Decreased Saturation weight
+  float weight_v = 0.20f; // Example: Decreased Value weight
 
   for (int i = 0; i < num_intersections; ++i) {
     int row = i / 19;
