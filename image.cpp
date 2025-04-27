@@ -25,11 +25,144 @@ struct Line {
 
 bool compareLines(const Line &a, const Line &b) { return a.value < b.value; }
 
+
+// Helper function to order corners (top-left, top-right, bottom-right, bottom-left)
+void orderCorners(vector<Point2f>& corners) {
+  // Calculate centroid
+  Point2f centroid(0, 0);
+  for (const auto& p : corners) {
+    centroid.x += p.x;
+    centroid.y += p.y;
+  }
+  centroid.x /= corners.size();
+  centroid.y /= corners.size();
+
+  std::sort(corners.begin(), corners.end(),
+            [centroid](const Point2f& a, const Point2f& b) {
+              // Sort by angle from centroid
+              return atan2(a.y - centroid.y, a.x - centroid.x) <
+                     atan2(b.y - centroid.y, b.x - centroid.x);
+            });
+}
+
+// Function to find the corners of the Go board
+vector<Point2f> getBoardCorners(const Mat &inputImage) {
+
+  int TOPWIDTH = 20, TOPHEIGHT = 5, BOTTOMWIDTH = 5, BOTTOMHEIGHT = 50;
+  vector<Point2f> board_corners = {
+      Point2f(inputImage.cols * TOPWIDTH / 100,
+              inputImage.rows * TOPHEIGHT / 100),
+      Point2f(inputImage.cols * (100 - TOPWIDTH) / 100,
+              inputImage.rows * TOPHEIGHT / 100),
+      Point2f(inputImage.cols * (100 - BOTTOMWIDTH) / 100,
+              inputImage.rows * (100 - BOTTOMHEIGHT) / 100),
+      Point2f(inputImage.cols * BOTTOMHEIGHT / 100,
+              inputImage.rows * (100 - BOTTOMWIDTH) / 100)};
+  return board_corners;
+}
+
+// Function to correct perspective using hardcoded percentage-based corners
+Mat correctPerspectiveHardcoded(const Mat& inputImage, int dest_percent) {
+  int width = inputImage.cols;
+  int height = inputImage.rows;
+
+  // Hardcoded corner percentages (You MUST fine-tune these)
+  float tl_x_percent = 20.0f; // Top-left x
+  float tl_y_percent = 20.0f; // Top-left y
+  float tr_x_percent = 85.0f; // Top-right x
+  float tr_y_percent = 20.0f; // Top-right y
+  float br_x_percent = 90.0f; // Bottom-right x
+  float br_y_percent = 80.0f; // Bottom-right y
+  float bl_x_percent = 15.0f; // Bottom-left x
+  float bl_y_percent = 80.0f; // Bottom-left y
+
+  // Calculate corner coordinates
+  vector<Point2f> input_corners = {
+      Point2f(width * tl_x_percent / 100.0f, height * tl_y_percent / 100.0f),
+      Point2f(width * tr_x_percent / 100.0f, height * tr_y_percent / 100.0f),
+      Point2f(width * br_x_percent / 100.0f, height * br_y_percent / 100.0f),
+      Point2f(width * bl_x_percent / 100.0f, height * bl_y_percent / 100.0f)
+  };
+
+  vector<Point2f> output_corners = {
+      Point2f(width * dest_percent / 100.0f, height * dest_percent / 100.0f),
+      Point2f(width * (100 - dest_percent) / 100.0f, height * dest_percent / 100.0f),
+      Point2f(width * (100 - dest_percent) / 100.0f, height * (100 - dest_percent) / 100.0f),
+      Point2f(width * dest_percent / 100.0f, height * (100 - dest_percent) / 100.0f)
+  };
+
+
+  Mat perspective_matrix = getPerspectiveTransform(input_corners, output_corners);
+  Mat outputImage;
+  warpPerspective(inputImage, outputImage, perspective_matrix, Size(width, height));
+
+  return outputImage;
+}
+
+Mat correctPerspective(const Mat &image) {
+  float tl_x_percent = 20.0f; // Original: 19.0f
+  float tl_y_percent = 6.0f;  // Original: 19.0f  (Slightly lower)
+  float tr_x_percent = 73.0f; // Original: 86.0f
+  float tr_y_percent = 5.0f;  // Original: 19.0f  (Slightly lower)
+  float br_x_percent = 97.0f; // Original: 91.0f (Slightly inwards)
+  float br_y_percent = 45.0f; // Original: 81.0f  (Slightly lower)
+  float bl_x_percent = 5.0f;  // Original: 14.0f  (Slightly inwards)
+  float bl_y_percent = 52.0f; // Original: 81.0f  (Slightly lower)
+
+  int width = image.cols;
+  int height = image.rows;
+
+  vector<Point2f> input_corners = {
+      Point2f(width * tl_x_percent / 100.0f, height * tl_y_percent / 100.0f),
+      Point2f(width * tr_x_percent / 100.0f, height * tr_y_percent / 100.0f),
+      Point2f(width * br_x_percent / 100.0f, height * br_y_percent / 100.0f),
+      Point2f(width * bl_x_percent / 100.0f, height * bl_y_percent / 100.0f)};
+
+  int dest_percent = 15; // Start with 15 and adjust if needed
+  vector<Point2f> output_corners = {
+      Point2f(width * dest_percent / 100.0f, height * dest_percent / 100.0f),
+      Point2f(width * (100 - dest_percent) / 100.0f,
+              height * dest_percent / 100.0f),
+      Point2f(width * (100 - dest_percent) / 100.0f,
+              height * (100 - dest_percent) / 100.0f),
+      Point2f(width * dest_percent / 100.0f,
+              height * (100 - dest_percent) / 100.0f)};
+
+  Mat perspective_matrix =
+      getPerspectiveTransform(input_corners, output_corners);
+  Mat corrected_image;
+  warpPerspective(image, corrected_image, perspective_matrix,
+                  Size(width, height));
+  if (bDebug) {
+    // Draw the input and output corners on the original and corrected images
+    for (const auto &corner : input_corners) {
+      circle(image, corner, 5, Scalar(0, 0, 255), -1); // Red circles
+    }
+    for (const auto &corner : output_corners) {
+      circle(corrected_image, corner, 5, Scalar(0, 255, 0),
+             -1); // Green circles
+    }
+    imshow("Original Image with Input Corners", image);
+    imshow("Corrected Image with Output Corners", corrected_image);
+    waitKey(0);
+  }
+  return corrected_image;
+}
+
 pair<vector<double>, vector<double>> detectUniformGrid(const Mat &image) {
   Mat gray, blurred, edges;
   cvtColor(image, gray, COLOR_BGR2GRAY);
   GaussianBlur(gray, blurred, Size(5, 5), 0);
-  Canny(blurred, edges, 50, 150);
+  
+  //Canny(blurred, edges, 50, 150);
+  /*Experiment with ADAPTIVE_THRESH_MEAN_C vs. ADAPTIVE_THRESH_GAUSSIAN_C, 
+  and carefully tune the blockSize (e.g., 11, 15, 21 - must be odd) and C
+  (a constant subtracted from the mean/weighted sum) parameters.*/  
+  adaptiveThreshold(gray, edges, 255, ADAPTIVE_THRESH_GAUSSIAN_C, THRESH_BINARY, 11, 2);
+  
+  Mat kernel = getStructuringElement(MORPH_RECT, Size(3, 3)); // Adjust kernel size
+  morphologyEx(edges, edges, MORPH_CLOSE, kernel);
+
 
   vector<Vec4i> line_segments;
   HoughLinesP(edges, line_segments, 1, CV_PI / 180, 50, 30, 10);
@@ -238,7 +371,8 @@ pair<vector<double>, vector<double>> detectUniformGrid(const Mat &image) {
                            uniform_lines.begin() + start + target_count);
     } else if (uniform_lines.size() < target_count && !values.empty()) {
       if (bDebug) {
-        cout << "uniform_lines is less than target: " << uniform_lines.size() << endl;
+        cout << "uniform_lines is less than target: " << uniform_lines.size()
+             << endl;
       }
       return values; // Fallback
     }
@@ -250,8 +384,16 @@ pair<vector<double>, vector<double>> detectUniformGrid(const Mat &image) {
       find_uniform_grid_lines(clustered_horizontal_y, 19, spacing_tolerance);
   vector<double> final_vertical_x =
       find_uniform_grid_lines(clustered_vertical_x, 19, spacing_tolerance);
-  assert(final_vertical_x.size() == 19);
-  assert(final_horizontal_y.size() == 19);
+  if (final_vertical_x.size() == 19) {
+    THROWGEMERROR(
+        std::string("find_uniform_grid_lines find final_vertical_x ") +
+        Int2Str(final_vertical_x.size()).str());
+  }
+  if (final_horizontal_y.size() == 19) {
+    THROWGEMERROR(
+        std::string("find_uniform_grid_lines find final_horizontal_y ") +
+        Int2Str(final_horizontal_y.size()).str());
+  }  
   sort(final_horizontal_y.begin(), final_horizontal_y.end());
   sort(final_vertical_x.begin(), final_vertical_x.end());
   if (bDebug) {
@@ -353,10 +495,18 @@ Vec3f getAverageHSV(const Mat &image, Point2f center, int radius) {
   }
 }
 
+// New function for testing perspective transform
+
+
 // Function to process the Go board image and determine the board state
-void processGoBoard(const Mat &image_bgr, Mat &board_state,
+void processGoBoard(const Mat &image_bgr_in, Mat &board_state,
                     Mat &board_with_stones,
                     vector<Point2f> &intersection_points) {
+  Mat image_bgr = correctPerspective(image_bgr_in);
+  // imshow("image int", image_bgr_in);
+  //       waitKey(0);
+  // imshow("image correct perspective", image_bgr);
+  //       waitKey(0);
   Mat image_hsv;
   cvtColor(image_bgr, image_hsv, COLOR_BGR2HSV);
 
