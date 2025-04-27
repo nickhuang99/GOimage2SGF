@@ -23,6 +23,21 @@ class GEMError : public std::runtime_error {
       return ss.str();
     }
   };
+  class Int2Str {
+    std::string m_str;
+    public:
+    Int2Str(int n) {
+      std::stringstream ss;
+      ss << n;
+      m_str = ss.str(); 
+    }
+    operator std::string() {
+      return m_str;
+    }
+    std::string str() {
+      return m_str;
+    }
+  };
   
   // Macro for throwing GEMError exceptions with source code information
   #define THROWGEMERROR(message) \
@@ -92,4 +107,5 @@ std::vector<VideoDeviceInfo> probeVideoDevices(int max_devices = 256);
 bool captureSnapshot(const std::string &device_path,
                      const std::string &output_path);
 bool captureFrame(const std::string &device_path, cv::Mat &frame);
+cv::Mat correctPerspective(const cv::Mat &image);
 #endif // UTILITY_H

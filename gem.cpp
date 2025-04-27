@@ -288,6 +288,16 @@ void recordSGFWorkflow(const std::string &device_path,
   }
 }
 
+// New function for testing perspective transform
+void testPerspectiveTransform(const std::string& imagePath) {
+  Mat image = imread(imagePath);
+  if (image.empty()) {
+    cerr << "Error: Could not open image: " << imagePath << endl;
+    return;
+  }
+  Mat correct_image = correctPerspective(image);
+}
+
 int main(int argc, char *argv[]) {
   try {
     if (argc == 1) {
@@ -298,8 +308,8 @@ int main(int argc, char *argv[]) {
     std::string device_path = "/dev/video0"; // Default device
     std::string snapshot_output;
     std::string record_sgf_output;
+    std::string test_image_path; // For -t option
     bool probe_only = false;
-    bool bDebug = false; // Initialize debug flag here
 
     struct option long_options[] = {
         {"process-image", required_argument, nullptr, 'p'},
@@ -313,11 +323,12 @@ int main(int argc, char *argv[]) {
         {"snapshot", required_argument, nullptr, 's'},
         {"device", required_argument, nullptr, 'D'},
         {"record-sgf", required_argument, nullptr, 'r'},
+        {"test-perspective", required_argument, nullptr, 't'}, // Add -t option
         {nullptr, 0, nullptr, 0}};
 
     int c;
     // Process all options in a single loop
-    while ((c = getopt_long(argc, argv, "dp:g:v:c:h:s:r:D:", long_options,
+    while ((c = getopt_long(argc, argv, "dp:g:v:c:h:s:r:D:t:", long_options,
                             &option_index)) != -1) {
       switch (c) {
       case 'd':
@@ -372,6 +383,10 @@ int main(int argc, char *argv[]) {
       case 'r':
         record_sgf_output = optarg;
         break;
+      case 't': // Handle -t option
+        test_image_path = optarg;
+        testPerspectiveTransform(test_image_path);
+        return 0; // Exit after testing
       case '?':
       default:
         displayHelpMessage();
