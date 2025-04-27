@@ -152,14 +152,10 @@ Mat correctPerspective(const Mat &image) {
 }
 
 pair<vector<double>, vector<double>> detectUniformGrid(const Mat &image) {
- 
   Mat gray, blurred, edges, morph; // Add morph
-
   cvtColor(image, gray, COLOR_BGR2GRAY);
-
   // Stronger Blur (Experiment - But Don't Over-Blur)
   GaussianBlur(gray, blurred, Size(5, 5), 0); // Or Size(7, 7)
-
   // Debug: Show blurred
   if (bDebug) {
     imshow("Blurred", blurred);
@@ -267,8 +263,9 @@ pair<vector<double>, vector<double>> detectUniformGrid(const Mat &image) {
             abs(raw_lines[j].value - raw_lines[i].value) < threshold) {
           if (bDebug) {
             cout << "Clustering: " << raw_lines[j].value << " and "
-                 << raw_lines[i].value << " (diff: "
-                 << abs(raw_lines[j].value - raw_lines[i].value) << ")" << endl;
+                 << raw_lines[i].value
+                 << " (diff: " << abs(raw_lines[j].value - raw_lines[i].value)
+                 << ")" << endl;
           }
           current_cluster.push_back(raw_lines[j].value);
           processed[j] = true;
@@ -577,17 +574,17 @@ void processGoBoard(const Mat &image_bgr_in, Mat &board_state,
     // Draw Horizontal Lines
     for (double y : horizontal_lines) {
       line(debug_lines, Point(0, y), Point(image_bgr.cols - 1, y),
-          Scalar(0, 0, 255), 2); // Red lines
+           Scalar(0, 0, 255), 2); // Red lines
     }
 
     // Draw Vertical Lines
     for (double x : vertical_lines) {
       line(debug_lines, Point(x, 0), Point(x, image_bgr.rows - 1),
-          Scalar(0, 255, 0), 2); // Green lines
-    }   
+           Scalar(0, 255, 0), 2); // Green lines
+    }
     imshow("Detected Grid Lines", debug_lines);
-    waitKey(0);    
-  }               
+    waitKey(0);
+  }
   intersection_points = findIntersections(horizontal_lines, vertical_lines);
   int num_intersections = intersection_points.size();
   int sample_radius = 8;
