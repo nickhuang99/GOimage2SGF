@@ -60,7 +60,7 @@ void processImageWorkflow(const std::string &imagePath) {
   cout << "Processing image: " << imagePath << endl;
   cv::Mat image_bgr = imread(imagePath);
   if (image_bgr.empty()) {
-    throw GEMError("Could not open or find the image: " + imagePath);
+    THROWGEMERROR("Could not open or find the image: " + imagePath);
   } else {
     try {
       cv::Mat board_state, board_with_stones;
@@ -74,7 +74,7 @@ void processImageWorkflow(const std::string &imagePath) {
         waitKey(0);
       }
     } catch (const cv::Exception &e) {
-      throw GEMError("OpenCV error in processImageWorkflow: " +
+      THROWGEMERROR("OpenCV error in processImageWorkflow: " +
                      string(e.what())); // Wrap OpenCV exceptions
     }
   }
@@ -86,7 +86,7 @@ void generateSGFWorkflow(const std::string &inputImagePath,
        << " to: " << outputSGFPath << endl;
   cv::Mat image_bgr = imread(inputImagePath);
   if (image_bgr.empty()) {
-    throw GEMError("Could not open or find the input image: " + inputImagePath);
+    THROWGEMERROR("Could not open or find the input image: " + inputImagePath);
   } else {
     try {
       cv::Mat board_state, board_with_stones;
@@ -95,13 +95,13 @@ void generateSGFWorkflow(const std::string &inputImagePath,
       std::string sgf_content = generateSGF(board_state, intersections);
       std::ofstream outfile(outputSGFPath);
       if (!outfile.is_open()) {
-        throw GEMError("Could not open SGF file for writing: " + outputSGFPath);
+        THROWGEMERROR("Could not open SGF file for writing: " + outputSGFPath);
       }
       outfile << sgf_content << endl;
       outfile.close();
       cout << "SGF content written to: " << outputSGFPath << endl;
     } catch (const cv::Exception &e) {
-      throw GEMError("OpenCV error in generateSGFWorkflow: " +
+      THROWGEMERROR("OpenCV error in generateSGFWorkflow: " +
                      string(e.what())); // Wrap OpenCV exceptions
     }
   }
@@ -113,7 +113,7 @@ void verifySGFWorkflow(const std::string &imagePath,
        << endl;
   cv::Mat image_bgr = imread(imagePath);
   if (image_bgr.empty()) {
-    throw GEMError("Could not open or find the image: " + imagePath);
+    THROWGEMERROR("Could not open or find the image: " + imagePath);
   } else {
     try {
       cv::Mat board_state, board_with_stones;
@@ -122,17 +122,17 @@ void verifySGFWorkflow(const std::string &imagePath,
 
       std::ifstream infile(sgfPath);
       if (!infile.is_open()) {
-        throw GEMError("Could not open SGF file: " + sgfPath);
+        THROWGEMERROR("Could not open SGF file: " + sgfPath);
       }
       std::stringstream buffer;
       buffer << infile.rdbuf();
       std::string sgf_data = buffer.str();
       if (sgf_data.empty()) {
-        throw GEMError("Could not read SGF data from: " + sgfPath);
+        THROWGEMERROR("Could not read SGF data from: " + sgfPath);
       }
       verifySGF(image_bgr, sgf_data, intersections);
     } catch (const cv::Exception &e) {
-      throw GEMError("OpenCV error in verifySGFWorkflow: " + string(e.what()));
+      THROWGEMERROR("OpenCV error in verifySGFWorkflow: " + string(e.what()));
     }
   }
 }
@@ -142,24 +142,24 @@ void compareSGFWorkflow(const std::string &sgfPath1,
   cout << "Comparing SGF files: " << sgfPath1 << " and " << sgfPath2 << endl;
   std::ifstream infile1(sgfPath1);
   if (!infile1.is_open()) {
-    throw GEMError("Could not open the first SGF file: " + sgfPath1);
+    THROWGEMERROR("Could not open the first SGF file: " + sgfPath1);
   }
   std::stringstream buffer1;
   buffer1 << infile1.rdbuf();
   std::string sgf_data1 = buffer1.str();
   if (sgf_data1.empty()) {
-    throw GEMError("Could not read SGF data from: " + sgfPath1);
+    THROWGEMERROR("Could not read SGF data from: " + sgfPath1);
   }
 
   std::ifstream infile2(sgfPath2);
   if (!infile2.is_open()) {
-    throw GEMError("Could not open the second SGF file: " + sgfPath2);
+    THROWGEMERROR("Could not open the second SGF file: " + sgfPath2);
   }
   std::stringstream buffer2;
   buffer2 << infile2.rdbuf();
   std::string sgf_data2 = buffer2.str();
   if (sgf_data2.empty()) {
-    throw GEMError("Could not read SGF data from: " + sgfPath2);
+    THROWGEMERROR("Could not read SGF data from: " + sgfPath2);
   }
 
   if (compareSGF(sgf_data1, sgf_data2)) {
@@ -173,13 +173,13 @@ void parseSGFWorkflow(const std::string &sgfPath) {
   cout << "Parsing SGF file: " << sgfPath << endl;
   std::ifstream infile(sgfPath);
   if (!infile.is_open()) {
-    throw GEMError("Could not open SGF file: " + sgfPath);
+    THROWGEMERROR("Could not open SGF file: " + sgfPath);
   }
   std::stringstream buffer;
   buffer << infile.rdbuf();
   std::string sgf_content = buffer.str();
   if (sgf_content.empty()) {
-    throw GEMError("Could not read SGF data from: " + sgfPath);
+    THROWGEMERROR("Could not read SGF data from: " + sgfPath);
   }
 
   std::set<std::pair<int, int>> setupBlack, setupWhite;
@@ -220,7 +220,7 @@ void parseSGFWorkflow(const std::string &sgfPath) {
       }
     }
   } catch (const SGFError &e) {
-    throw GEMError("SGF parsing error: " + string(e.what())); // Wrap SGF errors
+    THROWGEMERROR("SGF parsing error: " + string(e.what())); // Wrap SGF errors
   }
 }
 void probeVideoDevicesWorkflow() {
@@ -265,7 +265,7 @@ void recordSGFWorkflow(const std::string &device_path,
   Mat captured_image;
   try {
     if (!captureFrame(device_path, captured_image)) { // Use captureFrame
-      throw GEMError("Failed to capture frame from device.");
+      THROWGEMERROR("Failed to capture frame from device.");
     }
 
     Mat board_state, board_with_stones;
@@ -278,13 +278,13 @@ void recordSGFWorkflow(const std::string &device_path,
 
     ofstream outfile(output_sgf);
     if (!outfile.is_open()) {
-      throw GEMError("Could not open SGF file for writing: " + output_sgf);
+      THROWGEMERROR("Could not open SGF file for writing: " + output_sgf);
     }
     outfile << sgf_content << endl;
     outfile.close();
     cout << "SGF content written to: " << output_sgf << endl;
   } catch (const cv::Exception &e) {
-    throw GEMError("OpenCV error in recordSGFWorkflow: " + string(e.what()));
+    THROWGEMERROR("OpenCV error in recordSGFWorkflow: " + string(e.what()));
   }
 }
 
@@ -348,7 +348,7 @@ int main(int argc, char *argv[]) {
         if (optind < argc) {
           generateSGFWorkflow(optarg, argv[optind++]);
         } else {
-          throw GEMError(
+          THROWGEMERROR(
               "-g option requires an input image path and an output SGF path.");
         }
         break;
@@ -356,14 +356,14 @@ int main(int argc, char *argv[]) {
         if (optind < argc) {
           verifySGFWorkflow(optarg, argv[optind++]);
         } else {
-          throw GEMError("-v option requires an image path and an SGF path.");
+          THROWGEMERROR("-v option requires an image path and an SGF path.");
         }
         break;
       case 'c':
         if (optind < argc) {
           compareSGFWorkflow(optarg, argv[optind++]);
         } else {
-          throw GEMError("-c option requires two SGF paths.");
+          THROWGEMERROR("-c option requires two SGF paths.");
         }
         break;
       case 'h':
@@ -414,6 +414,5 @@ int main(int argc, char *argv[]) {
     cerr << "An unknown error occurred." << endl;
     return 1;
   }
-
   return 0;
 }

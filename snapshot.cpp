@@ -35,10 +35,6 @@ std::map<uint32_t, std::string> format_descriptions = {
     {V4L2_PIX_FMT_NV12, "NV12"},
 };
 
-// Error handling helper function
-void errno_exit(const char *s) {
-  throw std::runtime_error(s + std::string(" error ") + std::to_string(errno));
-}
 
 // Function to get human-readable description for a capability
 std::string getCapabilityDescription(uint32_t cap) {
@@ -166,7 +162,7 @@ bool captureSnapshot(const std::string &device_path,
   try {
     if (captureFrame(device_path, frame)) {
       if (!frame.empty() && !cv::imwrite(output_path, frame)) {
-        throw std::runtime_error("Failed to save image");
+        THROWGEMERROR("Failed to save image");
       } else if (frame.empty()) {
         std::cerr << "Warning: No frame data to save.\n";
         return false;
@@ -185,7 +181,7 @@ bool captureFrame(const std::string &device_path, cv::Mat &frame) {
   try {
     fd = open(device_path.c_str(), O_RDWR | O_NONBLOCK, 0);
     if (fd < 0) {
-      errno_exit("Failed to open device for capture");
+      THROWGEMERROR("Failed to open device for capture");
     }
     if (bDebug) {
       std::cout << "Debug: Device " << device_path << " opened for capture.\n";
@@ -193,21 +189,21 @@ bool captureFrame(const std::string &device_path, cv::Mat &frame) {
 
     struct v4l2_capability cap;
     if (ioctl(fd, VIDIOC_QUERYCAP, &cap) < 0) {
-      errno_exit("VIDIOC_QUERYCAP during capture");
+      THROWGEMERROR("VIDIOC_QUERYCAP during capture");
     }
     if (bDebug) {
       std::cout << "Debug: VIDIOC_QUERYCAP successful.\n";
     }
 
     if (!(cap.capabilities & V4L2_CAP_VIDEO_CAPTURE)) {
-      throw std::runtime_error("Device does not support video capture");
+      THROWGEMERROR("Device does not support video capture");
     }
     if (bDebug) {
       std::cout << "Debug: Device supports video capture.\n";
     }
 
     if (!(cap.capabilities & V4L2_CAP_STREAMING)) {
-      throw std::runtime_error("Device does not support streaming");
+      THROWGEMERROR("Device does not support streaming");
     }
     if (bDebug) {
       std::cout << "Debug: Device supports streaming.\n";
@@ -226,7 +222,7 @@ bool captureFrame(const std::string &device_path, cv::Mat &frame) {
                 << std::endl;
       fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_YUYV;
       if (ioctl(fd, VIDIOC_S_FMT, &fmt) < 0) {
-        errno_exit("Failed to set YUYV format");
+        THROWGEMERROR("Failed to set YUYV format");
       }
     }
     if (bDebug) {
@@ -244,7 +240,7 @@ bool captureFrame(const std::string &device_path, cv::Mat &frame) {
     req.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     req.memory = V4L2_MEMORY_MMAP;
     if (ioctl(fd, VIDIOC_REQBUFS, &req) < 0) {
-      errno_exit("VIDIOC_REQBUFS");
+      THROWGEMERROR("VIDIOC_REQBUFS");
     }
     if (bDebug) {
       std::cout << "Debug: VIDIOC_REQBUFS successful. Requested " << req.count
@@ -252,7 +248,7 @@ bool captureFrame(const std::string &device_path, cv::Mat &frame) {
     }
 
     if (req.count < 1) {
-      throw std::runtime_error("Insufficient buffer memory");
+      THROWGEMERROR("Insufficient buffer memory");
     }
     if (bDebug) {
       std::cout << "Debug: At least 1 buffer allocated.\n";
@@ -265,7 +261,7 @@ bool captureFrame(const std::string &device_path, cv::Mat &frame) {
     buf.memory = V4L2_MEMORY_MMAP;
     buf.index = 0;
     if (ioctl(fd, VIDIOC_QUERYBUF, &buf) < 0) {
-      errno_exit("VIDIOC_QUERYBUF");
+      THROWGEMERROR("VIDIOC_QUERYBUF");
     }
     if (bDebug) {
       std::cout << "Debug: VIDIOC_QUERYBUF successful.\n";
@@ -274,7 +270,7 @@ bool captureFrame(const std::string &device_path, cv::Mat &frame) {
     void *buffer = mmap(NULL, buf.length, PROT_READ | PROT_WRITE, MAP_SHARED,
                         fd, buf.m.offset);
     if (buffer == MAP_FAILED) {
-      errno_exit("mmap");
+      THROWGEMERROR("mmap");
     }
     if (bDebug) {
       std::cout << "Debug: mmap successful. Buffer address: " << buffer
@@ -283,7 +279,7 @@ bool captureFrame(const std::string &device_path, cv::Mat &frame) {
 
     // Queue the buffer
     if (ioctl(fd, VIDIOC_QBUF, &buf) < 0) {
-      errno_exit("VIDIOC_QBUF");
+      THROWGEMERROR("VIDIOC_QBUF");
     }
     if (bDebug) {
       std::cout << "Debug: VIDIOC_QBUF successful.\n";
@@ -292,7 +288,7 @@ bool captureFrame(const std::string &device_path, cv::Mat &frame) {
     // Start capturing
     enum v4l2_buf_type type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     if (ioctl(fd, VIDIOC_STREAMON, &type) < 0) {
-      errno_exit("VIDIOC_STREAMON");
+      THROWGEMERROR("VIDIOC_STREAMON");
     }
     if (bDebug) {
       std::cout << "Debug: VIDIOC_STREAMON successful.\n";
@@ -307,10 +303,10 @@ bool captureFrame(const std::string &device_path, cv::Mat &frame) {
     tv.tv_usec = 0;
     int r = select(fd + 1, &fds, NULL, NULL, &tv);
     if (r < 0) {
-      errno_exit("select");
+      THROWGEMERROR("select");
     }
     if (r == 0) {
-      throw std::runtime_error("Timeout waiting for frame");
+      THROWGEMERROR("Timeout waiting for frame");
     }
     if (bDebug) {
       std::cout << "Debug: select successful. A frame is ready.\n";
@@ -318,7 +314,7 @@ bool captureFrame(const std::string &device_path, cv::Mat &frame) {
 
     // Dequeue the buffer
     if (ioctl(fd, VIDIOC_DQBUF, &buf) < 0) {
-      errno_exit("VIDIOC_DQBUF");
+      THROWGEMERROR("VIDIOC_DQBUF");
     }
     if (bDebug) {
       std::cout << "Debug: VIDIOC_DQBUF successful.\n";
@@ -331,7 +327,7 @@ bool captureFrame(const std::string &device_path, cv::Mat &frame) {
                                   buf.bytesused);
       frame = cv::imdecode(cv::Mat(data), cv::IMREAD_COLOR);
       if (frame.empty()) {
-        throw std::runtime_error("Error decoding MJPEG frame");
+        THROWGEMERROR("Error decoding MJPEG frame");
       }
       if (bDebug) {
         std::cout << "Debug: MJPEG frame decoded.\n";
@@ -350,7 +346,7 @@ bool captureFrame(const std::string &device_path, cv::Mat &frame) {
     }
 
     if (frame.empty()) {
-      errno_exit("error: No frame data captured.");
+      THROWGEMERROR("error: No frame data captured.");
     }
     if (bDebug) {
       std::cout << "Debug: Frame data captured.\n";
@@ -358,7 +354,7 @@ bool captureFrame(const std::string &device_path, cv::Mat &frame) {
 
     // Stop capturing
     if (ioctl(fd, VIDIOC_STREAMOFF, &type) < 0) {
-      errno_exit("VIDIOC_STREAMOFF");
+      THROWGEMERROR("VIDIOC_STREAMOFF");
     }
     if (bDebug) {
       std::cout << "Debug: VIDIOC_STREAMOFF successful.\n";
@@ -366,7 +362,7 @@ bool captureFrame(const std::string &device_path, cv::Mat &frame) {
 
     // Unmap the buffer
     if (munmap(buffer, buf.length) < 0) {
-      errno_exit("munmap");
+      THROWGEMERROR("munmap");
     }
     if (bDebug) {
       std::cout << "Debug: munmap successful.\n";
