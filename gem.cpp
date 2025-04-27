@@ -299,7 +299,7 @@ int main(int argc, char *argv[]) {
     std::string snapshot_output;
     std::string record_sgf_output;
     bool probe_only = false;
-    bool device_specified = false; // Flag to track if --device is used
+    bool bDebug = false; // Initialize debug flag here
 
     struct option long_options[] = {
         {"process-image", required_argument, nullptr, 'p'},
@@ -316,9 +316,9 @@ int main(int argc, char *argv[]) {
         {nullptr, 0, nullptr, 0}};
 
     int c;
-    // Process initial options (debug and device)
-    while ((c = getopt_long(argc, argv, "dD:", long_options, &option_index)) !=
-           -1) {
+    // Process all options in a single loop
+    while ((c = getopt_long(argc, argv, "dp:g:v:c:h:s:r:D:", long_options,
+                            &option_index)) != -1) {
       switch (c) {
       case 'd':
         bDebug = true;
@@ -326,21 +326,7 @@ int main(int argc, char *argv[]) {
         break;
       case 'D':
         device_path = optarg;
-        device_specified = true;
         break;
-      case '?':
-        displayHelpMessage();
-        return 1;
-      default:
-        break;
-      }
-    }
-    optind = 1; // Reset getopt_long to parse the rest of the options
-
-    // Process the remaining options
-    while ((c = getopt_long(argc, argv, "p:g:v:c:hs:r:", long_options,
-                            &option_index)) != -1) {
-      switch (c) {
       case 'p':
         processImageWorkflow(optarg);
         break;
@@ -392,6 +378,7 @@ int main(int argc, char *argv[]) {
         return 1;
       }
     }
+
     // Handle any remaining non-option arguments here if needed
     if (probe_only) {
       return 0; // Exit if only probing devices
