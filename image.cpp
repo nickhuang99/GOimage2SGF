@@ -30,7 +30,7 @@ bool compareLines(const Line &a, const Line &b) { return a.value < b.value; }
 vector<Point2f> getBoardCorners(const Mat &inputImage) {
 
   float tl_x_percent = 20.0f; // Original: 19.0f
-  float tl_y_percent = 6.0f;  // Original: 19.0f  (Slightly lower)
+  float tl_y_percent = 7.0f;  // Original: 19.0f  (Slightly lower)
   float tr_x_percent = 73.0f; // Original: 86.0f
   float tr_y_percent = 5.0f;  // Original: 19.0f  (Slightly lower)
   float br_x_percent = 97.0f; // Original: 91.0f (Slightly inwards)
@@ -122,37 +122,55 @@ Mat preprocessImage(const Mat &image, bool bDebug) {
 
 // 2. Line Segment Detection Function
 pair<vector<Vec4i>, vector<Vec4i>> detectLineSegments(const Mat &edges,
-                                                        bool bDebug) {
+                                                      bool bDebug) {
   int width = edges.cols;
   int height = edges.rows;
 
   // 1. Get Board Corners (You'll need to implement this correctly)
   vector<Point2f> board_corners = getBoardCornersCorrected(edges);
-  float board_height =
-      board_corners[2].y - board_corners[0].y;                 // Approx. height
-  float board_width = board_corners[1].x - board_corners[0].x; // Approx. width
-
+  float board_height = board_corners[2].y - board_corners[0].y;
+  float board_width = board_corners[1].x - board_corners[0].x;
+  if (bDebug) {
+    cout << "board_height: " << board_height << endl
+         << "board_width: " << board_width << endl;
+  }
   // 2. Calculate Average Spacing (Ensure no division by zero)
-  int avg_vertical_spacing =
-      board_height > 0 ? (int)(board_height / 19.0f) : 10;
-  int avg_horizontal_spacing =
-      board_width > 0 ? (int)(board_width / 19.0f) : 10;
+  const int default_horizontal_mask_height = 10;
+  const int default_vertical_mask_width = 10;
 
-  // 3. Calculate Mask Dimensions (Ensure reasonable values)
-  const int HORIZONTAL_MASK_HEIGHT =
-      max(3, avg_vertical_spacing - 2);                               // Example
-  const int VERTICAL_MASK_WIDTH = max(3, avg_horizontal_spacing - 2); // Example
-  const int MASK_CENTER_OFFSET =
-      HORIZONTAL_MASK_HEIGHT / 2; // Or VERTICAL_MASK_WIDTH/2
+  int avg_vertical_spacing = board_height > 0 ? (int)(board_height / 19.0f)
+                                              : default_horizontal_mask_height;
+  int avg_horizontal_spacing = board_width > 0 ? (int)(board_width / 19.0f)
+                                               : default_vertical_mask_width;
+
+  // 3. Calculate Mask Dimensions (Local, Read-Only Variables)
+  const int horizontal_mask_height = max(3, avg_vertical_spacing - 2);
+  const int vertical_mask_width = max(3, avg_horizontal_spacing - 2);
+
+  // Calculate Rect Width (using board width divided by 2*19)
+  const int GO_BOARD_GRID_NUMBER_BY_2 = 2 * 19;
+  int half_rect_width = (board_width > GO_BOARD_GRID_NUMBER_BY_2)
+                            ? (board_width / GO_BOARD_GRID_NUMBER_BY_2)
+                            : 1;
+  int half_rect_height = (board_height > GO_BOARD_GRID_NUMBER_BY_2)
+                             ? (board_height / GO_BOARD_GRID_NUMBER_BY_2)
+                             : 1;
+
+  // Define the Rects for the masks (YOUR CORRECTED LOGIC!)
+  Rect horizontal_rect(static_cast<int>(board_corners[0].x - half_rect_width),
+                       static_cast<int>(board_corners[0].y - half_rect_height),
+                       board_width - 2 * half_rect_width, half_rect_height * 2);
+
+  Rect vertical_rect(static_cast<int>(board_corners[0].x - half_rect_width),
+                     static_cast<int>(board_corners[0].y - half_rect_height),
+                     half_rect_width * 2, board_height - 2 * half_rect_height);
 
   // Masks for horizontal and vertical line detection
   Mat horizontal_mask = Mat::zeros(height, width, CV_8U);
-  horizontal_mask(Rect(0, height / 2 - MASK_CENTER_OFFSET, width,
-                       HORIZONTAL_MASK_HEIGHT)) = 255;
+  horizontal_mask(horizontal_rect) = 255;
 
   Mat vertical_mask = Mat::zeros(height, width, CV_8U);
-  vertical_mask(Rect(width / 2 - MASK_CENTER_OFFSET, 0, VERTICAL_MASK_WIDTH,
-                     height)) = 255;
+  vertical_mask(vertical_rect) = 255;
 
   Mat masked_edges;
   vector<Vec4i> horizontal_lines_segments, vertical_lines_segments;
@@ -169,8 +187,20 @@ pair<vector<Vec4i>, vector<Vec4i>> detectLineSegments(const Mat &edges,
          << endl;
     cout << "Vertical line segments: " << vertical_lines_segments.size()
          << endl;
+
+    // Visualize Masks
+    Mat mask_visualization = edges.clone(); // Copy the edge image
+    Scalar mask_color = Scalar(0); // Use black color
+    int mask_thickness = 2;
+
+    rectangle(mask_visualization, horizontal_rect, mask_color,
+              mask_thickness); // Draw horizontal mask (gray rectangle)
+    rectangle(mask_visualization, vertical_rect, mask_color,
+              mask_thickness); // Draw vertical mask (gray rectangle)
+    imshow("Masks Rect", mask_visualization);
+    waitKey(0);
   }
-  return std::make_pair(horizontal_lines_segments, vertical_lines_segments);  
+  return std::make_pair(horizontal_lines_segments, vertical_lines_segments);
 }
 
 // 3. Convert Line Segments to Lines
