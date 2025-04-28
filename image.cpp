@@ -25,25 +25,6 @@ struct Line {
 
 bool compareLines(const Line &a, const Line &b) { return a.value < b.value; }
 
-// Helper function to order corners (top-left, top-right, bottom-right,
-// bottom-left)
-void orderCorners(vector<Point2f> &corners) {
-  // Calculate centroid
-  Point2f centroid(0, 0);
-  for (const auto &p : corners) {
-    centroid.x += p.x;
-    centroid.y += p.y;
-  }
-  centroid.x /= corners.size();
-  centroid.y /= corners.size();
-
-  std::sort(corners.begin(), corners.end(),
-            [centroid](const Point2f &a, const Point2f &b) {
-              // Sort by angle from centroid
-              return atan2(a.y - centroid.y, a.x - centroid.x) <
-                     atan2(b.y - centroid.y, b.x - centroid.x);
-            });
-}
 
 // Function to find the corners of the Go board
 vector<Point2f> getBoardCorners(const Mat &inputImage) {
@@ -262,7 +243,7 @@ vector<double> clusterAndAverageLines(const vector<Line> &raw_lines,
 }
 
 // 5. Find Uniform Grid Lines
-vector<double> findUniformGridLines(const vector<double> &values,
+vector<double> findUniformGridLines(vector<double>& values,
                                     int target_count, double tolerance,
                                     bool bDebug) {
   if (values.size() < target_count / 2) {
