@@ -48,60 +48,6 @@ void orderCorners(vector<Point2f> &corners) {
 // Function to find the corners of the Go board
 vector<Point2f> getBoardCorners(const Mat &inputImage) {
 
-  int TOPWIDTH = 20, TOPHEIGHT = 5, BOTTOMWIDTH = 5, BOTTOMHEIGHT = 50;
-  vector<Point2f> board_corners = {
-      Point2f(inputImage.cols * TOPWIDTH / 100,
-              inputImage.rows * TOPHEIGHT / 100),
-      Point2f(inputImage.cols * (100 - TOPWIDTH) / 100,
-              inputImage.rows * TOPHEIGHT / 100),
-      Point2f(inputImage.cols * (100 - BOTTOMWIDTH) / 100,
-              inputImage.rows * (100 - BOTTOMHEIGHT) / 100),
-      Point2f(inputImage.cols * BOTTOMHEIGHT / 100,
-              inputImage.rows * (100 - BOTTOMWIDTH) / 100)};
-  return board_corners;
-}
-
-// Function to correct perspective using hardcoded percentage-based corners
-Mat correctPerspectiveHardcoded(const Mat &inputImage, int dest_percent) {
-  int width = inputImage.cols;
-  int height = inputImage.rows;
-
-  // Hardcoded corner percentages (You MUST fine-tune these)
-  float tl_x_percent = 20.0f; // Top-left x
-  float tl_y_percent = 20.0f; // Top-left y
-  float tr_x_percent = 85.0f; // Top-right x
-  float tr_y_percent = 20.0f; // Top-right y
-  float br_x_percent = 90.0f; // Bottom-right x
-  float br_y_percent = 80.0f; // Bottom-right y
-  float bl_x_percent = 15.0f; // Bottom-left x
-  float bl_y_percent = 80.0f; // Bottom-left y
-
-  // Calculate corner coordinates
-  vector<Point2f> input_corners = {
-      Point2f(width * tl_x_percent / 100.0f, height * tl_y_percent / 100.0f),
-      Point2f(width * tr_x_percent / 100.0f, height * tr_y_percent / 100.0f),
-      Point2f(width * br_x_percent / 100.0f, height * br_y_percent / 100.0f),
-      Point2f(width * bl_x_percent / 100.0f, height * bl_y_percent / 100.0f)};
-
-  vector<Point2f> output_corners = {
-      Point2f(width * dest_percent / 100.0f, height * dest_percent / 100.0f),
-      Point2f(width * (100 - dest_percent) / 100.0f,
-              height * dest_percent / 100.0f),
-      Point2f(width * (100 - dest_percent) / 100.0f,
-              height * (100 - dest_percent) / 100.0f),
-      Point2f(width * dest_percent / 100.0f,
-              height * (100 - dest_percent) / 100.0f)};
-
-  Mat perspective_matrix =
-      getPerspectiveTransform(input_corners, output_corners);
-  Mat outputImage;
-  warpPerspective(inputImage, outputImage, perspective_matrix,
-                  Size(width, height));
-
-  return outputImage;
-}
-
-Mat correctPerspective(const Mat &image) {
   float tl_x_percent = 20.0f; // Original: 19.0f
   float tl_y_percent = 6.0f;  // Original: 19.0f  (Slightly lower)
   float tr_x_percent = 73.0f; // Original: 86.0f
@@ -110,16 +56,20 @@ Mat correctPerspective(const Mat &image) {
   float br_y_percent = 45.0f; // Original: 81.0f  (Slightly lower)
   float bl_x_percent = 5.0f;  // Original: 14.0f  (Slightly inwards)
   float bl_y_percent = 52.0f; // Original: 81.0f  (Slightly lower)
-
-  int width = image.cols;
-  int height = image.rows;
-
-  vector<Point2f> input_corners = {
+  int width = inputImage.cols;
+  int height = inputImage.rows;
+  vector<Point2f> board_corners = {
       Point2f(width * tl_x_percent / 100.0f, height * tl_y_percent / 100.0f),
       Point2f(width * tr_x_percent / 100.0f, height * tr_y_percent / 100.0f),
       Point2f(width * br_x_percent / 100.0f, height * br_y_percent / 100.0f),
       Point2f(width * bl_x_percent / 100.0f, height * bl_y_percent / 100.0f)};
+  return board_corners;
+}
 
+
+vector<Point2f> getBoardCornersCorrected(const Mat& image){
+  int width = image.cols;
+  int height = image.rows;
   int dest_percent = 15; // Start with 15 and adjust if needed
   vector<Point2f> output_corners = {
       Point2f(width * dest_percent / 100.0f, height * dest_percent / 100.0f),
@@ -129,7 +79,16 @@ Mat correctPerspective(const Mat &image) {
               height * (100 - dest_percent) / 100.0f),
       Point2f(width * dest_percent / 100.0f,
               height * (100 - dest_percent) / 100.0f)};
+  return output_corners;
+}
 
+Mat correctPerspective(const Mat &image) {
+  int width = image.cols;
+  int height = image.rows;
+
+  vector<Point2f> input_corners = getBoardCorners(image);
+
+  vector<Point2f> output_corners = getBoardCornersCorrected(image);
   Mat perspective_matrix =
       getPerspectiveTransform(input_corners, output_corners);
   Mat corrected_image;
@@ -151,141 +110,301 @@ Mat correctPerspective(const Mat &image) {
   return corrected_image;
 }
 
-pair<vector<double>, vector<double>> detectUniformGrid(const Mat &image) {
-  Mat gray, blurred, edges, morph; // Add morph
+// 1. Preprocessing Function
+Mat preprocessImage(const Mat &image, bool bDebug) {
+  Mat gray, blurred, edges;
   cvtColor(image, gray, COLOR_BGR2GRAY);
-  // Stronger Blur (Experiment - But Don't Over-Blur)
   GaussianBlur(gray, blurred, Size(5, 5), 0); // Or Size(7, 7)
-  // Debug: Show blurred
+
   if (bDebug) {
     imshow("Blurred", blurred);
     waitKey(0);
   }
 
-  // Adaptive Thresholding (CRITICAL - TUNE CAREFULLY)
   adaptiveThreshold(blurred, edges, 255, ADAPTIVE_THRESH_GAUSSIAN_C,
                     THRESH_BINARY, 11, 2);
 
-  // Debug: Show edges (before morphology)
   if (bDebug) {
     imshow("Edges (Before Morph)", edges);
     waitKey(0);
   }
 
-  // Morphological Operations (NUANCED - TUNE VERY CAREFULLY)
-  Mat kernel = getStructuringElement(MORPH_RECT, Size(3, 3)); // Smaller kernel
-  morphologyEx(edges, morph, MORPH_CLOSE, kernel, Point(-1, -1),
-               1); // 1 iteration
+  Mat kernel = getStructuringElement(MORPH_RECT, Size(3, 3));
+  morphologyEx(edges, edges, MORPH_CLOSE, kernel, Point(-1, -1), 1);
 
-  // Debug: Show morphological output
   if (bDebug) {
-    imshow("Morph", morph);
+    imshow("Morph", edges);
     waitKey(0);
   }
+  return edges;
+}
 
-  edges = morph.clone(); // Use the morphological output for HoughLinesP
-
+// 2. Line Segment Detection Function
+pair<vector<Vec4i>, vector<Vec4i>> detectLineSegments(const Mat &edges,
+                                                        bool bDebug) {
   int width = edges.cols;
   int height = edges.rows;
 
+  // 1. Get Board Corners (You'll need to implement this correctly)
+  vector<Point2f> board_corners = getBoardCornersCorrected(edges);
+  float board_height =
+      board_corners[2].y - board_corners[0].y;                 // Approx. height
+  float board_width = board_corners[1].x - board_corners[0].x; // Approx. width
+
+  // 2. Calculate Average Spacing (Ensure no division by zero)
+  int avg_vertical_spacing =
+      board_height > 0 ? (int)(board_height / 19.0f) : 10;
+  int avg_horizontal_spacing =
+      board_width > 0 ? (int)(board_width / 19.0f) : 10;
+
+  // 3. Calculate Mask Dimensions (Ensure reasonable values)
+  const int HORIZONTAL_MASK_HEIGHT =
+      max(3, avg_vertical_spacing - 2);                               // Example
+  const int VERTICAL_MASK_WIDTH = max(3, avg_horizontal_spacing - 2); // Example
+  const int MASK_CENTER_OFFSET =
+      HORIZONTAL_MASK_HEIGHT / 2; // Or VERTICAL_MASK_WIDTH/2
+
   // Masks for horizontal and vertical line detection
   Mat horizontal_mask = Mat::zeros(height, width, CV_8U);
-  horizontal_mask(Rect(0, height / 2 - 5, width, 10)) = 255; // Horizontal strip
+  horizontal_mask(Rect(0, height / 2 - MASK_CENTER_OFFSET, width,
+                       HORIZONTAL_MASK_HEIGHT)) = 255;
 
   Mat vertical_mask = Mat::zeros(height, width, CV_8U);
-  vertical_mask(Rect(width / 2 - 5, 0, 10, height)) = 255; // Vertical strip
+  vertical_mask(Rect(width / 2 - MASK_CENTER_OFFSET, 0, VERTICAL_MASK_WIDTH,
+                     height)) = 255;
 
   Mat masked_edges;
   vector<Vec4i> horizontal_lines_segments, vertical_lines_segments;
 
-  // Detect Horizontal Lines
   bitwise_and(edges, horizontal_mask, masked_edges);
   HoughLinesP(masked_edges, horizontal_lines_segments, 1, CV_PI / 180, 10, 20,
-              5); // TUNE
+              5);
+
+  bitwise_and(edges, vertical_mask, masked_edges);
+  HoughLinesP(masked_edges, vertical_lines_segments, 1, CV_PI / 180, 10, 20, 5);
+
   if (bDebug) {
     cout << "Horizontal line segments: " << horizontal_lines_segments.size()
          << endl;
-  }
-
-  // Detect Vertical Lines
-  bitwise_and(edges, vertical_mask, masked_edges);
-  HoughLinesP(masked_edges, vertical_lines_segments, 1, CV_PI / 180, 10, 20,
-              5); // TUNE
-  if (bDebug) {
     cout << "Vertical line segments: " << vertical_lines_segments.size()
          << endl;
   }
+  return std::make_pair(horizontal_lines_segments, vertical_lines_segments);  
+}
 
+// 3. Convert Line Segments to Lines
+pair<vector<Line>, vector<Line>>
+convertSegmentsToLines(const vector<Vec4i> &horizontal_segments,
+                       const vector<Vec4i> &vertical_segments, bool bDebug) {
   vector<Line> horizontal_lines_raw, vertical_lines_raw;
 
-  auto process_segment_labda = [&horizontal_lines_raw,
-                                &vertical_lines_raw](const vector<Vec4i> &in) {
-    for (const auto &segment : in) {
+  auto process_segments = [&](const vector<Vec4i> &segments,
+                              vector<Line> &lines, bool is_horizontal) {
+    for (const auto &segment : segments) {
       Point pt1(segment[0], segment[1]);
       Point pt2(segment[2], segment[3]);
       double angle = atan2(pt2.y - pt1.y, pt2.x - pt1.x);
-      double center_y = (pt1.y + pt2.y) / 2.0;
-      double center_x = (pt1.x + pt2.x) / 2.0;
-
-      if (abs(angle) < CV_PI / 18 || abs(abs(angle) - CV_PI) < CV_PI / 18) {
-        horizontal_lines_raw.push_back({center_y, angle});
-      } else if (abs(abs(angle) - CV_PI / 2) < CV_PI / 18) {
-        vertical_lines_raw.push_back({center_x, angle});
-      }
+      double value =
+          is_horizontal ? (pt1.y + pt2.y) / 2.0 : (pt1.x + pt2.x) / 2.0;
+      lines.push_back({value, angle});
     }
   };
-  process_segment_labda(horizontal_lines_segments);
-  process_segment_labda(vertical_lines_segments);
+
+  process_segments(horizontal_segments, horizontal_lines_raw, true);
+  process_segments(vertical_segments, vertical_lines_raw, false);
 
   sort(horizontal_lines_raw.begin(), horizontal_lines_raw.end(), compareLines);
   sort(vertical_lines_raw.begin(), vertical_lines_raw.end(), compareLines);
+
   if (bDebug) {
     cout << "Raw horizontal lines count: " << horizontal_lines_raw.size()
          << endl;
     cout << "Raw vertical lines count: " << vertical_lines_raw.size() << endl;
   }
+  return std::make_pair(horizontal_lines_raw, vertical_lines_raw);
+}
 
-  auto cluster_and_average_lines = [](const vector<Line> &raw_lines,
-                                      double threshold) {
-    vector<double> clustered_values;
-    if (raw_lines.empty())
-      return clustered_values;
+// 4. Cluster and Average Lines
+vector<double> clusterAndAverageLines(const vector<Line> &raw_lines,
+                                      double threshold, bool bDebug) {
+  vector<double> clustered_values;
+  if (raw_lines.empty())
+    return clustered_values;
 
-    vector<bool> processed(raw_lines.size(), false);
-    for (size_t i = 0; i < raw_lines.size(); ++i) {
-      if (processed[i])
-        continue;
-      vector<double> current_cluster;
-      current_cluster.push_back(raw_lines[i].value);
-      processed[i] = true;
-      for (size_t j = i + 1; j < raw_lines.size(); ++j) {
-        if (!processed[j] &&
-            abs(raw_lines[j].value - raw_lines[i].value) < threshold) {
-          if (bDebug) {
-            cout << "Clustering: " << raw_lines[j].value << " and "
-                 << raw_lines[i].value
-                 << " (diff: " << abs(raw_lines[j].value - raw_lines[i].value)
-                 << ")" << endl;
-          }
-          current_cluster.push_back(raw_lines[j].value);
-          processed[j] = true;
+  vector<bool> processed(raw_lines.size(), false);
+  for (size_t i = 0; i < raw_lines.size(); ++i) {
+    if (processed[i])
+      continue;
+    vector<double> current_cluster;
+    current_cluster.push_back(raw_lines[i].value);
+    processed[i] = true;
+    for (size_t j = i + 1; j < raw_lines.size(); ++j) {
+      if (!processed[j] &&
+          abs(raw_lines[j].value - raw_lines[i].value) < threshold) {
+        if (bDebug) {
+          cout << "Clustering: " << raw_lines[j].value << " and "
+               << raw_lines[i].value
+               << " (diff: " << abs(raw_lines[j].value - raw_lines[i].value)
+               << ")" << endl;
         }
-      }
-      if (!current_cluster.empty()) {
-        clustered_values.push_back(
-            accumulate(current_cluster.begin(), current_cluster.end(), 0.0) /
-            current_cluster.size());
+        current_cluster.push_back(raw_lines[j].value);
+        processed[j] = true;
       }
     }
-    sort(clustered_values.begin(), clustered_values.end());
-    return clustered_values;
-  };
-  // Experiment with values like 0.5, 1.0, 1.5
-  double cluster_threshold = 1.0;
+    if (!current_cluster.empty()) {
+      clustered_values.push_back(
+          accumulate(current_cluster.begin(), current_cluster.end(), 0.0) /
+          current_cluster.size());
+    }
+  }
+  sort(clustered_values.begin(), clustered_values.end());
+  return clustered_values;
+}
+
+// 5. Find Uniform Grid Lines
+vector<double> findUniformGridLines(const vector<double> &values,
+                                    int target_count, double tolerance,
+                                    bool bDebug) {
+  if (values.size() < target_count / 2) {
+    return vector<double>{}; // Return empty if too few lines
+  }
+  sort(values.begin(), values.end());
+
+  if (bDebug && !values.empty()) {
+    cout << "Sorted clustered values of size: {" << values.size() << "}:\n";
+    for (size_t i = 0; i < values.size() - 1; ++i) {
+      cout << "value[" << i << "]: " << values[i]
+           << " distance: " << values[i + 1] - values[i] << endl;
+    }
+    cout << "value: " << values[values.size() - 1] << endl;
+  }
+
+  if (values.size() < 2) {
+    return values;
+  }
+
+  vector<double> distances;
+  for (size_t i = 0; i < values.size() - 1; ++i) {
+    distances.push_back(values[i + 1] - values[i]);
+  }
+  vector<double> sorted_distances = distances;
+  sort(sorted_distances.begin(), sorted_distances.end());
+
+  double average_distance = 0;
+  if (!sorted_distances.empty()) {
+    size_t i = 0;
+    size_t j = sorted_distances.size() - 1;
+    while (j - i > target_count / 2 && i < j &&
+           abs(sorted_distances[i] - sorted_distances[j]) /
+                   sorted_distances[i] >
+               tolerance) {
+      j--;
+      i++;
+    }
+    if (i <= j) {
+      double sum_middle_distances = 0;
+      for (size_t k = i; k <= j; ++k) {
+        sum_middle_distances += sorted_distances[k];
+      }
+      average_distance = sum_middle_distances / (j - i + 1);
+    }
+  }
+
+  if (average_distance <= 0) {
+    if (bDebug) {
+      cout << "average_distance is negative:" << average_distance << endl;
+    }
+    return values; // Fallback
+  }
+
+  int best_continuous_count = 0;
+  int best_start_index = -1;
+
+  for (size_t i = 0; i < distances.size(); ++i) {
+    int current_continuous_count = 0;
+    for (size_t j = i; j < distances.size(); ++j) {
+      if (abs(distances[j] - average_distance) / average_distance <=
+          tolerance) {
+        current_continuous_count++;
+      } else {
+        break;
+      }
+    }
+    if (current_continuous_count >= target_count / 2.0 &&
+        current_continuous_count > best_continuous_count) {
+      best_continuous_count = current_continuous_count;
+      best_start_index = i;
+    }
+  }
+  if (bDebug) {
+    cout << "best_start_index: " << best_start_index << endl
+         << "best_continuous_count: " << best_continuous_count << endl;
+  }
+  if (best_start_index == -1) {
+    return values; // Could not find a good continuous group with average
+    // distance
+  }
+
+  vector<double> uniform_lines;
+  double lowest_val = values[best_start_index];
+  double highest_val = values[best_start_index + best_continuous_count - 1];
+  double lo_boundary = values.front();
+  double hi_boundary = values.back();
+  int expand_needed = target_count - best_continuous_count;
+
+  for (int i = 0; i < best_continuous_count; ++i) {
+    uniform_lines.push_back(values[best_start_index + i]);
+  }
+  sort(uniform_lines.begin(), uniform_lines.end());
+  int i = 0;
+  while (i < expand_needed) {
+    if (uniform_lines.front() - average_distance >=
+        lo_boundary - tolerance * average_distance) {
+      uniform_lines.insert(uniform_lines.begin(),
+                           uniform_lines.front() - average_distance);
+      i++;
+      if (i < expand_needed)
+        break;
+    }
+    if (uniform_lines.back() + average_distance <=
+        hi_boundary + tolerance * average_distance) {
+      uniform_lines.push_back(uniform_lines.back() + average_distance);
+      i++;
+      if (i < expand_needed)
+        break;
+    }
+  }
+  sort(uniform_lines.begin(), uniform_lines.end());
+  if (bDebug) {
+    cout << "uniform_lines:" << uniform_lines.size() << endl;
+  }
+  if (uniform_lines.size() > target_count) {
+    size_t start = (uniform_lines.size() - target_count) / 2;
+    uniform_lines.assign(uniform_lines.begin() + start,
+                         uniform_lines.begin() + start + target_count);
+  } else if (uniform_lines.size() < target_count && !values.empty()) {
+    if (bDebug) {
+      cout << "uniform_lines is less than target: " << uniform_lines.size()
+           << endl;
+    }
+    return values; // Fallback
+  }
+  return uniform_lines;
+}
+
+pair<vector<double>, vector<double>> detectUniformGrid(const Mat &image) {
+  Mat processed_image = preprocessImage(image, bDebug);
+  auto [horizontal_segments, vertical_segments] =
+      detectLineSegments(processed_image, bDebug);
+  auto [horizontal_lines_raw, vertical_lines_raw] =
+      convertSegmentsToLines(horizontal_segments, vertical_segments, bDebug);
+
+  double cluster_threshold = 1.0; // Experiment with values like 0.5, 1.0, 1.5
   vector<double> clustered_horizontal_y =
-      cluster_and_average_lines(horizontal_lines_raw, cluster_threshold);
+      clusterAndAverageLines(horizontal_lines_raw, cluster_threshold, bDebug);
   vector<double> clustered_vertical_x =
-      cluster_and_average_lines(vertical_lines_raw, cluster_threshold);
+      clusterAndAverageLines(vertical_lines_raw, cluster_threshold, bDebug);
+
   if (bDebug) {
     cout << "Clustered horizontal lines count: "
          << clustered_horizontal_y.size() << endl;
@@ -301,145 +420,12 @@ pair<vector<double>, vector<double>> detectUniformGrid(const Mat &image) {
     cout << endl;
   }
 
-  int imageHeight = image.rows;
-  int imageWidth = image.cols;
-
-  auto find_uniform_grid_lines = [](vector<double> values, int target_count,
-                                    double tolerance) {
-    if (values.size() < target_count / 2) {
-      return vector<double>{}; // Return empty if too few lines
-    }
-    sort(values.begin(), values.end());
-
-    if (bDebug && !values.empty()) {
-      cout << "Sorted clustered values of size: {" << values.size() << "}:\n";
-      for (size_t i = 0; i < values.size() - 1; ++i) {
-        cout << "value[" << i << "]: " << values[i]
-             << " distance: " << values[i + 1] - values[i] << endl;
-      }
-      cout << "value: " << values[values.size() - 1] << endl;
-    }
-
-    if (values.size() < 2) {
-      return values;
-    }
-
-    vector<double> distances;
-    for (size_t i = 0; i < values.size() - 1; ++i) {
-      distances.push_back(values[i + 1] - values[i]);
-    }
-
-    vector<double> sorted_distances = distances;
-    sort(sorted_distances.begin(), sorted_distances.end());
-
-    double average_distance = 0;
-    if (!sorted_distances.empty()) {
-      size_t i = 0;
-      size_t j = sorted_distances.size() - 1;
-      while (j - i > target_count / 2 && i < j &&
-             abs(sorted_distances[i] - sorted_distances[j]) /
-                     sorted_distances[i] >
-                 tolerance) {
-        j--;
-        i++;
-      }
-
-      if (i <= j) {
-        double sum_middle_distances = 0;
-        for (size_t k = i; k <= j; ++k) {
-          sum_middle_distances += sorted_distances[k];
-        }
-        average_distance = sum_middle_distances / (j - i + 1);
-      }
-    }
-
-    if (average_distance <= 0) {
-      if (bDebug) {
-        cout << "average_distance is negative:" << average_distance << endl;
-      }
-      return values; // Fallback
-    }
-
-    int best_continuous_count = 0;
-    int best_start_index = -1;
-
-    for (size_t i = 0; i < distances.size(); ++i) {
-      int current_continuous_count = 0;
-      for (size_t j = i; j < distances.size(); ++j) {
-        if (abs(distances[j] - average_distance) / average_distance <=
-            tolerance) {
-          current_continuous_count++;
-        } else {
-          break;
-        }
-      }
-      if (current_continuous_count >= target_count / 2.0 &&
-          current_continuous_count > best_continuous_count) {
-        best_continuous_count = current_continuous_count;
-        best_start_index = i;
-      }
-    }
-    if (bDebug) {
-      cout << "best_start_index: " << best_start_index << endl
-           << "best_continuous_count: " << best_continuous_count << endl;
-    }
-    if (best_start_index == -1) {
-      return values; // Could not find a good continuous group with average
-                     // distance
-    }
-
-    vector<double> uniform_lines;
-    double lowest_val = values[best_start_index];
-    double highest_val = values[best_start_index + best_continuous_count - 1];
-    double lo_boundary = values.front();
-    double hi_boundary = values.back();
-    int expand_needed = target_count - best_continuous_count;
-
-    for (int i = 0; i < best_continuous_count; ++i) {
-      uniform_lines.push_back(values[best_start_index + i]);
-    }
-    sort(uniform_lines.begin(), uniform_lines.end());
-    int i = 0;
-    while (i < expand_needed) {
-      if (uniform_lines.front() - average_distance >=
-          lo_boundary - tolerance * average_distance) {
-        uniform_lines.insert(uniform_lines.begin(),
-                             uniform_lines.front() - average_distance);
-        i++;
-        if (i < expand_needed)
-          break;
-      }
-      if (uniform_lines.back() + average_distance <=
-          hi_boundary + tolerance * average_distance) {
-        uniform_lines.push_back(uniform_lines.back() + average_distance);
-        i++;
-        if (i < expand_needed)
-          break;
-      }
-    }
-    sort(uniform_lines.begin(), uniform_lines.end());
-    if (bDebug) {
-      cout << "uniform_lines:" << uniform_lines.size() << endl;
-    }
-    if (uniform_lines.size() > target_count) {
-      size_t start = (uniform_lines.size() - target_count) / 2;
-      uniform_lines.assign(uniform_lines.begin() + start,
-                           uniform_lines.begin() + start + target_count);
-    } else if (uniform_lines.size() < target_count && !values.empty()) {
-      if (bDebug) {
-        cout << "uniform_lines is less than target: " << uniform_lines.size()
-             << endl;
-      }
-      return values; // Fallback
-    }
-
-    return uniform_lines;
-  };
   double spacing_tolerance = 0.4;
   vector<double> final_horizontal_y =
-      find_uniform_grid_lines(clustered_horizontal_y, 19, spacing_tolerance);
+      findUniformGridLines(clustered_horizontal_y, 19, spacing_tolerance, bDebug);
   vector<double> final_vertical_x =
-      find_uniform_grid_lines(clustered_vertical_x, 19, spacing_tolerance);
+      findUniformGridLines(clustered_vertical_x, 19, spacing_tolerance, bDebug);
+
   if (final_vertical_x.size() == 19) {
     THROWGEMERROR(
         std::string("find_uniform_grid_lines find final_vertical_x ") +
@@ -462,7 +448,6 @@ pair<vector<double>, vector<double>> detectUniformGrid(const Mat &image) {
       cout << x << " ";
     cout << endl;
   }
-
   return make_pair(final_horizontal_y, final_vertical_x);
 }
 
