@@ -30,7 +30,7 @@ bool compareLines(const Line &a, const Line &b) { return a.value < b.value; }
 vector<Point2f> getBoardCorners(const Mat &inputImage) {
 
   float tl_x_percent = 20.0f; // Original: 19.0f
-  float tl_y_percent = 7.0f;  // Original: 19.0f  (Slightly lower)
+  float tl_y_percent = 8.0f;  // Original: 19.0f  (Slightly lower)
   float tr_x_percent = 73.0f; // Original: 86.0f
   float tr_y_percent = 5.0f;  // Original: 19.0f  (Slightly lower)
   float br_x_percent = 97.0f; // Original: 91.0f (Slightly inwards)
@@ -157,12 +157,12 @@ pair<vector<Vec4i>, vector<Vec4i>> detectLineSegments(const Mat &edges,
                              : 1;
 
   // Define the Rects for the masks (YOUR CORRECTED LOGIC!)
-  Rect horizontal_rect(static_cast<int>(board_corners[0].x - half_rect_width),
+  Rect horizontal_rect(static_cast<int>(board_corners[0].x + half_rect_width),
                        static_cast<int>(board_corners[0].y - half_rect_height),
                        board_width - 2 * half_rect_width, half_rect_height * 2);
 
   Rect vertical_rect(static_cast<int>(board_corners[0].x - half_rect_width),
-                     static_cast<int>(board_corners[0].y - half_rect_height),
+                     static_cast<int>(board_corners[0].y + half_rect_height),
                      half_rect_width * 2, board_height - 2 * half_rect_height);
 
   // Masks for horizontal and vertical line detection
