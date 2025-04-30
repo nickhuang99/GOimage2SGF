@@ -175,12 +175,18 @@ pair<vector<Vec4i>, vector<Vec4i>> detectLineSegments(const Mat &edges,
   Mat masked_edges;
   vector<Vec4i> horizontal_lines_segments, vertical_lines_segments;
 
+  // HoughLinesP Parameters (TUNE THESE CAREFULLY)
+  int hough_threshold = 20;    // Start with 20, increase if needed
+  int min_line_length = 30;    // Start with 30, increase if needed
+  int max_line_gap = 5;       // Keep relatively small
+  
   bitwise_and(edges, horizontal_mask, masked_edges);
-  HoughLinesP(masked_edges, horizontal_lines_segments, 1, CV_PI / 180, 10, 20,
-              5);
+  HoughLinesP(masked_edges, horizontal_lines_segments, 1, CV_PI / 180,
+              hough_threshold, min_line_length, max_line_gap);
 
   bitwise_and(edges, vertical_mask, masked_edges);
-  HoughLinesP(masked_edges, vertical_lines_segments, 1, CV_PI / 180, 10, 20, 5);
+  HoughLinesP(masked_edges, vertical_lines_segments, 1, CV_PI / 180,
+              hough_threshold, min_line_length, max_line_gap);
 
   if (bDebug) {
     cout << "Horizontal line segments: " << horizontal_lines_segments.size()
