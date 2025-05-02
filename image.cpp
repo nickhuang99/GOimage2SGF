@@ -124,180 +124,126 @@ Mat preprocessImage(const Mat &image, bool bDebug) {
   return result;
 }
 
-// 2. Line Segment Detection Function
-pair<vector<Vec4i>, vector<Vec4i>> detectLineSegments(const Mat &edges,
-                                                      bool bDebug) {
+// 2. Line Segment Detection Function (Refactored)
+vector<Vec4i> detectLineSegments(const Mat &edges, bool bDebug) {
   int width = edges.cols;
   int height = edges.rows;
 
   // 1. Get Board Corners (You'll need to implement this correctly)
+  // Use getBoardCornersCorrected to define the region of interest for HoughLinesP
   vector<Point2f> board_corners = getBoardCornersCorrected(edges);
   float board_height = board_corners[2].y - board_corners[0].y;
   float board_width = board_corners[1].x - board_corners[0].x;
-  if (bDebug) {
-    cout << "board_height: " << board_height << endl
-         << "board_width: " << board_width << endl;
-  }
-  // 2. Calculate Average Spacing (Ensure no division by zero)
-  const int default_horizontal_mask_height = 10;
-  const int default_vertical_mask_width = 10;
 
-  int avg_vertical_spacing = board_height > 0 ? (int)(board_height / 19.0f)
-                                              : default_horizontal_mask_height;
-  int avg_horizontal_spacing = board_width > 0 ? (int)(board_width / 19.0f)
-                                               : default_vertical_mask_width;
+  // Define a single mask for the entire board area
+  // You might want to slightly expand this rectangle beyond the strict corners
+  // to ensure lines right at the edge are detected.
+  int margin = 10; // Pixels to expand the mask
+   Rect board_rect(
+      static_cast<int>(board_corners[0].x) - margin,
+      static_cast<int>(board_corners[0].y) - margin,
+      static_cast<int>(board_width) + 2 * margin,
+      static_cast<int>(board_height) + 2 * margin);
 
-  // 3. Calculate Mask Dimensions (Local, Read-Only Variables)
-  const int horizontal_mask_height = max(3, avg_vertical_spacing - 2);
-  const int vertical_mask_width = max(3, avg_horizontal_spacing - 2);
+  // Ensure the rectangle is within image bounds
+  board_rect = board_rect & Rect(0, 0, width, height);
 
-  // Calculate Rect Width (using board width divided by 2*19)
-  const int GO_BOARD_GRID_NUMBER_BY_2 = 2 * 19;
-  int half_rect_width = (board_width > GO_BOARD_GRID_NUMBER_BY_2)
-                            ? (board_width / GO_BOARD_GRID_NUMBER_BY_2)
-                            : 1;
-  int half_rect_height = (board_height > GO_BOARD_GRID_NUMBER_BY_2)
-                             ? (board_height / GO_BOARD_GRID_NUMBER_BY_2)
-                             : 1;
 
-  // Define the Rects for the masks (YOUR CORRECTED LOGIC!)
-  float horizontal_rect_origin_x = board_corners[0].x - half_rect_width;
-  float vertical_rect_origin_y = board_corners[0].y - half_rect_height;
-
-  Rect horizontal_rect(
-      static_cast<int>(horizontal_rect_origin_x),
-      static_cast<int>(vertical_rect_origin_y),
-      board_width + 3 * half_rect_width, board_height + 3 * half_rect_height);
-
-  Rect vertical_rect(
-      static_cast<int>(horizontal_rect_origin_x),
-      static_cast<int>(vertical_rect_origin_y),
-      board_width + 3 * half_rect_width, board_height + 3 * half_rect_height);
-
-  // Masks for horizontal and vertical line detection
-  Mat horizontal_mask = Mat::zeros(height, width, CV_8U);
-  horizontal_mask(horizontal_rect) = 255;
-
-  Mat vertical_mask = Mat::zeros(height, width, CV_8U);
-  vertical_mask(vertical_rect) = 255;
+  Mat board_mask = Mat::zeros(height, width, CV_8U);
+  board_mask(board_rect) = 255;
 
   Mat masked_edges;
-  vector<Vec4i> horizontal_lines_segments, vertical_lines_segments;
-  /*
-  rho and theta (1, CV_PI / 180): 
-  These are the resolution of the Hough
-  accumulator. They're generally fine at their default values. 
-  
-  threshold (10):
-  This is the minimum number of votes (support) a line needs to have to be
-  detected. 
+  bitwise_and(edges, board_mask, masked_edges);
 
-      Increase threshold: Since we want to reduce the number of noisy lines, try
-  increasing this value. Start with 20 or 30. If you still get too many close
-  lines, increase it further.
-
-  minLineLength (20): This is the minimum length of a line to be considered.
-
-      Increase minLineLength: Increase this to filter out short, noisy line
-  segments. Try values like 30 or 40.
-
-  maxLineGap (5): This is the maximum allowed gap between line segments to be
-  considered a single line.
-
-      Keep maxLineGap Small (or Moderate): Since we want to detect distinct grid
-  lines, keep this value relatively small (or moderate). A large value might
-  cause HoughLinesP to connect unrelated line segments.
-  */
+  vector<Vec4i> all_segments;
 
   // HoughLinesP Parameters (TUNE THESE CAREFULLY)
-  int hough_threshold = 20;    // Start with 20, increase if needed
-  int min_line_length = 30;    // Start with 30, increase if needed
-  int max_line_gap = 5;       // Keep relatively small
-  
-  bitwise_and(edges, horizontal_mask, masked_edges);
-  HoughLinesP(masked_edges, horizontal_lines_segments, 1, CV_PI / 180,
-              hough_threshold, min_line_length, max_line_gap);
+  // Increased max_line_gap to connect fragmented Canny edges
+  int hough_threshold = 30; // Adjust as needed
+  int min_line_length = 40; // Adjust as needed
+  int max_line_gap = 15;   // Increased significantly
 
-  bitwise_and(edges, vertical_mask, masked_edges);
-  HoughLinesP(masked_edges, vertical_lines_segments, 1, CV_PI / 180,
+  HoughLinesP(masked_edges, all_segments, 1, CV_PI / 180,
               hough_threshold, min_line_length, max_line_gap);
 
   if (bDebug) {
-    cout << "Horizontal line segments: " << horizontal_lines_segments.size()
-         << endl;
-    cout << "Vertical line segments: " << vertical_lines_segments.size()
-         << endl;
+    cout << "Total detected line segments: " << all_segments.size() << endl;
 
-    // Visualize Masks and Line Segments
+    // Visualize Mask and Line Segments
     Mat mask_and_lines = edges.clone();
     Scalar mask_color = Scalar(128); // Gray
     int mask_thickness = 2;
-    Scalar hline_color = Scalar(0, 0, 255); // Red
-    Scalar vline_color = Scalar(0, 255, 0); // Green
+    Scalar line_color = Scalar(0, 255, 255); // Yellow for all lines
 
-    rectangle(mask_and_lines, horizontal_rect, mask_color,
-              mask_thickness); // Draw horizontal mask
-    rectangle(mask_and_lines, vertical_rect, mask_color,
-              mask_thickness); // Draw vertical mask
+    rectangle(mask_and_lines, board_rect, mask_color, mask_thickness); // Draw board mask
 
-    // Draw horizontal line segments
-    cout << "mask_and_lines.cols:" << mask_and_lines.cols
-         << "\tmask_and_lines.rows:" << mask_and_lines.rows << endl;
-    cout << "\n----horizontal line segments---\n";
-    for (const auto &line : horizontal_lines_segments) {
+    // Draw all line segments
+    cout << "\n----all line segments---\n";
+    for (const auto &line : all_segments) {
       cv::line(mask_and_lines, cv::Point(line[0], line[1]), cv::Point(line[2], line[3]),
-           hline_color, 1);
-      // cv::circle(mask_and_lines, cv::Point(line[0], line[1]), 5, Scalar(255, 0, 0), -1);
-      // cv::circle(mask_and_lines, cv::Point(line[2], line[3]), 5, Scalar(255, 0, 0), -1);
+           line_color, 1);
       cout << "[" << line[0] << "," << line[1] << "]:" << "[" << line[2] << ","
            << line[3] << "]\n";
     }
 
-    // Draw vertical line segments
-    cout << "\n----vertical line segments---\n";
-    for (const auto &line : vertical_lines_segments) {
-      cv::line(mask_and_lines, cv::Point(line[0], line[1]), cv::Point(line[2], line[3]),
-           vline_color, 2);
-      // cv::circle(mask_and_lines, cv::Point(line[0], line[1]), 5, Scalar(255, 127, 0), -1);
-      // cv::circle(mask_and_lines, cv::Point(line[2], line[3]), 5, Scalar(255, 127, 0), -1);
-      cout << "[" << line[0] << "," << line[1] << "]:" << "[" << line[2] << ","
-           << line[3] << "]\n";
-    }
-
-    imshow("Masks and Line Segments", mask_and_lines);
+    imshow("Board Mask and All Line Segments", mask_and_lines);
     waitKey(0);
   }
-  return std::make_pair(horizontal_lines_segments, vertical_lines_segments);
+
+  return all_segments;
 }
 
-// 3. Convert Line Segments to Lines
+// 3. Convert and Classify Line Segments to Lines (Refactored)
 pair<vector<Line>, vector<Line>>
-convertSegmentsToLines(const vector<Vec4i> &horizontal_segments,
-                       const vector<Vec4i> &vertical_segments, bool bDebug) {
+convertSegmentsToLines(const vector<Vec4i> &all_segments, bool bDebug) {
   vector<Line> horizontal_lines_raw, vertical_lines_raw;
 
-  auto process_segments = [&](const vector<Vec4i> &segments,
-                              vector<Line> &lines, bool is_horizontal) {
-    for (const auto &segment : segments) {
-      Point pt1(segment[0], segment[1]);
-      Point pt2(segment[2], segment[3]);
-      double angle = atan2(pt2.y - pt1.y, pt2.x - pt1.x);
-      double value =
-          is_horizontal ? (pt1.y + pt2.y) / 2.0 : (pt1.x + pt2.x) / 2.0;
-      lines.push_back({value, angle});
-    }
-  };
+  // Angle tolerance for classifying lines as horizontal or vertical (in radians)
+  double angle_tolerance = CV_PI / 180.0 * 10; // 10 degrees tolerance
 
-  process_segments(horizontal_segments, horizontal_lines_raw, true);
-  process_segments(vertical_segments, vertical_lines_raw, false);
+  for (const auto &segment : all_segments) {
+    Point pt1(segment[0], segment[1]);
+    Point pt2(segment[2], segment[3]);
+
+    // Calculate angle in radians (-pi to pi)
+    double angle = atan2(pt2.y - pt1.y, pt2.x - pt1.x);
+
+    // Normalize angle to be within [0, PI)
+    if (angle < 0) {
+        angle += CV_PI;
+    }
+
+    // Determine if the line is horizontal or vertical based on angle
+    bool is_horizontal = false;
+    bool is_vertical = false;
+
+    // Check for horizontal lines (angle near 0 or PI)
+    if (abs(angle) < angle_tolerance || abs(angle - CV_PI) < angle_tolerance) {
+        is_horizontal = true;
+    }
+    // Check for vertical lines (angle near PI/2)
+    else if (abs(angle - CV_PI / 2.0) < angle_tolerance) {
+        is_vertical = true;
+    }
+
+    if (is_horizontal) {
+      double value = (pt1.y + pt2.y) / 2.0; // Average y-coordinate
+      horizontal_lines_raw.push_back({value, angle});
+    } else if (is_vertical) {
+      double value = (pt1.x + pt2.x) / 2.0; // Average x-coordinate
+      vertical_lines_raw.push_back({value, angle});
+    }
+    // Segments that are neither horizontal nor vertical within tolerance are ignored
+  }
 
   sort(horizontal_lines_raw.begin(), horizontal_lines_raw.end(), compareLines);
   sort(vertical_lines_raw.begin(), vertical_lines_raw.end(), compareLines);
 
   if (bDebug) {
-    cout << "Raw horizontal lines count: " << horizontal_lines_raw.size()
+    cout << "Raw horizontal lines count (after angle classification): " << horizontal_lines_raw.size()
          << endl;
-    cout << "Raw vertical lines count: " << vertical_lines_raw.size() << endl;
+    cout << "Raw vertical lines count (after angle classification): " << vertical_lines_raw.size()
+         << endl;
   }
   return std::make_pair(horizontal_lines_raw, vertical_lines_raw);
 }
@@ -339,14 +285,10 @@ vector<double> clusterAndAverageLines(const vector<Line> &raw_lines,
   return clustered_values;
 }
 
-// 5. Find Uniform Grid Lines
-vector<double> findUniformGridLines(vector<double>& values,
-                                    int target_count, double tolerance,
-                                    bool bDebug) {
-  if (values.size() < target_count / 2) {
-    return vector<double>{}; // Return empty if too few lines
-  }
-  sort(values.begin(), values.end());
+// 5. Find Uniform Grid Lines (Refactored - More Robust)
+vector<double> findUniformGridLines(vector<double> &values, int target_count,
+                                    double tolerance, bool bDebug) {
+  // target_count is expected to be 19
 
   if (bDebug && !values.empty()) {
     cout << "Sorted clustered values of size: {" << values.size() << "}:\n";
@@ -359,126 +301,173 @@ vector<double> findUniformGridLines(vector<double>& values,
   }
 
   if (values.size() < 2) {
-    return values;
+    if (bDebug) {
+      cout << "findUniformGridLines: Less than 2 clustered values ("
+           << values.size() << "), cannot find uniform grid." << endl;
+    }
+    return vector<double>{}; // Return empty if too few lines
   }
 
+  // 1. Calculate distances between adjacent clustered lines.
   vector<double> distances;
   for (size_t i = 0; i < values.size() - 1; ++i) {
     distances.push_back(values[i + 1] - values[i]);
   }
-  vector<double> sorted_distances = distances;
-  sort(sorted_distances.begin(), sorted_distances.end());
 
-  double average_distance = 0;
-  if (!sorted_distances.empty()) {
-    size_t i = 0;
-    size_t j = sorted_distances.size() - 1;
-    while (j - i > target_count / 2 && i < j &&
-           abs(sorted_distances[i] - sorted_distances[j]) /
-                   sorted_distances[i] >
-               tolerance) {
-      j--;
-      i++;
-    }
-    if (i <= j) {
-      double sum_middle_distances = 0;
-      for (size_t k = i; k <= j; ++k) {
-        sum_middle_distances += sorted_distances[k];
-      }
-      average_distance = sum_middle_distances / (j - i + 1);
-    }
-  }
+  // 2. Estimate the dominant grid spacing.
+  // We'll do this by analyzing the distribution of distances.
+  // A simple way is to use a histogram or cluster the distances.
+  // Let's try clustering the distances to find the most frequent spacing.
 
-  if (average_distance <= 0) {
+  if (distances.empty()) {
     if (bDebug) {
-      cout << "average_distance is negative:" << average_distance << endl;
+      cout << "findUniformGridLines: No distances between clustered values."
+           << endl;
     }
-    return values; // Fallback
+    return vector<double>{};
   }
 
-  int best_continuous_count = 0;
-  int best_start_index = -1;
+  // Use a map to count the frequency of distances (with a small bin size)
+  map<int, int> distance_hist;
+  double bin_size = 1.0; // Bin size for the histogram of distances
+  for (double d : distances) {
+    distance_hist[static_cast<int>(d / bin_size)]++;
+  }
 
-  for (size_t i = 0; i < distances.size(); ++i) {
-    int current_continuous_count = 0;
-    for (size_t j = i; j < distances.size(); ++j) {
-      if (abs(distances[j] - average_distance) / average_distance <=
-          tolerance) {
-        current_continuous_count++;
-      } else {
-        break;
+  int max_freq = 0;
+  int dominant_distance_bin = -1;
+  for (auto const &[bin, freq] : distance_hist) {
+    if (freq > max_freq) {
+      max_freq = freq;
+      dominant_distance_bin = bin;
+    }
+  }
+
+  double estimated_dominant_distance = dominant_distance_bin * bin_size;
+
+  // Refine the dominant distance by averaging the distances within the dominant
+  // bin
+  double sum_dominant_distances = 0;
+  int count_dominant_distances = 0;
+  for (double d : distances) {
+    if (abs(d - estimated_dominant_distance) <
+        bin_size) { // Check if distance is close to the estimated dominant
+                    // distance
+      sum_dominant_distances += d;
+      count_dominant_distances++;
+    }
+  }
+
+  double dominant_distance = estimated_dominant_distance;
+  if (count_dominant_distances > 0) {
+    dominant_distance = sum_dominant_distances / count_dominant_distances;
+  }
+
+  if (bDebug) {
+    cout << "Estimated dominant distance: " << dominant_distance << endl;
+  }
+
+  // 3. Find the best starting line and generate the 19 uniform lines.
+  // We'll iterate through each clustered line as a potential starting point
+  // and see how well a sequence of 19 lines with the dominant distance fits
+  // the other clustered lines.
+
+  double best_fit_score = numeric_limits<double>::max();
+  int best_start_value_index = -1;
+
+  for (size_t i = 0; i < values.size(); ++i) {
+    double current_start_value = values[i];
+    double current_fit_score = 0;
+    int matched_lines_count = 0;
+
+    // Generate expected uniform line positions based on this start value
+    vector<double> expected_lines;
+    for (int j = 0; j < target_count; ++j) {
+      expected_lines.push_back(current_start_value + j * dominant_distance);
+    }
+
+    // Calculate how well these expected lines match the clustered values
+    // Use a tolerance for matching
+    double match_tolerance =
+        dominant_distance * tolerance; // Tolerance based on the dominant
+                                       // distance and input tolerance
+
+    for (double expected_line : expected_lines) {
+      bool found_match = false;
+      for (double clustered_value : values) {
+        if (abs(clustered_value - expected_line) < match_tolerance) {
+          current_fit_score +=
+              abs(clustered_value - expected_line); // Accumulate error
+          matched_lines_count++;
+          found_match = true;
+          break; // Move to the next expected line once a match is found
+        }
+      }
+      if (!found_match) {
+        current_fit_score += match_tolerance; // Penalize for missing lines
       }
     }
-    if (current_continuous_count >= target_count / 2.0 &&
-        current_continuous_count > best_continuous_count) {
-      best_continuous_count = current_continuous_count;
-      best_start_index = i;
+
+    // Consider the fit score based on total error and how close the matched
+    // count is to target_count A simple score could be the accumulated error
+    // plus a penalty for not matching target_count lines.
+    double score = current_fit_score + abs(matched_lines_count - target_count) *
+                                           match_tolerance *
+                                           2; // Heuristic penalty
+
+    if (score < best_fit_score) {
+      best_fit_score = score;
+      best_start_value_index = i;
     }
-  }
-  if (bDebug) {
-    cout << "best_start_index: " << best_start_index << endl
-         << "best_continuous_count: " << best_continuous_count << endl;
-  }
-  if (best_start_index == -1) {
-    return values; // Could not find a good continuous group with average
-    // distance
   }
 
   vector<double> uniform_lines;
-  double lowest_val = values[best_start_index];
-  double highest_val = values[best_start_index + best_continuous_count - 1];
-  double lo_boundary = values.front();
-  double hi_boundary = values.back();
-  int expand_needed = target_count - best_continuous_count;
+  if (best_start_value_index != -1) {
+    double final_start_value = values[best_start_value_index];
+    for (int i = 0; i < target_count; ++i) {
+      uniform_lines.push_back(final_start_value + i * dominant_distance);
+    }
+  }
 
-  for (int i = 0; i < best_continuous_count; ++i) {
-    uniform_lines.push_back(values[best_start_index + i]);
-  }
-  sort(uniform_lines.begin(), uniform_lines.end());
-  int i = 0;
-  while (i < expand_needed) {
-    if (uniform_lines.front() - average_distance >=
-        lo_boundary - tolerance * average_distance) {
-      uniform_lines.insert(uniform_lines.begin(),
-                           uniform_lines.front() - average_distance);
-      i++;
-      if (i < expand_needed)
-        break;
-    }
-    if (uniform_lines.back() + average_distance <=
-        hi_boundary + tolerance * average_distance) {
-      uniform_lines.push_back(uniform_lines.back() + average_distance);
-      i++;
-      if (i < expand_needed)
-        break;
-    }
-  }
-  sort(uniform_lines.begin(), uniform_lines.end());
   if (bDebug) {
-    cout << "uniform_lines:" << uniform_lines.size() << endl;
-  }
-  if (uniform_lines.size() > target_count) {
-    size_t start = (uniform_lines.size() - target_count) / 2;
-    uniform_lines.assign(uniform_lines.begin() + start,
-                         uniform_lines.begin() + start + target_count);
-  } else if (uniform_lines.size() < target_count && !values.empty()) {
-    if (bDebug) {
-      cout << "uniform_lines is less than target: " << uniform_lines.size()
+    cout << "findUniformGridLines: Best fit score: " << best_fit_score << endl;
+    if (best_start_value_index != -1) {
+      cout << "findUniformGridLines: Best starting value index: "
+           << best_start_value_index
+           << " (value: " << values[best_start_value_index] << ")" << endl;
+    } else {
+      cout << "findUniformGridLines: Could not find a suitable starting line."
            << endl;
     }
-    return values; // Fallback
+
+    cout << "Generated uniform_lines size: " << uniform_lines.size() << endl;
+    cout << "Generated uniform lines: ";
+    for (double val : uniform_lines) {
+      cout << val << " ";
+    }
+    cout << endl;
   }
+
+  // Final check: If we didn't find 19 lines, return empty.
+  if (uniform_lines.size() != target_count) {
+    if (bDebug) {
+      cout << "findUniformGridLines: Did not generate " << target_count
+           << " uniform lines. Returning empty." << endl;
+    }
+    return vector<double>{};
+  }
+
   return uniform_lines;
 }
 
 pair<vector<double>, vector<double>> detectUniformGrid(const Mat &image) {
   Mat processed_image = preprocessImage(image, bDebug);
-  auto [horizontal_segments, vertical_segments] =
+  vector<Vec4i> mixed_segments =
       detectLineSegments(processed_image, bDebug);
   auto [horizontal_lines_raw, vertical_lines_raw] =
-      convertSegmentsToLines(horizontal_segments, vertical_segments, bDebug);
+      convertSegmentsToLines(mixed_segments, bDebug);
 
-  double cluster_threshold = 1.0; // Experiment with values like 0.5, 1.0, 1.5
+  double cluster_threshold = 7.0; // Experiment with values like 0.5, 1.0, 1.5
   vector<double> clustered_horizontal_y =
       clusterAndAverageLines(horizontal_lines_raw, cluster_threshold, bDebug);
   vector<double> clustered_vertical_x =
@@ -505,12 +494,12 @@ pair<vector<double>, vector<double>> detectUniformGrid(const Mat &image) {
   vector<double> final_vertical_x =
       findUniformGridLines(clustered_vertical_x, 19, spacing_tolerance, bDebug);
 
-  if (final_vertical_x.size() == 19) {
+  if (final_vertical_x.size() != 19) {
     THROWGEMERROR(
         std::string("find_uniform_grid_lines find final_vertical_x ") +
         Int2Str(final_vertical_x.size()).str());
   }
-  if (final_horizontal_y.size() == 19) {
+  if (final_horizontal_y.size() != 19) {
     THROWGEMERROR(
         std::string("find_uniform_grid_lines find final_horizontal_y ") +
         Int2Str(final_horizontal_y.size()).str());
