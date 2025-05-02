@@ -110,14 +110,18 @@ Mat preprocessImage(const Mat &image, bool bDebug) {
     waitKey(0);
   }
 
-  Mat kernel = getStructuringElement(MORPH_RECT, Size(3, 3));
-  morphologyEx(edges, edges, MORPH_CLOSE, kernel, Point(-1, -1), 1);
-
+  // Mat kernel = getStructuringElement(MORPH_RECT, Size(3, 3));
+  // morphologyEx(edges, edges, MORPH_CLOSE, kernel, Point(-1, -1), 1);
+  // if (bDebug) {
+  //   imshow("Morph", edges);
+  //   waitKey(0);
+  // }
+  Mat result;
+  Canny(edges, result, 50, 150, 3);
   if (bDebug) {
-    imshow("Morph", edges);
-    waitKey(0);
+    imshow("Canny", result);
   }
-  return edges;
+  return result;
 }
 
 // 2. Line Segment Detection Function
@@ -157,13 +161,18 @@ pair<vector<Vec4i>, vector<Vec4i>> detectLineSegments(const Mat &edges,
                              : 1;
 
   // Define the Rects for the masks (YOUR CORRECTED LOGIC!)
-  Rect horizontal_rect(static_cast<int>(board_corners[0].x + half_rect_width),
-                       static_cast<int>(board_corners[0].y - half_rect_height),
-                       board_width - 2 * half_rect_width, half_rect_height * 2);
+  float horizontal_rect_origin_x = board_corners[0].x - half_rect_width;
+  float vertical_rect_origin_y = board_corners[0].y - half_rect_height;
 
-  Rect vertical_rect(static_cast<int>(board_corners[0].x - half_rect_width),
-                     static_cast<int>(board_corners[0].y + half_rect_height),
-                     half_rect_width * 2, board_height - 2 * half_rect_height);
+  Rect horizontal_rect(
+      static_cast<int>(horizontal_rect_origin_x),
+      static_cast<int>(vertical_rect_origin_y),
+      board_width + 3 * half_rect_width, board_height + 3 * half_rect_height);
+
+  Rect vertical_rect(
+      static_cast<int>(horizontal_rect_origin_x),
+      static_cast<int>(vertical_rect_origin_y),
+      board_width + 3 * half_rect_width, board_height + 3 * half_rect_height);
 
   // Masks for horizontal and vertical line detection
   Mat horizontal_mask = Mat::zeros(height, width, CV_8U);
@@ -174,6 +183,31 @@ pair<vector<Vec4i>, vector<Vec4i>> detectLineSegments(const Mat &edges,
 
   Mat masked_edges;
   vector<Vec4i> horizontal_lines_segments, vertical_lines_segments;
+  /*
+  rho and theta (1, CV_PI / 180): 
+  These are the resolution of the Hough
+  accumulator. They're generally fine at their default values. 
+  
+  threshold (10):
+  This is the minimum number of votes (support) a line needs to have to be
+  detected. 
+
+      Increase threshold: Since we want to reduce the number of noisy lines, try
+  increasing this value. Start with 20 or 30. If you still get too many close
+  lines, increase it further.
+
+  minLineLength (20): This is the minimum length of a line to be considered.
+
+      Increase minLineLength: Increase this to filter out short, noisy line
+  segments. Try values like 30 or 40.
+
+  maxLineGap (5): This is the maximum allowed gap between line segments to be
+  considered a single line.
+
+      Keep maxLineGap Small (or Moderate): Since we want to detect distinct grid
+  lines, keep this value relatively small (or moderate). A large value might
+  cause HoughLinesP to connect unrelated line segments.
+  */
 
   // HoughLinesP Parameters (TUNE THESE CAREFULLY)
   int hough_threshold = 20;    // Start with 20, increase if needed
@@ -194,16 +228,43 @@ pair<vector<Vec4i>, vector<Vec4i>> detectLineSegments(const Mat &edges,
     cout << "Vertical line segments: " << vertical_lines_segments.size()
          << endl;
 
-    // Visualize Masks
-    Mat mask_visualization = edges.clone(); // Copy the edge image
-    Scalar mask_color = Scalar(0); // Use black color
+    // Visualize Masks and Line Segments
+    Mat mask_and_lines = edges.clone();
+    Scalar mask_color = Scalar(128); // Gray
     int mask_thickness = 2;
+    Scalar hline_color = Scalar(0, 0, 255); // Red
+    Scalar vline_color = Scalar(0, 255, 0); // Green
 
-    rectangle(mask_visualization, horizontal_rect, mask_color,
-              mask_thickness); // Draw horizontal mask (gray rectangle)
-    rectangle(mask_visualization, vertical_rect, mask_color,
-              mask_thickness); // Draw vertical mask (gray rectangle)
-    imshow("Masks Rect", mask_visualization);
+    rectangle(mask_and_lines, horizontal_rect, mask_color,
+              mask_thickness); // Draw horizontal mask
+    rectangle(mask_and_lines, vertical_rect, mask_color,
+              mask_thickness); // Draw vertical mask
+
+    // Draw horizontal line segments
+    cout << "mask_and_lines.cols:" << mask_and_lines.cols
+         << "\tmask_and_lines.rows:" << mask_and_lines.rows << endl;
+    cout << "\n----horizontal line segments---\n";
+    for (const auto &line : horizontal_lines_segments) {
+      cv::line(mask_and_lines, cv::Point(line[0], line[1]), cv::Point(line[2], line[3]),
+           hline_color, 1);
+      // cv::circle(mask_and_lines, cv::Point(line[0], line[1]), 5, Scalar(255, 0, 0), -1);
+      // cv::circle(mask_and_lines, cv::Point(line[2], line[3]), 5, Scalar(255, 0, 0), -1);
+      cout << "[" << line[0] << "," << line[1] << "]:" << "[" << line[2] << ","
+           << line[3] << "]\n";
+    }
+
+    // Draw vertical line segments
+    cout << "\n----vertical line segments---\n";
+    for (const auto &line : vertical_lines_segments) {
+      cv::line(mask_and_lines, cv::Point(line[0], line[1]), cv::Point(line[2], line[3]),
+           vline_color, 2);
+      // cv::circle(mask_and_lines, cv::Point(line[0], line[1]), 5, Scalar(255, 127, 0), -1);
+      // cv::circle(mask_and_lines, cv::Point(line[2], line[3]), 5, Scalar(255, 127, 0), -1);
+      cout << "[" << line[0] << "," << line[1] << "]:" << "[" << line[2] << ","
+           << line[3] << "]\n";
+    }
+
+    imshow("Masks and Line Segments", mask_and_lines);
     waitKey(0);
   }
   return std::make_pair(horizontal_lines_segments, vertical_lines_segments);
@@ -293,7 +354,8 @@ vector<double> findUniformGridLines(vector<double>& values,
       cout << "value[" << i << "]: " << values[i]
            << " distance: " << values[i + 1] - values[i] << endl;
     }
-    cout << "value: " << values[values.size() - 1] << endl;
+    cout << "value[" << values.size() - 1 << "]:" << values[values.size() - 1]
+         << endl;
   }
 
   if (values.size() < 2) {
@@ -659,7 +721,7 @@ void processGoBoard(const Mat &image_bgr_in, Mat &board_state,
         closest_cluster = j;
       }
     }
-    if (bDebug) {
+    if (bDebug && false) {
       cout << "[" << row << "," << col << "] HSV: [" << hsv[0] << ", " << hsv[1]
            << ", " << hsv[2] << "] Cluster (Weighted): " << closest_cluster
            << std::endl;
