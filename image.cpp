@@ -460,6 +460,80 @@ vector<double> findUniformGridLines(vector<double> &values, int target_count,
   return uniform_lines;
 }
 
+// Refactored function: Iteratively find the cluster threshold that yields closest to target_count lines without going below
+pair<vector<double>, vector<double>> findOptimalClustering(
+  const vector<Line>& horizontal_lines_raw,
+  const vector<Line>& vertical_lines_raw,
+  int target_count,
+  bool bDebug) {
+
+  double cluster_threshold = 1.0; // Starting threshold - needs tuning
+  double threshold_step = 0.5;   // Step to increase threshold - needs tuning
+  int max_iterations = 100;       // Limit iterations - needs tuning
+
+  vector<double> clustered_horizontal_y;
+  vector<double> clustered_vertical_x;
+
+  vector<double> prev_clustered_horizontal_y;
+  vector<double> prev_clustered_vertical_x;
+
+  // Initialize previous results with clustering at a very low threshold
+  prev_clustered_horizontal_y = clusterAndAverageLines(horizontal_lines_raw, 0.1, bDebug);
+  prev_clustered_vertical_x = clusterAndAverageLines(vertical_lines_raw, 0.1, bDebug);
+
+  if (bDebug) {
+      cout << "Initial Clustering with threshold 0.1:\n";
+      cout << "  Clustered horizontal lines count: " << prev_clustered_horizontal_y.size() << endl;
+      cout << "  Clustered vertical lines count: " << prev_clustered_vertical_x.size() << endl;
+  }
+
+  for (int i = 0; i < max_iterations; ++i) {
+      // Store current results before potentially updating them in this iteration
+      prev_clustered_horizontal_y = clustered_horizontal_y;
+      prev_clustered_vertical_x = clustered_vertical_x;
+
+      // Perform clustering with the current threshold
+      clustered_horizontal_y =
+          clusterAndAverageLines(horizontal_lines_raw, cluster_threshold, bDebug);
+      clustered_vertical_x =
+          clusterAndAverageLines(vertical_lines_raw, cluster_threshold, bDebug);
+
+      if (bDebug) {
+          cout << "Clustering Attempt " << i + 1 << " with cluster_threshold " << cluster_threshold << ":\n";
+          cout << "  Clustered horizontal lines count: " << clustered_horizontal_y.size() << endl;
+          cout << "  Clustered vertical lines count: " << clustered_vertical_x.size() << endl;
+      }
+
+      // Check if either count has dropped below the target count in this iteration
+      if (clustered_horizontal_y.size() < target_count || clustered_vertical_x.size() < target_count) {
+          if (bDebug) {
+              cout << "Clustered line count dropped below target (" << target_count << "). Returning previous iteration's results." << endl;
+          }
+          // Return the results from the previous iteration
+          return make_pair(prev_clustered_horizontal_y, prev_clustered_vertical_x);
+      }
+
+      // Check if the target count is met in this iteration
+      if (clustered_horizontal_y.size() == target_count && clustered_vertical_x.size() == target_count) {
+           if (bDebug) {
+              cout << "Found target number of clustered lines (" << target_count << ") in both directions." << endl;
+          }
+          // Return the clustered lines if the target count is met
+          return make_pair(clustered_horizontal_y, clustered_vertical_x);
+      }
+      cluster_threshold += threshold_step; // Increase threshold for the next attempt
+  }
+
+  if (bDebug) {
+      cout << "Max iterations reached without finding target count or dropping below. Returning last iteration's results." << endl;
+  }
+
+  // If the loop finishes without finding the target count or dropping below,
+  // return the results from the last iteration.
+  return make_pair(clustered_horizontal_y, clustered_vertical_x);
+}
+
+// Refactored detectUniformGrid to use the new findOptimalClustering function
 pair<vector<double>, vector<double>> detectUniformGrid(const Mat &image) {
   Mat processed_image = preprocessImage(image, bDebug);
   vector<Vec4i> mixed_segments =
@@ -467,51 +541,51 @@ pair<vector<double>, vector<double>> detectUniformGrid(const Mat &image) {
   auto [horizontal_lines_raw, vertical_lines_raw] =
       convertSegmentsToLines(mixed_segments, bDebug);
 
-  double cluster_threshold = 7.0; // Experiment with values like 0.5, 1.0, 1.5
-  vector<double> clustered_horizontal_y =
-      clusterAndAverageLines(horizontal_lines_raw, cluster_threshold, bDebug);
-  vector<double> clustered_vertical_x =
-      clusterAndAverageLines(vertical_lines_raw, cluster_threshold, bDebug);
+  // Use the new function to find the optimal clustering to get potentially 19 lines
+  // We pass 19 as the target count for clustering
+  auto [clustered_horizontal_y, clustered_vertical_x] =
+      findOptimalClustering(horizontal_lines_raw, vertical_lines_raw, 19, bDebug);
+
+  vector<double> final_horizontal_y;
+  vector<double> final_vertical_x;
+
+  // Now, use findUniformGridLines to verify the uniformity of the clustered
+  // lines findUniformGridLines expects exactly 19 lines as input in the ideal
+  // case and verifies uniformity
+  double uniformity_tolerance =
+      0.1; // Tolerance for uniformity check - needs tuning
+  // Call the robust findUniformGridLines
+  final_horizontal_y = findUniformGridLines(clustered_horizontal_y, 19,
+                                            uniformity_tolerance, bDebug);
+  final_vertical_x = findUniformGridLines(clustered_vertical_x, 19,
+                                          uniformity_tolerance, bDebug);
+
+  // Final check: If we didn't end up with exactly 19 uniform lines in both
+  // directions, throw an exception.
+  if (final_horizontal_y.size() != 19 || final_vertical_x.size() != 19) {
+    if (bDebug) {
+      cout << "Final grid line detection failed: Expected 19x19 uniform grid, "
+              "but found "
+           << final_horizontal_y.size() << " horizontal and "
+           << final_vertical_x.size()
+           << " vertical uniform lines after findUniformGridLines." << endl;
+    }
+    // Throw an exception as the detection failed
+    THROWGEMERROR(std::string("Failed to detect 19x19 Go board grid. Found ") +
+                  Int2Str(final_horizontal_y.size()).str() +
+                  " horizontal and " + Int2Str(final_vertical_x.size()).str() +
+                  " vertical lines after uniform grid finding.");
+  }
+
+  // The lines are already sorted by clusterAndAverageLines and verified by findUniformGridLines.
+  // No need to sort again here.
 
   if (bDebug) {
-    cout << "Clustered horizontal lines count: "
-         << clustered_horizontal_y.size() << endl;
-    cout << "Clustered vertical lines count: " << clustered_vertical_x.size()
-         << endl;
-    cout << "Clustered horizontal lines (y): ";
-    for (double y : clustered_horizontal_y)
-      cout << y << " ";
-    cout << endl;
-    cout << "Clustered vertical lines (x): ";
-    for (double x : clustered_vertical_x)
-      cout << x << " ";
-    cout << endl;
-  }
-
-  double spacing_tolerance = 0.4;
-  vector<double> final_horizontal_y =
-      findUniformGridLines(clustered_horizontal_y, 19, spacing_tolerance, bDebug);
-  vector<double> final_vertical_x =
-      findUniformGridLines(clustered_vertical_x, 19, spacing_tolerance, bDebug);
-
-  if (final_vertical_x.size() != 19) {
-    THROWGEMERROR(
-        std::string("find_uniform_grid_lines find final_vertical_x ") +
-        Int2Str(final_vertical_x.size()).str());
-  }
-  if (final_horizontal_y.size() != 19) {
-    THROWGEMERROR(
-        std::string("find_uniform_grid_lines find final_horizontal_y ") +
-        Int2Str(final_horizontal_y.size()).str());
-  }
-  sort(final_horizontal_y.begin(), final_horizontal_y.end());
-  sort(final_vertical_x.begin(), final_vertical_x.end());
-  if (bDebug) {
-    cout << "Final sorted horizontal lines (y): ";
+    cout << "Final detected uniform horizontal lines (y): ";
     for (double y : final_horizontal_y)
       cout << y << " ";
     cout << endl;
-    cout << "Final sorted vertical lines (x): ";
+    cout << "Final detected uniform vertical lines (x): ";
     for (double x : final_vertical_x)
       cout << x << " ";
     cout << endl;
