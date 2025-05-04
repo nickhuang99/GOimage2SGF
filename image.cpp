@@ -265,7 +265,7 @@ vector<double> clusterAndAverageLines(const vector<Line> &raw_lines,
     for (size_t j = i + 1; j < raw_lines.size(); ++j) {
       if (!processed[j] &&
           abs(raw_lines[j].value - raw_lines[i].value) < threshold) {
-        if (bDebug) {
+        if (bDebug && false) {
           cout << "Clustering: " << raw_lines[j].value << " and "
                << raw_lines[i].value
                << " (diff: " << abs(raw_lines[j].value - raw_lines[i].value)
@@ -285,6 +285,129 @@ vector<double> clusterAndAverageLines(const vector<Line> &raw_lines,
   return clustered_values;
 }
 
+// Helper struct to store matching information and define comparison
+struct LineMatch {
+  int matched_count;
+  double score;
+  double start_value;
+  vector<pair<double, double>> matched_values; // Store (clustered_value, distance)
+
+  // Custom comparison: prioritize matched_count (descending), then score (ascending)
+  bool operator<(const LineMatch& other) const {
+    if (matched_count != other.matched_count) {
+      return matched_count > other.matched_count; // Descending order by count
+    }
+    // Ascending order by score if counts are equal
+    if (score != other.score) {
+      return score < other.score;
+    }
+    return start_value < other.start_value;
+  }
+};
+
+vector<double> findUniformGridLinesImproved(const vector<double>& values,
+                                            double dominant_distance,
+                                            int target_count, double tolerance,
+                                            bool bDebug) {
+  vector<double> uniform_lines;
+
+  if (values.size() < 2) {
+    if (bDebug) {
+      cout << "findUniformGridLinesImproved2: Less than 2 values, cannot find "
+              "uniform grid.\n";
+    }
+    return uniform_lines; // Return empty
+  }
+
+  double lower_limit = values.front();
+  double upper_limit = values.back();
+
+  set<LineMatch> match_data;
+
+  // 1. Combined Iteration for Scoring and Matching
+  for (double start_value : values) {
+    int matched_lines_count = 0;
+    double current_fit_score = 0.0;
+    vector<pair<double, double>> current_matched_values; // Local matched_values
+
+    vector<double> expected_lines;
+    expected_lines.push_back(start_value);
+
+    // Generate lines in both directions
+    double current_line = start_value;
+    while (current_line > lower_limit) {
+      current_line -= dominant_distance;
+      expected_lines.push_back(current_line);
+    }
+
+    current_line = start_value;
+    while (current_line < upper_limit) {
+      current_line += dominant_distance;
+      expected_lines.push_back(current_line);
+    }
+
+    for (double expected_line : expected_lines) {
+      double min_diff = numeric_limits<double>::max();
+      double closest_value = numeric_limits<double>::quiet_NaN();
+
+      for (double clustered_value : values) {
+        double diff = abs(clustered_value - expected_line);
+        if (diff < min_diff) {
+          min_diff = diff;
+          closest_value = clustered_value;
+        }
+      }
+      current_matched_values.push_back({closest_value, min_diff}); // Store clustered_value!
+      if (min_diff < tolerance) {
+        current_fit_score += min_diff;
+        matched_lines_count++;        
+      }
+    }
+    match_data.insert({matched_lines_count, current_fit_score, start_value, current_matched_values});
+  }
+
+  // 2. Basis Line Selection
+  if (match_data.empty()) {
+    if (bDebug) {
+      cout << "findUniformGridLinesImproved2: No matching data found.\n";
+    }
+    return uniform_lines; // Return empty
+  }
+
+  const vector<pair<double, double>>& best_matched_values = match_data.begin()->matched_values; // Get matched_values from best candidate
+
+  // 3. Final Line Selection
+  if (best_matched_values.size() > target_count) {
+    vector<pair<double, double>> sorted_matched_values = best_matched_values;
+    sort(sorted_matched_values.begin(), sorted_matched_values.end(),
+         [](const pair<double, double>& a, const pair<double, double>& b) {
+           return a.second < b.second; // Sort by distance
+         });
+
+    for (int i = 0; i < target_count; ++i) {
+      uniform_lines.push_back(sorted_matched_values[i].first); // Store clustered_value
+    }
+  } else {
+    for (const auto& pair : best_matched_values) {
+      uniform_lines.push_back(pair.first); // Store clustered_value
+    }
+  }
+
+  sort(uniform_lines.begin(), uniform_lines.end());
+
+  // Final check: If we didn't find enough lines, return empty.
+  if (uniform_lines.size() < target_count) {
+    if (bDebug) {
+      cout << "findUniformGridLinesImproved2: Could not find enough uniform "
+              "lines. Found: "
+           << uniform_lines.size() << ", Expected: " << target_count << "\n";
+    }
+    uniform_lines.clear();
+  }
+
+  return uniform_lines;
+}
+
 // 5. Find Uniform Grid Lines (Refactored - More Robust)
 vector<double> findUniformGridLines(vector<double> &values, int target_count,
                                     double tolerance, bool bDebug) {
@@ -299,7 +422,7 @@ vector<double> findUniformGridLines(vector<double> &values, int target_count,
     cout << "value[" << values.size() - 1 << "]:" << values[values.size() - 1]
          << endl;
   }
-
+  vector<double> uniform_lines; // Declare uniform_lines here!
   if (values.size() < 2) {
     if (bDebug) {
       cout << "findUniformGridLines: Less than 2 clustered values ("
@@ -368,169 +491,84 @@ vector<double> findUniformGridLines(vector<double> &values, int target_count,
   }
 
   // 3. Find the best starting line and generate the 19 uniform lines.
-  // We'll iterate through each clustered line as a potential starting point
-  // and see how well a sequence of 19 lines with the dominant distance fits
-  // the other clustered lines.
+  return findUniformGridLinesImproved(values, dominant_distance, 19,
+                                      dominant_distance * tolerance,
+                                      bDebug);
+}
 
-  double best_fit_score = numeric_limits<double>::max();
-  int best_start_value_index = -1;
+// Helper function to find the optimal clustering for a given set of lines
+pair<vector<double>, double> findOptimalClusteringForOrientation(
+  const vector<Line>& raw_lines,
+  int target_count,
+  const string& orientation, // "horizontal" or "vertical" for debugging output
+  bool bDebug) {
 
-  for (size_t i = 0; i < values.size(); ++i) {
-    double current_start_value = values[i];
-    double current_fit_score = 0;
-    int matched_lines_count = 0;
+  double cluster_threshold = 1.0; // Starting threshold - needs tuning
+  double threshold_step = 0.5;   // Step to increase threshold - needs tuning
+  int max_iterations = 20;       // Limit iterations - needs tuning
 
-    // Generate expected uniform line positions based on this start value
-    vector<double> expected_lines;
-    for (int j = 0; j < target_count; ++j) {
-      expected_lines.push_back(current_start_value + j * dominant_distance);
-    }
+  vector<double> clustered_lines;
+  vector<double> prev_clustered_lines;
+  double optimal_threshold = cluster_threshold;
 
-    // Calculate how well these expected lines match the clustered values
-    // Use a tolerance for matching
-    double match_tolerance =
-        dominant_distance * tolerance; // Tolerance based on the dominant
-                                       // distance and input tolerance
+  // Initialize previous results with clustering at a very low threshold
+  prev_clustered_lines = clusterAndAverageLines(raw_lines, 0.1, bDebug);
 
-    for (double expected_line : expected_lines) {
-      bool found_match = false;
-      for (double clustered_value : values) {
-        if (abs(clustered_value - expected_line) < match_tolerance) {
-          current_fit_score +=
-              abs(clustered_value - expected_line); // Accumulate error
-          matched_lines_count++;
-          found_match = true;
-          break; // Move to the next expected line once a match is found
-        }
-      }
-      if (!found_match) {
-        current_fit_score += match_tolerance; // Penalize for missing lines
-      }
-    }
-
-    // Consider the fit score based on total error and how close the matched
-    // count is to target_count A simple score could be the accumulated error
-    // plus a penalty for not matching target_count lines.
-    double score = current_fit_score + abs(matched_lines_count - target_count) *
-                                           match_tolerance *
-                                           2; // Heuristic penalty
-
-    if (score < best_fit_score) {
-      best_fit_score = score;
-      best_start_value_index = i;
-    }
+  if (bDebug) {
+      cout << "Initial Clustering (" << orientation << ") with threshold 0.1: " << prev_clustered_lines.size() << " lines\n";
   }
 
-  vector<double> uniform_lines;
-  if (best_start_value_index != -1) {
-    double final_start_value = values[best_start_value_index];
-    for (int i = 0; i < target_count; ++i) {
-      uniform_lines.push_back(final_start_value + i * dominant_distance);
-    }
+  clustered_lines = prev_clustered_lines; // Initialize with the initial clustering
+
+  for (int i = 0; i < max_iterations; ++i) {
+      // Store current results
+      prev_clustered_lines = clustered_lines;
+
+      // Perform clustering with the current threshold
+      clustered_lines = clusterAndAverageLines(raw_lines, cluster_threshold, bDebug);
+
+      if (bDebug) {
+          cout << "Clustering Attempt (" << orientation << ") " << i + 1 << " with threshold " << cluster_threshold << ": " << clustered_lines.size() << " lines\n";
+      }
+
+      if (clustered_lines.size() < target_count) {
+          if (bDebug) {
+              cout << "Clustered line count (" << orientation << ") dropped below target (" << target_count << "). Returning previous threshold's results.\n";
+          }
+          return make_pair(prev_clustered_lines, optimal_threshold); // Return previous (better) result
+      }
+
+      if (clustered_lines.size() == target_count) {
+          if (bDebug) {
+              cout << "Found target number of clustered lines (" << target_count << ") for " << orientation << ".\n";
+          }
+          return make_pair(clustered_lines, cluster_threshold);
+      }
+
+      optimal_threshold = cluster_threshold; // Update optimal threshold as we are still at or above target
+      cluster_threshold += threshold_step;   // Increase threshold for the next attempt
   }
 
   if (bDebug) {
-    cout << "findUniformGridLines: Best fit score: " << best_fit_score << endl;
-    if (best_start_value_index != -1) {
-      cout << "findUniformGridLines: Best starting value index: "
-           << best_start_value_index
-           << " (value: " << values[best_start_value_index] << ")" << endl;
-    } else {
-      cout << "findUniformGridLines: Could not find a suitable starting line."
-           << endl;
-    }
-
-    cout << "Generated uniform_lines size: " << uniform_lines.size() << endl;
-    cout << "Generated uniform lines: ";
-    for (double val : uniform_lines) {
-      cout << val << " ";
-    }
-    cout << endl;
+      cout << "Max iterations reached for " << orientation << " without finding target count or dropping below. Returning last iteration's results.\n";
   }
-
-  // Final check: If we didn't find 19 lines, return empty.
-  if (uniform_lines.size() != target_count) {
-    if (bDebug) {
-      cout << "findUniformGridLines: Did not generate " << target_count
-           << " uniform lines. Returning empty." << endl;
-    }
-    return vector<double>{};
-  }
-
-  return uniform_lines;
+  return make_pair(clustered_lines, optimal_threshold);
 }
 
-// Refactored function: Iteratively find the cluster threshold that yields closest to target_count lines without going below
+// Main function to call the helper functions for horizontal and vertical lines
 pair<vector<double>, vector<double>> findOptimalClustering(
   const vector<Line>& horizontal_lines_raw,
   const vector<Line>& vertical_lines_raw,
   int target_count,
   bool bDebug) {
 
-  double cluster_threshold = 1.0; // Starting threshold - needs tuning
-  double threshold_step = 0.5;   // Step to increase threshold - needs tuning
-  int max_iterations = 100;       // Limit iterations - needs tuning
+  pair<vector<double>, double> horizontal_result =
+      findOptimalClusteringForOrientation(horizontal_lines_raw, target_count, "horizontal", bDebug);
 
-  vector<double> clustered_horizontal_y;
-  vector<double> clustered_vertical_x;
+  pair<vector<double>, double> vertical_result =
+      findOptimalClusteringForOrientation(vertical_lines_raw, target_count, "vertical", bDebug);
 
-  vector<double> prev_clustered_horizontal_y;
-  vector<double> prev_clustered_vertical_x;
-
-  // Initialize previous results with clustering at a very low threshold
-  prev_clustered_horizontal_y = clusterAndAverageLines(horizontal_lines_raw, 0.1, bDebug);
-  prev_clustered_vertical_x = clusterAndAverageLines(vertical_lines_raw, 0.1, bDebug);
-
-  if (bDebug) {
-      cout << "Initial Clustering with threshold 0.1:\n";
-      cout << "  Clustered horizontal lines count: " << prev_clustered_horizontal_y.size() << endl;
-      cout << "  Clustered vertical lines count: " << prev_clustered_vertical_x.size() << endl;
-  }
-
-  for (int i = 0; i < max_iterations; ++i) {
-      // Store current results before potentially updating them in this iteration
-      prev_clustered_horizontal_y = clustered_horizontal_y;
-      prev_clustered_vertical_x = clustered_vertical_x;
-
-      // Perform clustering with the current threshold
-      clustered_horizontal_y =
-          clusterAndAverageLines(horizontal_lines_raw, cluster_threshold, bDebug);
-      clustered_vertical_x =
-          clusterAndAverageLines(vertical_lines_raw, cluster_threshold, bDebug);
-
-      if (bDebug) {
-          cout << "Clustering Attempt " << i + 1 << " with cluster_threshold " << cluster_threshold << ":\n";
-          cout << "  Clustered horizontal lines count: " << clustered_horizontal_y.size() << endl;
-          cout << "  Clustered vertical lines count: " << clustered_vertical_x.size() << endl;
-      }
-
-      // Check if either count has dropped below the target count in this iteration
-      if (clustered_horizontal_y.size() < target_count || clustered_vertical_x.size() < target_count) {
-          if (bDebug) {
-              cout << "Clustered line count dropped below target (" << target_count << "). Returning previous iteration's results." << endl;
-          }
-          // Return the results from the previous iteration
-          return make_pair(prev_clustered_horizontal_y, prev_clustered_vertical_x);
-      }
-
-      // Check if the target count is met in this iteration
-      if (clustered_horizontal_y.size() == target_count && clustered_vertical_x.size() == target_count) {
-           if (bDebug) {
-              cout << "Found target number of clustered lines (" << target_count << ") in both directions." << endl;
-          }
-          // Return the clustered lines if the target count is met
-          return make_pair(clustered_horizontal_y, clustered_vertical_x);
-      }
-      cluster_threshold += threshold_step; // Increase threshold for the next attempt
-  }
-
-  if (bDebug) {
-      cout << "Max iterations reached without finding target count or dropping below. Returning last iteration's results." << endl;
-  }
-
-  // If the loop finishes without finding the target count or dropping below,
-  // return the results from the last iteration.
-  return make_pair(clustered_horizontal_y, clustered_vertical_x);
+  return make_pair(horizontal_result.first, vertical_result.first);
 }
 
 // Refactored detectUniformGrid to use the new findOptimalClustering function
