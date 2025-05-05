@@ -58,12 +58,11 @@ void classifyClustersLab(const Mat &centers, int &label_black, int &label_white,
   }
 
   // --- Scoring Parameters for Lab (NEEDS TUNING) ---
-  // OpenCV 8-bit Lab: L=[0, 255], a=[0, 255], b=[0, 255] (128 is the zero point for a and b)
-  const float black_l_thresh = 70.0f;  // Example: L* below this suggests black
-  const float white_l_thresh = 190.0f; // Example: L* above this suggests white
-  const float stone_ab_thresh = 30.0f; // Example: abs(a-128) and abs(b-128) below this suggests achromatic (stone)
-  const float board_ab_thresh = 35.0f; // Example: abs(a-128) or abs(b-128) above this suggests colored (board)
-
+  const float black_l_thresh = 90.0f;  // Increased from 70
+  const float white_l_thresh = 210.0f; // INCREASED SIGNIFICANTLY from 190
+  const float stone_ab_thresh = 15.0f; // DECREASED from 30
+  const float board_ab_thresh = 35.0f; // Keep for now
+  
   // --- Calculate Scores for each cluster ---
   for (auto& cluster : cluster_data) {
       float da = std::abs(cluster.a - 128.0f); // Distance from neutral 'a'
