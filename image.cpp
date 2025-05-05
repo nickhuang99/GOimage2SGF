@@ -75,7 +75,7 @@ Mat correctPerspective(const Mat &image) {
   Mat corrected_image;
   warpPerspective(image, corrected_image, perspective_matrix,
                   Size(width, height));
-  if (bDebug) {
+  if (bDebug && false) {
     // Draw the input and output corners on the original and corrected images
     for (const auto &corner : input_corners) {
       circle(image, corner, 5, Scalar(0, 0, 255), -1); // Red circles
@@ -97,7 +97,7 @@ Mat preprocessImage(const Mat &image, bool bDebug) {
   cvtColor(image, gray, COLOR_BGR2GRAY);
   GaussianBlur(gray, blurred, Size(5, 5), 0); // Or Size(7, 7)
 
-  if (bDebug) {
+  if (bDebug && false) {
     imshow("Blurred", blurred);
     waitKey(0);
   }
@@ -105,7 +105,7 @@ Mat preprocessImage(const Mat &image, bool bDebug) {
   adaptiveThreshold(blurred, edges, 255, ADAPTIVE_THRESH_GAUSSIAN_C,
                     THRESH_BINARY, 11, 2);
 
-  if (bDebug) {
+  if (bDebug && false) {
     imshow("Edges (Before Morph)", edges);
     waitKey(0);
   }
@@ -118,7 +118,7 @@ Mat preprocessImage(const Mat &image, bool bDebug) {
   // }
   Mat result;
   Canny(edges, result, 50, 150, 3);
-  if (bDebug) {
+  if (bDebug && false) {
     imshow("Canny", result);
   }
   return result;
@@ -166,7 +166,7 @@ vector<Vec4i> detectLineSegments(const Mat &edges, bool bDebug) {
   HoughLinesP(masked_edges, all_segments, 1, CV_PI / 180,
               hough_threshold, min_line_length, max_line_gap);
 
-  if (bDebug) {
+  if (bDebug && false) {
     cout << "Total detected line segments: " << all_segments.size() << endl;
 
     // Visualize Mask and Line Segments
@@ -646,9 +646,19 @@ vector<Point2f> findIntersections(const vector<double> &horizontal_lines,
 // Function to calculate the weighted Euclidean distance between two HSV colors
 float colorDistanceWeighted(const Vec3f &color1, const Vec3f &color2,
                             float weight_h, float weight_s, float weight_v) {
-  return sqrt(pow((color1[0] - color2[0]) * weight_h, 2) +
-              pow((color1[1] - color2[1]) * weight_s, 2) +
-              pow((color1[2] - color2[2]) * weight_v, 2));
+  const float max_h = 180.0f;
+  const float max_s = 255.0f;
+  const float max_v = 255.0f;
+  const float epsilon = 1e-6f; // A small value to avoid division by zero
+  const float max_distance =
+      max_h * weight_h + max_s * weight_s + max_v * weight_v;
+
+  float dh = (color2[0] > epsilon) ? abs(color1[0] - color2[0]) / max_h : 0.0f;
+  float ds = (color2[1] > epsilon) ? abs(color1[1] - color2[1]) / max_s : 0.0f;
+  float dv = (color2[2] > epsilon) ? abs(color1[2] - color2[2]) / max_v : 0.0f;
+
+  float distance = dh * weight_h + ds * weight_s + dv * weight_v;
+  return (max_distance > epsilon) ? distance / max_distance : 0.0f;
 }
 
 // Function to calculate the original Euclidean distance between two HSV colors
@@ -716,7 +726,12 @@ Vec3f getAverageHSV(const Mat &image, Point2f center, int radius) {
   }
 }
 
-// New function for testing perspective transform
+double getSampleRadiusSize(const vector<double> &horizontal_lines,
+                           const vector<double> &vertical_lines) {
+  return (abs(horizontal_lines[1] - horizontal_lines[0]) +
+          abs(vertical_lines[1] - vertical_lines[0])) /
+         2;
+}
 
 // Function to process the Go board image and determine the board state
 void processGoBoard(const Mat &image_bgr_in, Mat &board_state,
@@ -752,8 +767,10 @@ void processGoBoard(const Mat &image_bgr_in, Mat &board_state,
   }
   intersection_points = findIntersections(horizontal_lines, vertical_lines);
   int num_intersections = intersection_points.size();
-  int sample_radius = 8;
-
+  int sample_radius = getSampleRadiusSize(horizontal_lines, vertical_lines);
+  if (bDebug) {
+    cout << "sample_radius:" << sample_radius << endl;
+  }
   Mat samples(num_intersections, 3, CV_32F);
   vector<Vec3f> average_hsv_values(num_intersections);
   for (int i = 0; i < num_intersections; ++i) {
@@ -822,9 +839,9 @@ void processGoBoard(const Mat &image_bgr_in, Mat &board_state,
         closest_cluster = j;
       }
     }
-    if (bDebug && false) {
+    if (bDebug) {
       cout << "[" << row << "," << col << "] HSV: [" << hsv[0] << ", " << hsv[1]
-           << ", " << hsv[2] << "] Cluster (Weighted): " << closest_cluster
+           << ", " << hsv[2] << "] Cluster (Weighted): " << closest_cluster          
            << std::endl;
     }
 
