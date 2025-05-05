@@ -667,36 +667,145 @@ float colorDistance(const Vec3f &color1, const Vec3f &color2) {
               pow(color1[2] - color2[2], 2));
 }
 
-// New function to classify clusters as Black, White, and Board
+#include <vector>
+#include <limits>
+#include <cmath>
+#include <algorithm> // Required for std::sort, std::abs
+
+// Helper structure to store cluster index and its properties/scores
+struct ClusterInfo {
+    int index;
+    float h, s, v;
+    float black_score;
+    float white_score;
+    float board_score;
+
+    ClusterInfo(int idx, float h_val, float s_val, float v_val)
+        : index(idx), h(h_val), s(s_val), v(v_val),
+          black_score(std::numeric_limits<float>::max()),
+          white_score(std::numeric_limits<float>::max()),
+          board_score(std::numeric_limits<float>::max()) {}
+};
+
+// Revised function to classify clusters using H, S, and V components
 void classifyClusters(const Mat &centers, int &label_black, int &label_white,
                       int &label_board) {
-  float min_v = numeric_limits<float>::max();
-  float max_v = numeric_limits<float>::min();
-  int index_min_v = -1;
-  int index_max_v = -1;
 
-  for (int i = 0; i < centers.rows;
-       ++i) { // Use centers.rows for number of clusters
-    float v = centers.at<float>(i, 2);
-    if (v < min_v) {
-      min_v = v;
-      index_min_v = i;
+    if (centers.rows != 3) {
+        // Handle the case where k-means didn't return exactly 3 clusters
+        // For now, throw an error or fallback to the old method if desired.
+        // This implementation assumes 3 clusters as per the original k-means setup.
+        std::cerr << "Error: Expected 3 cluster centers, but found " << centers.rows << std::endl;
+        // Assign default/invalid values
+        label_black = -1;
+        label_white = -1;
+        label_board = -1;
+        // Optionally, you could try the old V-based logic here as a fallback
+        // Or throw an exception:
+        THROWGEMERROR(std::string("Expected 3 cluster centers, found ") + Num2Str(centers.rows).str());
+        return; // Or throw
     }
-    if (v > max_v) {
-      max_v = v;
-      index_max_v = i;
-    }
-  }
 
-  label_black = index_min_v;
-  label_white = index_max_v;
-
-  for (int i = 0; i < centers.rows; ++i) { // Iterate through all clusters
-    if (i != label_black && i != label_white) {
-      label_board = i;
-      break; // No need to continue once board is found
+    std::vector<ClusterInfo> cluster_data;
+    for (int i = 0; i < centers.rows; ++i) {
+        cluster_data.emplace_back(i, centers.at<float>(i, 0), centers.at<float>(i, 1), centers.at<float>(i, 2));
     }
-  }
+
+    // --- Scoring Parameters (These may need tuning based on typical images) ---
+    const float low_s_threshold = 60.0f;  // Saturation below this suggests black/white stone
+    const float high_s_threshold = 40.0f; // Saturation above this suggests board
+    const float low_v_threshold = 80.0f;  // Value below this suggests black stone
+    const float high_v_threshold = 170.0f;// Value above this suggests white stone
+
+    // --- Calculate Scores for each cluster ---
+    for (auto& cluster : cluster_data) {
+        // Score for Black: Low V, Low S
+        // Penalize high V and high S
+        cluster.black_score = (cluster.v / 255.0f) + (cluster.s / 255.0f);
+        // Add a larger penalty if V is clearly too high or S is too high
+        if (cluster.v > low_v_threshold * 1.5) cluster.black_score += 1.0f; // Heavier penalty if too bright
+        if (cluster.s > low_s_threshold) cluster.black_score += 0.5f; // Penalty if saturated
+
+        // Score for White: High V, Low S
+        // Penalize low V and high S
+        cluster.white_score = ((255.0f - cluster.v) / 255.0f) + (cluster.s / 255.0f);
+         // Add a larger penalty if V is clearly too low or S is too high
+        if (cluster.v < high_v_threshold * 0.8) cluster.white_score += 1.0f; // Heavier penalty if too dark
+        if (cluster.s > low_s_threshold) cluster.white_score += 0.5f; // Penalty if saturated
+
+        // Score for Board: Mid V, Higher S (relative to stones)
+        // Penalize very low/high V and very low S
+        float v_mid_penalty = std::abs(cluster.v - 128.0f) / 128.0f; // Penalize distance from mid-value
+        float s_low_penalty = (cluster.s < high_s_threshold) ? (high_s_threshold - cluster.s) / high_s_threshold : 0.0f; // Penalize low saturation
+        cluster.board_score = v_mid_penalty + s_low_penalty * 1.5f; // Weight low S penalty more
+    }
+
+    // --- Assign Labels based on lowest scores ---
+
+    // Find best candidate for Black
+    std::sort(cluster_data.begin(), cluster_data.end(), [](const ClusterInfo& a, const ClusterInfo& b) {
+        return a.black_score < b.black_score;
+    });
+    label_black = cluster_data[0].index;
+
+    // Find best candidate for White (excluding the one chosen for Black)
+    std::sort(cluster_data.begin(), cluster_data.end(), [&](const ClusterInfo& a, const ClusterInfo& b) {
+        if (a.index == label_black) return false; // Ensure black label is not chosen
+        if (b.index == label_black) return true;  // Ensure black label is not chosen
+        return a.white_score < b.white_score;
+    });
+     // The best white candidate (that isn't black) will be at the start now
+     // Need to handle the edge case where the first element *is* the black label
+    label_white = (cluster_data[0].index != label_black) ? cluster_data[0].index : cluster_data[1].index;
+
+
+    // Find best candidate for Board (excluding Black and White)
+    std::sort(cluster_data.begin(), cluster_data.end(), [&](const ClusterInfo& a, const ClusterInfo& b) {
+        if (a.index == label_black || a.index == label_white) return false; // Exclude black/white
+        if (b.index == label_black || b.index == label_white) return true;  // Exclude black/white
+        return a.board_score < b.board_score;
+    });
+    // The best board candidate (that isn't black or white) will be at the start
+    // Need to handle edge cases where the first/second elements are black/white
+     if (cluster_data[0].index != label_black && cluster_data[0].index != label_white) {
+         label_board = cluster_data[0].index;
+     } else if (cluster_data.size() > 1 && cluster_data[1].index != label_black && cluster_data[1].index != label_white) {
+         label_board = cluster_data[1].index;
+     } else if (cluster_data.size() > 2 && cluster_data[2].index != label_black && cluster_data[2].index != label_white) {
+         label_board = cluster_data[2].index; // Should be the last one if size is 3
+     } else {
+         // This case should theoretically not happen if there are 3 distinct clusters
+         // and labels are assigned correctly, but as a fallback:
+         for(const auto& cluster : cluster_data) {
+             if (cluster.index != label_black && cluster.index != label_white) {
+                 label_board = cluster.index;
+                 break;
+             }
+         }
+     }
+
+
+    // --- Debug Output (Optional) ---
+    if (bDebug) { // Assuming bDebug is accessible here or passed as argument
+        std::cout << "\n--- Cluster Classification Scores ---\n";
+        std::cout << std::fixed << std::setprecision(3);
+        for (const auto& cluster : cluster_data) {
+             std::cout << "Cluster " << cluster.index
+                       << ": HSV(" << cluster.h << ", " << cluster.s << ", " << cluster.v << ")"
+                       << " Scores[Blk:" << cluster.black_score
+                       << ", Wht:" << cluster.white_score
+                       << ", Brd:" << cluster.board_score << "]\n";
+        }
+         std::cout << "\n--- Assigned Labels (Score Based) ---\n";
+         std::cout << "Black Cluster ID: " << label_black << std::endl;
+         std::cout << "White Cluster ID: " << label_white << std::endl;
+         std::cout << "Board Cluster ID: " << label_board << std::endl;
+
+         // Sanity check: ensure labels are unique and valid
+        if (label_black == label_white || label_black == label_board || label_white == label_board || label_black == -1 || label_white == -1 || label_board == -1) {
+             std::cerr << "Warning: Label assignment resulted in duplicate or invalid labels!\n";
+        }
+    }
 }
 
 // Function to sample a region around a point and get the average HSV
@@ -728,71 +837,94 @@ Vec3f getAverageHSV(const Mat &image, Point2f center, int radius) {
 
 double getSampleRadiusSize(const vector<double> &horizontal_lines,
                            const vector<double> &vertical_lines) {
-  return (abs(horizontal_lines[1] - horizontal_lines[0]) +
-          abs(vertical_lines[1] - vertical_lines[0])) /
-         2.0f / 3.0f;
+  // range of [1,3]
+  return min(3.0, max(2.0, (abs(horizontal_lines[1] - horizontal_lines[0]) +
+                            abs(vertical_lines[1] - vertical_lines[0])) /
+                                   2.0f / 8.0f));
 }
 
+// Helper function to calculate the shortest distance between two hues (0-180 range)
+inline float hueDistance(float h1, float h2) {
+  float diff = std::abs(h1 - h2);
+  // OpenCV HSV uses H range 0-179
+  return std::min(diff, 180.0f - diff);
+}
+
+// Revised function to find the closest cluster center using weighted Euclidean distance in HSV space
 int findClosestCenter(const Vec3f &hsv, const Mat &centers) {
-  const float epsilon = 1e-6f; // A small value to avoid division by zero
   const int num_clusters = centers.rows;
+  if (num_clusters == 0) {
+      // Handle case with no centers
+      return -1; // Or throw an error
+  }
 
-  const float weight_h = 1.0f; // Example: Increased Hue weight
-  const float weight_s = 1.0f; // Example: Decreased Saturation weight
-  const float weight_v = 1.0f; // Example: Decreased Value weight
-  vector<float> distances;
-  float total_distance_h = 0.0f, total_distance_s = 0.0f,
-        total_distance_v = 0.0f;
+  // --- Weights for HSV components (TUNABLE PARAMETERS) ---
+  // These weights determine the relative importance of Hue, Saturation, and Value.
+  // For Black/White/Board distinction:
+  // - Saturation (S) is often important to separate stones (low S) from board (higher S).
+  // - Value (V) is crucial to separate Black (low V) from White (high V).
+  // - Hue (H) might be less critical for stones but useful for board color.
+  // Adjust these based on testing:
+  const float weight_h = 0.5f; // Less weight for Hue initially
+  const float weight_s = 1.5f; // More weight for Saturation
+  const float weight_v = 1.5f; // More weight for Value
+
+  // --- Normalization factors (Max values for OpenCV HSV) ---
+  // We normalize the differences by the max possible range before applying weights
+  // to make weights more comparable across components.
+  const float max_h_diff = 90.0f;  // Max possible hueDistance is 180/2 = 90
+  const float max_s = 255.0f;
+  const float max_v = 255.0f;
+
+
+  float min_distance_sq = std::numeric_limits<float>::max(); // Compare squared distances to avoid sqrt
+  int closest_center_index = -1;
 
   for (int i = 0; i < num_clusters; ++i) {
-    Vec3f cluster_center(centers.at<float>(i, 0), centers.at<float>(i, 1),
-                         centers.at<float>(i, 2));
-    float dh = abs(hsv[0] - cluster_center[0]);
-    total_distance_h += dh;
-    float ds = abs(hsv[1] - cluster_center[1]);
-    total_distance_s += ds;
-    float dv = abs(hsv[2] - cluster_center[2]);
-    total_distance_v += dv;
+      Vec3f cluster_center(centers.at<float>(i, 0), centers.at<float>(i, 1), centers.at<float>(i, 2));
+
+      // Calculate normalized differences for each component
+      float dh_normalized = hueDistance(hsv[0], cluster_center[0]) / max_h_diff;
+      float ds_normalized = std::abs(hsv[1] - cluster_center[1]) / max_s;
+      float dv_normalized = std::abs(hsv[2] - cluster_center[2]) / max_v;
+
+      // Calculate weighted squared Euclidean distance
+      // d^2 = w_h * (normalized_dh)^2 + w_s * (normalized_ds)^2 + w_v * (normalized_dv)^2
+      float distance_sq = weight_h * std::pow(dh_normalized, 2) +
+                          weight_s * std::pow(ds_normalized, 2) +
+                          weight_v * std::pow(dv_normalized, 2);
+
+      if (distance_sq < min_distance_sq) {
+          min_distance_sq = distance_sq;
+          closest_center_index = i;
+      }
   }
-  if (total_distance_h == epsilon || total_distance_s == epsilon ||
-      total_distance_v == epsilon) {
-    THROWGEMERROR(
-        string("unexpected total distance of zero: ") +
-        string("\ttotal_distance_h:") + Num2Str(total_distance_h).str() +
-        string("\ttotal_distance_s") + Num2Str(total_distance_s).str() +
-        string("\ttotal_distance_v:") + Num2Str(total_distance_v).str());
-  }
-  float min_distance = numeric_limits<float>::max();
-  int result = 0;
-  for (int i = 0; i < num_clusters; ++i) {
-    Vec3f cluster_center(centers.at<float>(i, 0), centers.at<float>(i, 1),
-                         centers.at<float>(i, 2));
-    float dh = abs(hsv[0] - cluster_center[0]);
-    float ds = abs(hsv[1] - cluster_center[1]);
-    float dv = abs(hsv[2] - cluster_center[2]);
-    float distance = dh * weight_h / total_distance_h +
-                     ds * weight_s / total_distance_s +
-                     dv * weight_v / total_distance_v;
-    if (distance < min_distance) {
-      min_distance = distance;
-      result = i;
-    }
-  }
-  return result;
+
+  // Optional Debug Output
+  // if (bDebug) {
+  //     std::cout << "Sample HSV: [" << hsv[0] << "," << hsv[1] << "," << hsv[2] << "] -> Closest Center: " << closest_center_index << " (Dist^2: " << min_distance_sq << ")" << std::endl;
+  // }
+
+  return closest_center_index;
 }
-
 // Function to process the Go board image and determine the board state
 void processGoBoard(const Mat &image_bgr_in, Mat &board_state,
                     Mat &board_with_stones,
                     vector<Point2f> &intersection_points) {
   Mat image_bgr = correctPerspective(image_bgr_in);
-  // imshow("image int", image_bgr_in);
-  //       waitKey(0);
-  // imshow("image correct perspective", image_bgr);
-  //       waitKey(0);
+  if (bDebug) {
+    // imshow("image int", image_bgr_in);
+    // waitKey(0);
+    imshow("image correct perspective", image_bgr);
+    waitKey(0);
+  }
+
   Mat image_hsv;
   cvtColor(image_bgr, image_hsv, COLOR_BGR2HSV);
-
+  if (bDebug) {
+    imshow("HSV Image", image_hsv);
+    waitKey(0);
+  }
   pair<vector<double>, vector<double>> grid_lines =
       detectUniformGrid(image_bgr);
   vector<double> horizontal_lines = grid_lines.first;
