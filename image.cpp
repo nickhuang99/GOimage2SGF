@@ -610,8 +610,8 @@ pair<vector<double>, vector<double>> detectUniformGrid(const Mat &image) {
     }
     // Throw an exception as the detection failed
     THROWGEMERROR(std::string("Failed to detect 19x19 Go board grid. Found ") +
-                  Int2Str(final_horizontal_y.size()).str() +
-                  " horizontal and " + Int2Str(final_vertical_x.size()).str() +
+                  Num2Str(final_horizontal_y.size()).str() +
+                  " horizontal and " + Num2Str(final_vertical_x.size()).str() +
                   " vertical lines after uniform grid finding.");
   }
 
@@ -730,7 +730,55 @@ double getSampleRadiusSize(const vector<double> &horizontal_lines,
                            const vector<double> &vertical_lines) {
   return (abs(horizontal_lines[1] - horizontal_lines[0]) +
           abs(vertical_lines[1] - vertical_lines[0])) /
-         2;
+         2.0f / 3.0f;
+}
+
+int findClosestCenter(const Vec3f &hsv, const Mat &centers) {
+  const float epsilon = 1e-6f; // A small value to avoid division by zero
+  const int num_clusters = centers.rows;
+
+  const float weight_h = 1.0f; // Example: Increased Hue weight
+  const float weight_s = 1.0f; // Example: Decreased Saturation weight
+  const float weight_v = 1.0f; // Example: Decreased Value weight
+  vector<float> distances;
+  float total_distance_h = 0.0f, total_distance_s = 0.0f,
+        total_distance_v = 0.0f;
+
+  for (int i = 0; i < num_clusters; ++i) {
+    Vec3f cluster_center(centers.at<float>(i, 0), centers.at<float>(i, 1),
+                         centers.at<float>(i, 2));
+    float dh = abs(hsv[0] - cluster_center[0]);
+    total_distance_h += dh;
+    float ds = abs(hsv[1] - cluster_center[1]);
+    total_distance_s += ds;
+    float dv = abs(hsv[2] - cluster_center[2]);
+    total_distance_v += dv;
+  }
+  if (total_distance_h == epsilon || total_distance_s == epsilon ||
+      total_distance_v == epsilon) {
+    THROWGEMERROR(
+        string("unexpected total distance of zero: ") +
+        string("\ttotal_distance_h:") + Num2Str(total_distance_h).str() +
+        string("\ttotal_distance_s") + Num2Str(total_distance_s).str() +
+        string("\ttotal_distance_v:") + Num2Str(total_distance_v).str());
+  }
+  float min_distance = numeric_limits<float>::max();
+  int result = 0;
+  for (int i = 0; i < num_clusters; ++i) {
+    Vec3f cluster_center(centers.at<float>(i, 0), centers.at<float>(i, 1),
+                         centers.at<float>(i, 2));
+    float dh = abs(hsv[0] - cluster_center[0]);
+    float ds = abs(hsv[1] - cluster_center[1]);
+    float dv = abs(hsv[2] - cluster_center[2]);
+    float distance = dh * weight_h / total_distance_h +
+                     ds * weight_s / total_distance_s +
+                     dv * weight_v / total_distance_v;
+    if (distance < min_distance) {
+      min_distance = distance;
+      result = i;
+    }
+  }
+  return result;
 }
 
 // Function to process the Go board image and determine the board state
@@ -770,6 +818,12 @@ void processGoBoard(const Mat &image_bgr_in, Mat &board_state,
   int sample_radius = getSampleRadiusSize(horizontal_lines, vertical_lines);
   if (bDebug) {
     cout << "sample_radius:" << sample_radius << endl;
+    Mat debug_radius = image_bgr.clone();
+    for (auto const& pt : intersection_points) {
+      circle(debug_radius, pt, sample_radius, Scalar(0, 0, 255), -1); // Red circles
+    } 
+    imshow("debug sample radius", debug_radius);
+    waitKey(0);
   }
   Mat samples(num_intersections, 3, CV_32F);
   vector<Vec3f> average_hsv_values(num_intersections);
@@ -812,33 +866,14 @@ void processGoBoard(const Mat &image_bgr_in, Mat &board_state,
          << "-- -" << endl;
   }
 
-  cout << fixed << setprecision(2);
-
-  // float weight_h = 0.10f;
-  // float weight_s = 0.45f;
-  // float weight_v = 0.45f;
-
-  float weight_h = 0.60f; // Example: Increased Hue weight
-  float weight_s = 0.20f; // Example: Decreased Saturation weight
-  float weight_v = 0.20f; // Example: Decreased Value weight
+  cout << fixed << setprecision(2); 
 
   for (int i = 0; i < num_intersections; ++i) {
     int row = i / 19;
     int col = i % 19;
     Vec3f hsv = average_hsv_values[i];
-
-    float min_distance = numeric_limits<float>::max();
-    int closest_cluster = -1;
-    for (int j = 0; j < num_clusters; ++j) {
-      Vec3f cluster_center(centers.at<float>(j, 0), centers.at<float>(j, 1),
-                           centers.at<float>(j, 2));
-      float distance = colorDistanceWeighted(hsv, cluster_center, weight_h,
-                                             weight_s, weight_v);
-      if (distance < min_distance) {
-        min_distance = distance;
-        closest_cluster = j;
-      }
-    }
+ 
+    int closest_cluster = findClosestCenter(hsv, centers);
     if (bDebug) {
       cout << "[" << row << "," << col << "] HSV: [" << hsv[0] << ", " << hsv[1]
            << ", " << hsv[2] << "] Cluster (Weighted): " << closest_cluster          
