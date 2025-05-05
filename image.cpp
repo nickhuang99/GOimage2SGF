@@ -25,6 +25,161 @@ struct Line {
 
 bool compareLines(const Line &a, const Line &b) { return a.value < b.value; }
 
+// Helper structure for Lab classification
+struct ClusterInfoLab {
+  int index;
+  float l, a, b; // Lab components
+  float black_score;
+  float white_score;
+  float board_score;
+
+  ClusterInfoLab(int idx, float l_val, float a_val, float b_val)
+      : index(idx), l(l_val), a(a_val), b(b_val),
+        black_score(std::numeric_limits<float>::max()),
+        white_score(std::numeric_limits<float>::max()),
+        board_score(std::numeric_limits<float>::max()) {}
+};
+
+// Function to classify clusters based on Lab centers
+// NOTE: This requires tuning thresholds based on typical Lab values from your images!
+void classifyClustersLab(const Mat &centers, int &label_black, int &label_white,
+                       int &label_board) {
+
+  if (centers.rows != 3) {
+      std::cerr << "Error: Expected 3 cluster centers, but found " << centers.rows << std::endl;
+      label_black = -1; label_white = -1; label_board = -1;
+      THROWGEMERROR(std::string("Expected 3 cluster centers, found ") + Num2Str(centers.rows).str());
+      return;
+  }
+
+  std::vector<ClusterInfoLab> cluster_data;
+  for (int i = 0; i < centers.rows; ++i) {
+      cluster_data.emplace_back(i, centers.at<float>(i, 0), centers.at<float>(i, 1), centers.at<float>(i, 2));
+  }
+
+  // --- Scoring Parameters for Lab (NEEDS TUNING) ---
+  // OpenCV 8-bit Lab: L=[0, 255], a=[0, 255], b=[0, 255] (128 is the zero point for a and b)
+  const float black_l_thresh = 70.0f;  // Example: L* below this suggests black
+  const float white_l_thresh = 190.0f; // Example: L* above this suggests white
+  const float stone_ab_thresh = 30.0f; // Example: abs(a-128) and abs(b-128) below this suggests achromatic (stone)
+  const float board_ab_thresh = 35.0f; // Example: abs(a-128) or abs(b-128) above this suggests colored (board)
+
+  // --- Calculate Scores for each cluster ---
+  for (auto& cluster : cluster_data) {
+      float da = std::abs(cluster.a - 128.0f); // Distance from neutral 'a'
+      float db = std::abs(cluster.b - 128.0f); // Distance from neutral 'b'
+      float chromatic_dist = std::sqrt(da*da + db*db); // How "colorful" is it?
+
+      // Score for Black: Low L*, Low a*/b* (close to 128)
+      // Penalize high L* and high chromatic distance
+      cluster.black_score = (cluster.l / 255.0f) + (chromatic_dist / 180.0f); // Normalize roughly
+      if (cluster.l > black_l_thresh) cluster.black_score += 0.5f; // Penalty if too bright
+      if (chromatic_dist > stone_ab_thresh) cluster.black_score += 0.5f; // Penalty if too colorful
+
+      // Score for White: High L*, Low a*/b* (close to 128)
+      // Penalize low L* and high chromatic distance
+      cluster.white_score = ((255.0f - cluster.l) / 255.0f) + (chromatic_dist / 180.0f); // Normalize roughly
+      if (cluster.l < white_l_thresh) cluster.white_score += 0.5f; // Penalty if too dark
+      if (chromatic_dist > stone_ab_thresh) cluster.white_score += 0.5f; // Penalty if too colorful
+
+      // Score for Board: Mid L*, Higher a*/b* (away from 128)
+      // Penalize very low/high L* and low chromatic distance
+      float l_mid_penalty = std::abs(cluster.l - 128.0f) / 128.0f; // Penalize distance from mid-L*
+      float chromatic_low_penalty = (chromatic_dist < board_ab_thresh) ? (board_ab_thresh - chromatic_dist) / board_ab_thresh : 0.0f; // Penalize low color
+      cluster.board_score = l_mid_penalty + chromatic_low_penalty * 1.5f; // Weight low color penalty
+  }
+
+  // --- Assign Labels based on lowest scores (same logic as before) ---
+  std::sort(cluster_data.begin(), cluster_data.end(), [](const ClusterInfoLab& a, const ClusterInfoLab& b) {
+      return a.black_score < b.black_score;
+  });
+  label_black = cluster_data[0].index;
+
+  std::sort(cluster_data.begin(), cluster_data.end(), [&](const ClusterInfoLab& a, const ClusterInfoLab& b) {
+      if (a.index == label_black) return false;
+      if (b.index == label_black) return true;
+      return a.white_score < b.white_score;
+  });
+  label_white = (cluster_data[0].index != label_black) ? cluster_data[0].index : cluster_data[1].index;
+
+   // Find best candidate for Board (excluding Black and White) - simplified fallback assignment
+   label_board = -1; // Initialize
+   for(const auto& cluster : cluster_data) {
+       if (cluster.index != label_black && cluster.index != label_white) {
+           label_board = cluster.index;
+           break;
+       }
+   }
+   // Add a check if board label wasn't found (should not happen with 3 clusters)
+   if (label_board == -1) {
+       std::cerr << "Warning: Could not assign a unique board label!" << std::endl;
+       // Handle error case appropriately, maybe assign the last remaining index if needed
+       if(cluster_data.size() == 3) { // Basic fallback for 3 clusters
+           for(int i=0; i<3; ++i) if (i != label_black && i != label_white) label_board = i;
+       }
+   }
+
+  // --- Debug Output (Optional) ---
+   if (bDebug) {
+      std::cout << "\n--- Cluster Classification Scores (Lab) ---\n";
+      std::cout << std::fixed << std::setprecision(3);
+      for (const auto& cluster : cluster_data) {
+           std::cout << "Cluster " << cluster.index
+                     << ": Lab(" << cluster.l << ", " << cluster.a << ", " << cluster.b << ")"
+                     << " Scores[Blk:" << cluster.black_score
+                     << ", Wht:" << cluster.white_score
+                     << ", Brd:" << cluster.board_score << "]\n";
+      }
+      // ...(label assignment debug output)...
+       // Sanity check: ensure labels are unique and valid
+      if (label_black == label_white || label_black == label_board || label_white == label_board || label_black == -1 || label_white == -1 || label_board == -1) {
+           std::cerr << "Warning: Label assignment resulted in duplicate or invalid labels!\n";
+      }
+   }
+}
+
+// Function to find the closest cluster center in Lab space using weighted Euclidean distance
+int findClosestCenterLab(const Vec3f &lab_sample, const Mat &centers) {
+  const int num_clusters = centers.rows;
+  if (num_clusters == 0) return -1;
+
+  // --- Weights for Lab components (TUNABLE PARAMETERS) ---
+  // Since Lab is more perceptually uniform, equal weights might work well.
+  // Or slightly emphasize L* for black/white separation.
+  const float weight_l = 3.0f;
+  const float weight_a = 1.0f;
+  const float weight_b = 1.0f;
+
+  // --- Normalization factors (Using 8-bit ranges) ---
+  // L: 0-255, a: 0-255, b: 0-255. Max difference is 255.
+  const float max_l_diff = 255.0f;
+  const float max_a_diff = 255.0f;
+  const float max_b_diff = 255.0f;
+
+  float min_distance_sq = std::numeric_limits<float>::max();
+  int closest_center_index = -1;
+
+  for (int i = 0; i < num_clusters; ++i) {
+      Vec3f cluster_center(centers.at<float>(i, 0), centers.at<float>(i, 1), centers.at<float>(i, 2));
+
+      // Calculate normalized differences for each component
+      // No special handling needed for a* and b* like Hue
+      float dl_normalized = std::abs(lab_sample[0] - cluster_center[0]) / max_l_diff;
+      float da_normalized = std::abs(lab_sample[1] - cluster_center[1]) / max_a_diff;
+      float db_normalized = std::abs(lab_sample[2] - cluster_center[2]) / max_b_diff;
+
+      // Calculate weighted squared Euclidean distance
+      float distance_sq = weight_l * std::pow(dl_normalized, 2) +
+                          weight_a * std::pow(da_normalized, 2) +
+                          weight_b * std::pow(db_normalized, 2);
+
+      if (distance_sq < min_distance_sq) {
+          min_distance_sq = distance_sq;
+          closest_center_index = i;
+      }
+  }
+  return closest_center_index;
+}
 
 // Function to find the corners of the Go board
 vector<Point2f> getBoardCorners(const Mat &inputImage) {
@@ -907,11 +1062,47 @@ int findClosestCenter(const Vec3f &hsv, const Mat &centers) {
 
   return closest_center_index;
 }
+
+// Function to sample a region around a point and get the average Lab
+// NOTE: Assumes input image is already in Lab format (CV_8UC3)
+Vec3f getAverageLab(const Mat &image_lab, Point2f center, int radius) {
+  Vec3d sum(0.0, 0.0, 0.0); // Use Vec3d for summation accuracy
+  int count = 0;
+  // Define the square boundary for sampling
+  int x_min = max(0, static_cast<int>(center.x - radius));
+  int x_max = min(image_lab.cols - 1, static_cast<int>(center.x + radius));
+  int y_min = max(0, static_cast<int>(center.y - radius));
+  int y_max = min(image_lab.rows - 1, static_cast<int>(center.y + radius));
+
+  for (int y = y_min; y <= y_max; ++y) {
+    for (int x = x_min; x <= x_max; ++x) {
+        // Simple distance check for circular area (optional but potentially better)
+        // if (std::pow(x - center.x, 2) + std::pow(y - center.y, 2) <= std::pow(radius, 2)) {
+            Vec3b lab = image_lab.at<Vec3b>(y, x);
+            sum[0] += lab[0]; // L
+            sum[1] += lab[1]; // a
+            sum[2] += lab[2]; // b
+            count++;
+        // }
+    }
+  }
+
+  if (count > 0) {
+    // Return the average as Vec3f
+    return Vec3f(sum[0] / count, sum[1] / count, sum[2] / count);
+  } else {
+    // Return default Lab (e.g., mid-gray) if no valid pixels found
+    return Vec3f(128, 128, 128);
+  }
+}
+
+
 // Function to process the Go board image and determine the board state
 void processGoBoard(const Mat &image_bgr_in, Mat &board_state,
                     Mat &board_with_stones,
                     vector<Point2f> &intersection_points) {
   Mat image_bgr = correctPerspective(image_bgr_in);
+ 
   if (bDebug) {
     // imshow("image int", image_bgr_in);
     // waitKey(0);
@@ -919,10 +1110,10 @@ void processGoBoard(const Mat &image_bgr_in, Mat &board_state,
     waitKey(0);
   }
 
-  Mat image_hsv;
-  cvtColor(image_bgr, image_hsv, COLOR_BGR2HSV);
+  Mat image_lab; // Use Lab instead of HSV
+  cvtColor(image_bgr, image_lab, COLOR_BGR2Lab); // Convert BGR to Lab
   if (bDebug) {
-    imshow("HSV Image", image_hsv);
+    imshow("lab Image", image_bgr);
     waitKey(0);
   }
   pair<vector<double>, vector<double>> grid_lines =
@@ -957,17 +1148,22 @@ void processGoBoard(const Mat &image_bgr_in, Mat &board_state,
     imshow("debug sample radius", debug_radius);
     waitKey(0);
   }
+  // --- Sampling using Lab ---
   Mat samples(num_intersections, 3, CV_32F);
-  vector<Vec3f> average_hsv_values(num_intersections);
+  vector<Vec3f> average_lab_values(num_intersections); // Store Lab values
+  
   for (int i = 0; i < num_intersections; ++i) {
-    Vec3f avg_hsv =
-        getAverageHSV(image_hsv, intersection_points[i], sample_radius);
-    samples.at<float>(i, 0) = avg_hsv[0];
-    samples.at<float>(i, 1) = avg_hsv[1];
-    samples.at<float>(i, 2) = avg_hsv[2];
-    average_hsv_values[i] = avg_hsv;
+    // Use a new function to get average Lab
+    Vec3f avg_lab =
+        getAverageLab(image_lab, intersection_points[i], sample_radius);
+    // Store L*, a*, b* (Note: OpenCV 8-bit Lab range needs care)
+    // Assuming getAverageLab returns values in the typical 8-bit range:
+    // L: 0-255, a: 0-255, b: 0-255 (where 128 is ~zero for a/b)
+    samples.at<float>(i, 0) = avg_lab[0]; // L*
+    samples.at<float>(i, 1) = avg_lab[1]; // a*
+    samples.at<float>(i, 2) = avg_lab[2]; // b*
+    average_lab_values[i] = avg_lab;
   }
-
   int num_clusters = 3;
   Mat labels;
   Mat centers;
@@ -983,7 +1179,7 @@ void processGoBoard(const Mat &image_bgr_in, Mat &board_state,
     cout << "...\n";
   }
   int label_black = -1, label_white = -1, label_board = -1;
-  classifyClusters(centers, label_black, label_white, label_board);
+  classifyClustersLab(centers, label_black, label_white, label_board);
   if (bDebug) {
     cout << "\n--- Assigned Labels (Direct Value Based) ---\n";
     cout << "Black Cluster ID: " << label_black << endl;
@@ -1003,13 +1199,14 @@ void processGoBoard(const Mat &image_bgr_in, Mat &board_state,
   for (int i = 0; i < num_intersections; ++i) {
     int row = i / 19;
     int col = i % 19;
-    Vec3f hsv = average_hsv_values[i];
- 
-    int closest_cluster = findClosestCenter(hsv, centers);
+    Vec3f lab_sample = average_lab_values[i]; // Get the average Lab for this point
+
+    int closest_cluster = findClosestCenterLab(lab_sample, centers);   
     if (bDebug) {
-      cout << "[" << row << "," << col << "] HSV: [" << hsv[0] << ", " << hsv[1]
-           << ", " << hsv[2] << "] Cluster (Weighted): " << closest_cluster          
-           << std::endl;
+      cout << "[" << row << "," << col << "] Lab: [" << lab_sample[0] << ", "
+           << lab_sample[1] << ", " << lab_sample[2]
+           << "] Cluster (Lab): " << closest_cluster
+           << std::endl; // Updated label
     }
 
     if (closest_cluster == label_black) {
@@ -1036,7 +1233,51 @@ void processGoBoard(const Mat &image_bgr_in, Mat &board_state,
     imshow("processGoBoard", board_with_stones);
     waitKey(0);
   }
+  // --- POST-PROCESSING FILTER for isolated white stones ---
+  Mat temp_board_state = board_state.clone(); // Work on a copy
+  for (int r = 0; r < 19; ++r) {
+    for (int c = 0; c < 19; ++c) {
+      // If the current point is classified as White (2)
+      if (temp_board_state.at<uchar>(r, c) == 2) {
+        bool has_stone_neighbor = false;
+        // Check 8 neighbors (adjust bounds checks if necessary)
+        for (int dr = -1; dr <= 1; ++dr) {
+          for (int dc = -1; dc <= 1; ++dc) {
+            if (dr == 0 && dc == 0)
+              continue; // Skip self
+            int nr = r + dr;
+            int nc = c + dc;
+            // Check bounds
+            if (nr >= 0 && nr < 19 && nc >= 0 && nc < 19) {
+              // If neighbor is Black (1) or White (2)
+              if (temp_board_state.at<uchar>(nr, nc) == 1 ||
+                  temp_board_state.at<uchar>(nr, nc) == 2) {
+                has_stone_neighbor = true;
+                break; // Found a stone neighbor, no need to check further
+              }
+            }
+          }
+          if (has_stone_neighbor)
+            break;
+        }
+
+        // If this white stone has NO stone neighbors, assume it's a false
+        // positive
+        if (!has_stone_neighbor) {
+          board_state.at<uchar>(r, c) = 0; // Reclassify as Empty (Board)
+          // Optional: Update the visual debug image too
+          circle(board_with_stones, intersection_points[r * 19 + c], 8,
+                 Scalar(0, 255, 0), 2); // Draw green circle over it
+        }
+      }
+    }
+  }
+   // Optional: Display the board after filtering
   if (bDebug) {
+    imshow("Filtered Stones", board_with_stones);
+    waitKey(0);
+  }
+  if (bDebug && false) {
     Mat debug_lines = image_bgr.clone();
     for (double y : vertical_lines) {
       line(debug_lines, Point(0, y), Point(debug_lines.cols - 1, y),
