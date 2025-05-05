@@ -23,14 +23,15 @@ class GEMError : public std::runtime_error {
       return ss.str();
     }
   };
-  class Int2Str {
+  class Num2Str {
     std::string m_str;
     public:
-    Int2Str(int n) {
+    template<typename T>
+    Num2Str(T n) {
       std::stringstream ss;
       ss << n;
       m_str = ss.str(); 
-    }
+    } 
     operator std::string() {
       return m_str;
     }
