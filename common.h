@@ -11,6 +11,8 @@
 #include <vector>
 
 extern bool bDebug;
+extern int g_capture_width;
+extern int g_capture_height;
 
 // Custom exception class for GEM errors
 class GEMError : public std::runtime_error {

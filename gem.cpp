@@ -20,6 +20,8 @@ using namespace std;
 // Global debug variable
 bool bDebug = false;
 CaptureMode gCaptureMode = MODE_V4L2; // Default capture mode is V4L2
+int g_capture_width = 640;  // Default capture width
+int g_capture_height = 480; // Default capture height
 
 void displayHelpMessage() {
   cout << "Go Environment Manager (GEM)" << endl;
@@ -63,6 +65,9 @@ void displayHelpMessage() {
   cout << "  -M, --mode <backend>          : Specify capture backend ('v4l2' "
           "or 'opencv', default: v4l2)."
        << endl;
+  cout << "  --size <WxH>                  : Specify capture resolution (e.g., "
+          "1280x720). Default: 640x480."
+       << endl; // New option
 }
 
 void processImageWorkflow(const std::string &imagePath) {
@@ -381,12 +386,13 @@ int main(int argc, char *argv[]) {
         {"record-sgf", required_argument, nullptr, 'r'},
         {"test-perspective", required_argument, nullptr, 't'}, // Add -t option
         {"calibration", no_argument, nullptr, 'b'}, // Added calibration long option 
-        {"mode", required_argument, nullptr, 'M'}, // Added mode option    
+        {"mode", required_argument, nullptr, 'M'}, // Added mode option 
+        {"size", required_argument, nullptr, 'S'}, // Use 2 as a unique identifier for --size   
         {nullptr, 0, nullptr, 0}};
 
     int c;
     // Process all options in a single loop
-    while ((c = getopt_long(argc, argv, "dp:g:v:c:h:s:r:D:t:bM:", long_options,
+    while ((c = getopt_long(argc, argv, "dp:g:v:c:h:s:r:D:t:bM:S:", long_options,
                             &option_index)) != -1) {
       switch (c) {
       case 'd':
@@ -440,6 +446,37 @@ int main(int argc, char *argv[]) {
           compareSGFWorkflow(optarg, argv[optind++]);
         } else {
           THROWGEMERROR("-c option requires two SGF paths.");
+        }
+        break;
+      case 'S': // Corresponds to --size
+        if (strcmp(long_options[option_index].name, "size") == 0) {
+            std::string size_str = optarg;
+            size_t delimiter_pos = size_str.find('x');
+            if (delimiter_pos != std::string::npos) {
+                std::string width_s = size_str.substr(0, delimiter_pos);
+                std::string height_s = size_str.substr(delimiter_pos + 1);
+                try {
+                    g_capture_width = std::stoi(width_s);
+                    g_capture_height = std::stoi(height_s);
+                    if (g_capture_width <= 0 || g_capture_height <= 0) {
+                        std::cerr << "Error: Frame dimensions must be positive." << std::endl;
+                        return 1; // Exit on invalid dimension
+                    }
+                    if (bDebug) {
+                        std::cout << "Debug: Requested capture size set to "
+                                  << g_capture_width << "x" << g_capture_height << std::endl;
+                    }
+                } catch (const std::invalid_argument& ia) {
+                    std::cerr << "Error: Invalid number format in --size argument: " << size_str << std::endl;
+                    return 1;
+                } catch (const std::out_of_range& oor) {
+                    std::cerr << "Error: Number out of range in --size argument: " << size_str << std::endl;
+                    return 1;
+                }
+            } else {
+                std::cerr << "Error: Invalid format for --size. Expected WIDTHxHEIGHT (e.g., 640x480)." << std::endl;
+                return 1;
+            }
         }
         break;
       case 'h':
