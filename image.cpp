@@ -185,27 +185,114 @@ int findClosestCenterLab(const Vec3f &lab_sample, const Mat &centers) {
   return closest_center_index;
 }
 
-// Function to find the corners of the Go board
+// Function to find the corners of the Go board.
+// Attempts to load from config file first, otherwise uses hardcoded percentages.
 vector<Point2f> getBoardCorners(const Mat &inputImage) {
+  const string config_path = "./share/config.txt";
+  vector<Point2f> board_corners;
+  bool loaded_from_config = false;
 
-  float tl_x_percent = 20.0f; // Original: 19.0f
-  float tl_y_percent = 8.0f;  // Original: 19.0f  (Slightly lower)
-  float tr_x_percent = 73.0f; // Original: 86.0f
-  float tr_y_percent = 5.0f;  // Original: 19.0f  (Slightly lower)
-  float br_x_percent = 97.0f; // Original: 91.0f (Slightly inwards)
-  float br_y_percent = 45.0f; // Original: 81.0f  (Slightly lower)
-  float bl_x_percent = 5.0f;  // Original: 14.0f  (Slightly inwards)
-  float bl_y_percent = 52.0f; // Original: 81.0f  (Slightly lower)
-  int width = inputImage.cols;
-  int height = inputImage.rows;
-  vector<Point2f> board_corners = {
-      Point2f(width * tl_x_percent / 100.0f, height * tl_y_percent / 100.0f),
-      Point2f(width * tr_x_percent / 100.0f, height * tr_y_percent / 100.0f),
-      Point2f(width * br_x_percent / 100.0f, height * br_y_percent / 100.0f),
-      Point2f(width * bl_x_percent / 100.0f, height * bl_y_percent / 100.0f)};
+  int current_width = inputImage.cols;
+  int current_height = inputImage.rows;
+
+  ifstream configFile(config_path);
+  if (configFile.is_open()) {
+      if (bDebug) cout << "Debug: Found config file: " << config_path << ". Attempting to parse." << endl;
+      map<string, string> config_data;
+      string line;
+      try {
+          // Read config file line by line
+          while (getline(configFile, line)) {
+              // Remove leading/trailing whitespace (optional but good practice)
+              line.erase(0, line.find_first_not_of(" \t\n\r\f\v"));
+              line.erase(line.find_last_not_of(" \t\n\r\f\v") + 1);
+
+              if (line.empty() || line[0] == '#') { // Skip empty lines and comments
+                  continue;
+              }
+
+              size_t equals_pos = line.find('=');
+              if (equals_pos != string::npos) {
+                  string key = line.substr(0, equals_pos);
+                  string value = line.substr(equals_pos + 1);
+                  // Trim whitespace from key/value if necessary
+                  key.erase(0, key.find_first_not_of(" \t"));
+                  key.erase(key.find_last_not_of(" \t") + 1);
+                  value.erase(0, value.find_first_not_of(" \t"));
+                  value.erase(value.find_last_not_of(" \t") + 1);
+                  config_data[key] = value;
+              }
+          }
+          configFile.close();
+
+          // --- Validate Config Data ---
+          if (config_data.count("ImageWidth") && config_data.count("ImageHeight")) {
+              int config_width = std::stoi(config_data["ImageWidth"]);
+              int config_height = std::stoi(config_data["ImageHeight"]);
+
+              if (config_width == current_width && config_height == current_height) {
+                  if (bDebug) cout << "Debug: Config dimensions match current image (" << current_width << "x" << current_height << ")." << endl;
+
+                  // Check if all pixel keys exist
+                  if (config_data.count("TL_X_PX") && config_data.count("TL_Y_PX") &&
+                      config_data.count("TR_X_PX") && config_data.count("TR_Y_PX") &&
+                      config_data.count("BL_X_PX") && config_data.count("BL_Y_PX") &&
+                      config_data.count("BR_X_PX") && config_data.count("BR_Y_PX"))
+                  {
+                      // Parse pixel coordinates
+                      Point2f tl(std::stof(config_data["TL_X_PX"]), std::stof(config_data["TL_Y_PX"]));
+                      Point2f tr(std::stof(config_data["TR_X_PX"]), std::stof(config_data["TR_Y_PX"]));
+                      Point2f bl(std::stof(config_data["BL_X_PX"]), std::stof(config_data["BL_Y_PX"]));
+                      Point2f br(std::stof(config_data["BR_X_PX"]), std::stof(config_data["BR_Y_PX"]));
+
+                      board_corners = {tl, tr, br, bl}; // Use order TL, TR, BR, BL
+                      loaded_from_config = true;
+                      if (bDebug) cout << "Debug: Successfully loaded corners from config file." << endl;
+
+                  } else {
+                       if (bDebug) cerr << "Warning: Config file missing one or more pixel coordinate keys (_PX)." << endl;
+                  }
+              } else {
+                  if (bDebug) cerr << "Warning: Config file dimensions (" << config_width << "x" << config_height
+                                   << ") do not match image dimensions (" << current_width << "x" << current_height
+                                   << "). Ignoring config." << endl;
+              }
+          } else {
+              if (bDebug) cerr << "Warning: Config file missing ImageWidth or ImageHeight." << endl;
+          }
+      } catch (const std::exception& e) {
+          if (bDebug) cerr << "Warning: Error parsing config file '" << config_path << "': " << e.what() << ". Using defaults." << endl;
+           loaded_from_config = false; // Ensure fallback if parsing fails
+           if(configFile.is_open()) configFile.close(); // Close if error happened mid-read
+      }
+  } else {
+       if (bDebug) cout << "Debug: Config file '" << config_path << "' not found. Using default percentages." << endl;
+  }
+
+
+  // --- Fallback to Hardcoded Percentages ---
+  if (!loaded_from_config) {
+      if (bDebug && !configFile.is_open() ) { // Only print this if we didn't try loading
+           cout << "Debug: Using hardcoded percentage values for corners." << endl;
+      } else if (bDebug && loaded_from_config == false) { // Print if loading failed
+           cout << "Debug: Falling back to hardcoded percentage values for corners." << endl;
+      }
+      // Use the original hardcoded percentage logic
+      float tl_x_percent = 20.0f; float tl_y_percent = 8.0f;
+      float tr_x_percent = 73.0f; float tr_y_percent = 5.0f;
+      float br_x_percent = 97.0f; float br_y_percent = 45.0f;
+      float bl_x_percent = 5.0f;  float bl_y_percent = 52.0f;
+
+      board_corners = {
+          Point2f(current_width * tl_x_percent / 100.0f, current_height * tl_y_percent / 100.0f),
+          Point2f(current_width * tr_x_percent / 100.0f, current_height * tr_y_percent / 100.0f),
+          Point2f(current_width * br_x_percent / 100.0f, current_height * br_y_percent / 100.0f),
+          Point2f(current_width * bl_x_percent / 100.0f, current_height * bl_y_percent / 100.0f)
+      };
+  }
+
   return board_corners;
 }
-
 
 vector<Point2f> getBoardCornersCorrected(const Mat& image){
   int width = image.cols;
