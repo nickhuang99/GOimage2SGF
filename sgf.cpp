@@ -15,8 +15,6 @@
 using namespace std;
 using namespace cv;
 
-extern bool bDebug;
-
 // Function to determine the SGF move between two board states
 string determineSGFMove(const Mat &before_board_state,
                         const Mat &next_board_state) {

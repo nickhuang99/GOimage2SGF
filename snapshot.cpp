@@ -19,7 +19,6 @@
 #include <unistd.h>
 #include <vector>
 
-extern bool bDebug;
 // Simplified Capability code to human-readable text mapping for webcams
 std::map<uint32_t, std::string> capability_descriptions = {
     {V4L2_CAP_VIDEO_CAPTURE, "Video Capture"},
@@ -35,6 +34,10 @@ std::map<uint32_t, std::string> format_descriptions = {
     {V4L2_PIX_FMT_NV12, "NV12"},
 };
 
+// Rename original V4L2 capture function
+bool captureFrameV4L2(const std::string &device_path, cv::Mat &frame);
+// Add declaration for new OpenCV capture function
+bool captureFrameOpenCV(const std::string &device_path, cv::Mat &frame);
 
 // Function to get human-readable description for a capability
 std::string getCapabilityDescription(uint32_t cap) {
@@ -73,8 +76,8 @@ VideoDeviceInfo probeSingleDevice(const std::string &device_path) {
     fd = open(device_path.c_str(), O_RDWR | O_NONBLOCK, 0);
     if (fd < 0) {
       if (bDebug) {
-        std::cerr << "Debug: Failed to open device " << device_path
-                  << " (" << strerror(errno) << ")\n";
+        std::cerr << "Debug: Failed to open device " << device_path << " ("
+                  << strerror(errno) << ")\n";
       }
       return deviceInfo;
     }
@@ -101,11 +104,11 @@ VideoDeviceInfo probeSingleDevice(const std::string &device_path) {
     deviceInfo.capabilities = cap.capabilities;
 
     if (bDebug) {
-      std::cout << "Debug: Device " << device_path << " opened. Driver: "
-                << deviceInfo.driver_name << ", Card: "
-                << deviceInfo.card_name
-                << ", Capabilities: " << getCapabilityDescription(cap.capabilities)
-                << " (0x" << std::hex << cap.capabilities << std::dec << ")\n";
+      std::cout << "Debug: Device " << device_path
+                << " opened. Driver: " << deviceInfo.driver_name
+                << ", Card: " << deviceInfo.card_name << ", Capabilities: "
+                << getCapabilityDescription(cap.capabilities) << " (0x"
+                << std::hex << cap.capabilities << std::dec << ")\n";
     }
 
     struct v4l2_fmtdesc fmtdesc;
@@ -155,28 +158,48 @@ std::vector<VideoDeviceInfo> probeVideoDevices(int max_devices) {
   return devices;
 }
 
-// Function to capture a snapshot (remains mostly the same)
+// --- MODIFIED captureSnapshot to select capture method ---
 bool captureSnapshot(const std::string &device_path,
                      const std::string &output_path) {
   cv::Mat frame;
+  bool success = false;
+
   try {
-    if (captureFrame(device_path, frame)) {
-      if (!frame.empty() && !cv::imwrite(output_path, frame)) {
-        THROWGEMERROR("Failed to save image");
-      } else if (frame.empty()) {
-        std::cerr << "Warning: No frame data to save.\n";
+    // Select capture function based on global mode
+    if (gCaptureMode == MODE_OPENCV) {
+      success = captureFrameOpenCV(device_path, frame);
+    } else { // Default or explicitly MODE_V4L2
+      success = captureFrameV4L2(device_path, frame);
+    }
+
+    if (success) {
+      if (!frame.empty()) {
+        if (!cv::imwrite(output_path, frame)) {
+          THROWGEMERROR("Failed to save image: " + output_path);
+        }
+        if (bDebug)
+          std::cout << "Debug: Snapshot saved to " << output_path << std::endl;
+      } else {
+        std::cerr
+            << "Warning: captureFrame returned true but frame is empty.\n";
         return false;
       }
-    } else
+    } else {
+      std::cerr << "Error: captureFrame failed for device " << device_path
+                << " using mode "
+                << (gCaptureMode == MODE_OPENCV ? "OpenCV" : "V4L2")
+                << std::endl;
       return false;
-  } catch (const std::runtime_error &e) {
-    std::cerr << "Error during capture: " << e.what() << std::endl;
+    }
+  } catch (
+      const std::runtime_error &e) { // Catch GEMError or std::runtime_error
+    std::cerr << "Error during snapshot: " << e.what() << std::endl;
     return false;
   }
   return true;
 }
 
-bool captureFrame(const std::string &device_path, cv::Mat &frame) {
+bool captureFrameV4L2(const std::string &device_path, cv::Mat &frame) {
   int fd = -1;
   try {
     fd = open(device_path.c_str(), O_RDWR | O_NONBLOCK, 0);
@@ -228,9 +251,9 @@ bool captureFrame(const std::string &device_path, cv::Mat &frame) {
     if (bDebug) {
       std::cout << "Debug: VIDIOC_S_FMT successful. Using format: Width="
                 << fmt.fmt.pix.width << ", Height=" << fmt.fmt.pix.height
-                << ", PixelFormat=" << getFormatDescription(fmt.fmt.pix.pixelformat)
-                << " (0x" << std::hex << fmt.fmt.pix.pixelformat << std::dec
-                << ")\n";
+                << ", PixelFormat="
+                << getFormatDescription(fmt.fmt.pix.pixelformat) << " (0x"
+                << std::hex << fmt.fmt.pix.pixelformat << std::dec << ")\n";
     }
 
     // Request buffers
@@ -380,3 +403,65 @@ bool captureFrame(const std::string &device_path, cv::Mat &frame) {
   }
 }
 
+// --- NEW captureFrame using OpenCV ---
+bool captureFrameOpenCV(const std::string &device_path, cv::Mat &frame) {
+  int camera_index = 0; // Default
+  // Basic parsing logic (same as before)
+  size_t last_digit_pos = device_path.find_last_of("0123456789");
+  if (last_digit_pos != std::string::npos) {
+    size_t first_digit_pos = last_digit_pos;
+    while (first_digit_pos > 0 && isdigit(device_path[first_digit_pos - 1])) {
+      first_digit_pos--;
+    }
+    try {
+      camera_index = std::stoi(device_path.substr(first_digit_pos));
+    } catch (...) {
+      camera_index = 0;
+    }
+  }
+  if (bDebug)
+    std::cout << "Debug: Attempting capture from index " << camera_index
+              << " (derived from " << device_path << ") using OpenCV."
+              << std::endl;
+
+  cv::VideoCapture cap;
+  // Use the direct index for VideoCapture
+  cap.open(camera_index,
+           cv::CAP_V4L2); // Explicitly suggest V4L2 backend for OpenCV on Linux
+
+  if (!cap.isOpened()) {
+    std::cerr << "Error: Cannot open video capture device with index "
+              << camera_index << " using OpenCV." << std::endl;
+    return false;
+  }
+
+  // Optional: Allow camera to warm up slightly
+  // std::this_thread::sleep_for(std::chrono::milliseconds(200)); // Requires
+  // <thread>, <chrono>
+  cap.grab(); // Grab a few frames to allow settings to stabilize
+
+  bool success = cap.read(frame); // Read one frame
+
+  if (!success || frame.empty()) {
+    std::cerr << "Error: Failed to read frame from device index "
+              << camera_index << " using OpenCV." << std::endl;
+    cap.release();
+    return false;
+  }
+
+  if (bDebug)
+    std::cout << "Debug: Successfully captured frame using OpenCV VideoCapture."
+              << std::endl;
+
+  cap.release(); // Release camera immediately after capture
+  return true;
+}
+
+bool captureFrame(const std::string &device_path, cv::Mat &captured_image){
+   // Select capture function based on global mode
+   if (gCaptureMode == MODE_OPENCV) {
+    return captureFrameOpenCV(device_path, captured_image);
+  } else { // Default or explicitly MODE_V4L2
+    return  captureFrameV4L2(device_path, captured_image);
+  }
+}
