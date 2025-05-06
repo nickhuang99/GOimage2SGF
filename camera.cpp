@@ -21,7 +21,7 @@ int handleCalibrationInput(int key, cv::Point2f &topLeft, cv::Point2f &topRight,
   int return_signal = 0;
 
   switch (key) {
-  // Top edge controls (existing)
+  // Top edge controls
   case 'u':
     topLeft.y -= step;
     topRight.y -= step;
@@ -39,33 +39,33 @@ int handleCalibrationInput(int key, cv::Point2f &topLeft, cv::Point2f &topRight,
     topRight.x -= step;
     break;
 
-  // Bottom edge controls (NEW)
+  // Bottom edge controls
   case 'k':
     bottomLeft.y -= step;
     bottomRight.y -= step;
-    break; // Bottom edge UP
+    break; // bottom edge up
   case 'j':
     bottomLeft.y += step;
     bottomRight.y += step;
-    break; // Bottom edge DOWN
-  case ',':
+    break; // bottom edge down
+  case 'l':
     bottomLeft.x -= step;
     bottomRight.x += step;
-    break; // Bottom edge WIDER (comma key)
+    break; // bottom edge wider (NEW: 'l' instead of ',')
   case 'm':
     bottomLeft.x += step;
     bottomRight.x -= step;
-    break; // Bottom edge NARROWER
+    break; // bottom edge narrower
 
   case 's':
     return_signal = 's';
-    break; // Signal save
+    break;
   case 27:
     return_signal = 27;
-    break; // Signal exit (ESC)
+    break; // ESC
   default:
     if (key != -1)
-      return_signal = key; // Pass other keys through
+      return_signal = key;
     break;
   }
 
@@ -152,13 +152,19 @@ void drawCalibrationOSD(cv::Mat &display_frame, const cv::Point2f &tl,
   cv::Scalar help_text_color(0, 0, 255);    // Red for help text
   cv::Scalar coord_text_color(255, 200, 0); // Cyan for coordinates
   int text_thickness = 1;
+  double help_font_scale = 0.5;
+  cv::Point help_text_origin(10, 20);
+  cv::Point help_text_origin_line2(10, 35);
 
   // --- Draw Help Text OSD ---
-  std::string help_text =
-      "Keys: u/d (up/down), w/n (wider/narrow), s (save), esc (exit)";
-  double help_font_scale = 0.6;
-  cv::Point help_text_origin(10, 20);
-  cv::putText(display_frame, help_text, help_text_origin, font_face,
+  // UPDATED HELP TEXT with 'l' and all lowercase
+  std::string help_text_line1 =
+      "top: u/d (y), w/n (x) | bot: k/j (y), l/m (x)"; // Changed ',' to 'l'
+  std::string help_text_line2 = "s: save, esc: exit";  // All lowercase
+
+  cv::putText(display_frame, help_text_line1, help_text_origin, font_face,
+              help_font_scale, help_text_color, text_thickness, cv::LINE_AA);
+  cv::putText(display_frame, help_text_line2, help_text_origin_line2, font_face,
               help_font_scale, help_text_color, text_thickness, cv::LINE_AA);
 
   // --- Draw Coordinate Text OSD ---
@@ -223,6 +229,103 @@ bool saveCornerConfig(const std::string &filename, const cv::Point2f &tl,
   return true;
 }
 
+// Definition of the new utility function
+bool trySetCameraResolution(cv::VideoCapture &cap, int desired_width,
+                            int desired_height, bool attempt_fallback_format) {
+  if (!cap.isOpened()) {
+    if (bDebug)
+      std::cerr << "Debug: trySetCameraResolution - VideoCapture not open."
+                << std::endl;
+    return false;
+  }
+
+  bool success = false;
+  int initial_fourcc = cv::VideoWriter::fourcc('M', 'J', 'P', 'G');
+  std::string initial_format_name = "MJPEG";
+
+  if (bDebug) {
+    std::cout << "Debug: trySetCameraResolution - Attempting "
+              << initial_format_name << " at " << desired_width << "x"
+              << desired_height << std::endl;
+  }
+
+  // Attempt 1: MJPEG (or a primary preferred format)
+  cap.set(cv::CAP_PROP_FOURCC, initial_fourcc);
+  cap.set(cv::CAP_PROP_FRAME_WIDTH, static_cast<double>(desired_width));
+  cap.set(cv::CAP_PROP_FRAME_HEIGHT, static_cast<double>(desired_height));
+
+  // Allow some time for settings to apply on some cameras/backends
+  // cap.grab(); // You might need a short delay or a grab here for settings to
+  // stick before get() cv::waitKey(50); // Small delay
+
+  int actual_width = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_WIDTH));
+  int actual_height = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_HEIGHT));
+  int actual_fourcc_int = static_cast<int>(cap.get(cv::CAP_PROP_FOURCC));
+  char fourcc_str[5] = {0};
+  memcpy(fourcc_str, &actual_fourcc_int, 4);
+
+  if (bDebug) {
+    std::cout << "Debug: trySetCameraResolution - After 1st attempt (MJPEG): "
+              << "Actual Size: " << actual_width << "x" << actual_height
+              << ", Actual FOURCC: " << fourcc_str
+              << " (Requested: " << desired_width << "x" << desired_height
+              << ")" << std::endl;
+  }
+
+  if (actual_width == desired_width && actual_height == desired_height) {
+    success = true;
+  }
+
+  // Attempt 2: Fallback format (e.g., YUYV) if first failed and fallback is
+  // enabled
+  if (!success && attempt_fallback_format) {
+    if (bDebug)
+      std::cout << "Debug: trySetCameraResolution - Initial attempt failed. "
+                   "Trying fallback YUYV."
+                << std::endl;
+
+    int fallback_fourcc = cv::VideoWriter::fourcc('Y', 'U', 'Y', 'V');
+    std::string fallback_format_name = "YUYV";
+
+    cap.set(cv::CAP_PROP_FOURCC, fallback_fourcc);
+    cap.set(cv::CAP_PROP_FRAME_WIDTH, static_cast<double>(desired_width));
+    cap.set(cv::CAP_PROP_FRAME_HEIGHT, static_cast<double>(desired_height));
+
+    // cap.grab();
+    // cv::waitKey(50);
+
+    actual_width = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_WIDTH));
+    actual_height = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_HEIGHT));
+    actual_fourcc_int = static_cast<int>(cap.get(cv::CAP_PROP_FOURCC));
+    memcpy(fourcc_str, &actual_fourcc_int, 4); // Update fourcc_str
+
+    if (bDebug) {
+      std::cout << "Debug: trySetCameraResolution - After 2nd attempt (YUYV): "
+                << "Actual Size: " << actual_width << "x" << actual_height
+                << ", Actual FOURCC: " << fourcc_str
+                << " (Requested: " << desired_width << "x" << desired_height
+                << ")" << std::endl;
+    }
+
+    if (actual_width == desired_width && actual_height == desired_height) {
+      success = true;
+    }
+  }
+
+  if (success && bDebug) {
+    std::cout << "Debug: trySetCameraResolution - Successfully set to "
+              << actual_width << "x" << actual_height
+              << " with FOURCC: " << fourcc_str << std::endl;
+  } else if (!success && bDebug) {
+    std::cout
+        << "Debug: trySetCameraResolution - Failed to set desired resolution "
+        << desired_width << "x" << desired_height
+        << ". Final actual size: " << actual_width << "x" << actual_height
+        << ", FOURCC: " << fourcc_str << std::endl;
+  }
+  return success;
+}
+
 // --- SIMPLIFIED Main Calibration Function ---
 void runInteractiveCalibration(int camera_index) {
   cv::VideoCapture cap;
@@ -239,30 +342,28 @@ void runInteractiveCalibration(int camera_index) {
         "4. Insufficient permissions (check /dev/videoX ownership/group, add "
         "user to 'video' group, or try sudo if appropriate).\n"
         "5. V4L2 backend issues or camera driver problems.\n"
-        "6. OpenCV was not built with V4L2 support for this camera.";  
+        "6. OpenCV was not built with V4L2 support for this camera.";
     THROWGEMERROR(error_message);
   }
   if (bDebug)
     std::cout << "Debug: Calibration - Requesting frame size "
               << g_capture_width << "x" << g_capture_height << "." << std::endl;
-  cap.set(cv::CAP_PROP_FRAME_WIDTH,
-          static_cast<double>(g_capture_width)); // USE GLOBAL
-  cap.set(cv::CAP_PROP_FRAME_HEIGHT,
-          static_cast<double>(g_capture_height)); // USE GLOBAL
-
-  int frame_width = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_WIDTH));
-  int frame_height = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_HEIGHT));
-  int actual_fourcc = static_cast<int>(cap.get(cv::CAP_PROP_FOURCC));
-  
-  if (frame_width != g_capture_width || frame_height != g_capture_height) {   
-    char fourcc_str[5] = {0};
-    memcpy(fourcc_str, &actual_fourcc, 4);
+  // Use the new utility function
+  if (!trySetCameraResolution(cap, g_capture_width, g_capture_height, true)) {
+    // Get current actuals for the error message
+    int final_width = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_WIDTH));
+    int final_height = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_HEIGHT));
     std::stringstream ss;
-    ss << "set frame size of " << g_capture_width << "x" << g_capture_height
-       << " failed. The actual frame size is " << frame_width << "x"
-       << frame_height << " Format: " << fourcc_str;
+    ss << "Calibration: Failed to set desired resolution " << g_capture_width
+       << "x" << g_capture_height
+       << " even after fallback. Actual resolution is " << final_width << "x"
+       << final_height << ".";
     THROWGEMERROR(ss.str());
   }
+  // Proceed with these dimensions, as trySetCameraResolution confirmed them or
+  // failed trying.
+  int frame_width = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_WIDTH));
+  int frame_height = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_HEIGHT));
   if (bDebug) {
     std::cout << "Debug: Calibration - Actual frame dimensions from camera: "
               << frame_width << "x" << frame_height << std::endl;
@@ -286,13 +387,22 @@ void runInteractiveCalibration(int camera_index) {
   cv::Point2f bottomRight(frame_width * (100.0f - init_percent_x) / 100.0f,
                           frame_height * (100.0f - init_percent_y) / 100.0f);
 
+  // UPDATED CONSOLE HELP TEXT with 'l' and all lowercase
   std::cout << "Initial Corners Set. Use Keys to Adjust:" << std::endl;
-  std::cout << "  TOP edge:    U/D (Up/Down), W/N (Wider/Narrower)"
-            << std::endl; // Adjusted help text
-  std::cout << "  BOTTOM edge: K/J (Up/Down), COMMA( wider ) / M( narrower )"
-            << std::endl; // Adjusted help text
-  std::cout << "  S: Save current snapshot and config to ./share/" << std::endl;
-  std::cout << "  ESC: Exit" << std::endl;
+  std::cout << "  top edge controls:" << std::endl;
+  std::cout << "    u: move top edge up" << std::endl;
+  std::cout << "    d: move top edge down" << std::endl;
+  std::cout << "    w: make top edge wider" << std::endl;
+  std::cout << "    n: make top edge narrower" << std::endl;
+  std::cout << "  bottom edge controls:" << std::endl;
+  std::cout << "    k: move bottom edge up" << std::endl;
+  std::cout << "    j: move bottom edge down" << std::endl;
+  std::cout << "    l: make bottom edge wider"
+            << std::endl; // Changed from COMMA
+  std::cout << "    m: make bottom edge narrower" << std::endl;
+  std::cout << "------------------------------------" << std::endl;
+  std::cout << "  s: save current snapshot and config to ./share/" << std::endl;
+  std::cout << "  esc: exit" << std::endl;
 
   while (true) { // Simple loop, break on ESC or error
     bool success = cap.read(frame);

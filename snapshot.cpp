@@ -482,24 +482,28 @@ bool captureFrameOpenCV(const std::string &device_path, cv::Mat &frame) {
            cv::CAP_V4L2); // Explicitly suggest V4L2 backend for OpenCV on Linux
 
   if (!cap.isOpened()) {
-    THROWGEMERROR(std::string("Error: Cannot open video capture device with index ") +
-        Num2Str(camera_index).str() + std::string(" using OpenCV."));    
+    THROWGEMERROR(
+        std::string("Error: Cannot open video capture device with index ") +
+        Num2Str(camera_index).str() + std::string(" using OpenCV."));
   }
   if (bDebug)
     std::cout << "Debug: OpenCV - Requesting frame size " << g_capture_width
               << "x" << g_capture_height << "." << std::endl;
-  cap.set(cv::CAP_PROP_FRAME_WIDTH,
-          static_cast<double>(g_capture_width)); // USE GLOBAL
-  cap.set(cv::CAP_PROP_FRAME_HEIGHT,
-          static_cast<double>(g_capture_height)); // USE GLOBAL
-
-  int actual_width = cap.get(cv::CAP_PROP_FRAME_WIDTH);
-  int actual_height = cap.get(cv::CAP_PROP_FRAME_HEIGHT);
-  if (actual_width != g_capture_width || actual_height != g_capture_height) {
-    THROWGEMERROR(
-        std::string("OpenCV - Actual frame size reported by camera: ") +
-        Num2Str(actual_width).str() + std::string("x") +
-        Num2Str(actual_height).str());
+  // Use the new utility function
+  if (!trySetCameraResolution(cap, g_capture_width, g_capture_height, true)) {
+    // If strict resolution is required for snapshot, you might throw or log an
+    // error. For now, we'll proceed with whatever resolution the camera settled
+    // on if trySet fails. The utility function logs the failure in debug mode.
+    // If you need to THROW here if it doesn't match g_capture_width/height:
+    int final_width = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_WIDTH));
+    int final_height = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_HEIGHT));
+    if (final_width != g_capture_width || final_height != g_capture_height) {
+      std::stringstream ss;
+      ss << "Snapshot: Failed to set desired resolution " << g_capture_width
+         << "x" << g_capture_height << ". Actual resolution is " << final_width
+         << "x" << final_height << ".";
+      THROWGEMERROR(ss.str()); // Or handle differently for snapshots
+    }
   }
 
   // Optional: Allow camera to warm up slightly

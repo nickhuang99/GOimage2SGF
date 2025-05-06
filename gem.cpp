@@ -387,7 +387,7 @@ int main(int argc, char *argv[]) {
         {"test-perspective", required_argument, nullptr, 't'}, // Add -t option
         {"calibration", no_argument, nullptr, 'b'}, // Added calibration long option 
         {"mode", required_argument, nullptr, 'M'}, // Added mode option 
-        {"size", required_argument, nullptr, 'S'}, // Use 2 as a unique identifier for --size   
+        {"size", required_argument, nullptr, 'S'}, // Use S as a unique identifier for --size   
         {nullptr, 0, nullptr, 0}};
 
     int c;
@@ -449,36 +449,43 @@ int main(int argc, char *argv[]) {
         }
         break;
       case 'S': // Corresponds to --size
-        if (strcmp(long_options[option_index].name, "size") == 0) {
-            std::string size_str = optarg;
-            size_t delimiter_pos = size_str.find('x');
-            if (delimiter_pos != std::string::npos) {
-                std::string width_s = size_str.substr(0, delimiter_pos);
-                std::string height_s = size_str.substr(delimiter_pos + 1);
-                try {
-                    g_capture_width = std::stoi(width_s);
-                    g_capture_height = std::stoi(height_s);
-                    if (g_capture_width <= 0 || g_capture_height <= 0) {
-                        std::cerr << "Error: Frame dimensions must be positive." << std::endl;
-                        return 1; // Exit on invalid dimension
-                    }
-                    if (bDebug) {
-                        std::cout << "Debug: Requested capture size set to "
-                                  << g_capture_width << "x" << g_capture_height << std::endl;
-                    }
-                } catch (const std::invalid_argument& ia) {
-                    std::cerr << "Error: Invalid number format in --size argument: " << size_str << std::endl;
-                    return 1;
-                } catch (const std::out_of_range& oor) {
-                    std::cerr << "Error: Number out of range in --size argument: " << size_str << std::endl;
-                    return 1;
-                }
-            } else {
-                std::cerr << "Error: Invalid format for --size. Expected WIDTHxHEIGHT (e.g., 640x480)." << std::endl;
-                return 1;
+      {         // Added braces for variable scope
+        std::string size_str = optarg;
+        size_t delimiter_pos = size_str.find('x');
+        if (delimiter_pos != std::string::npos) {
+          std::string width_s = size_str.substr(0, delimiter_pos);
+          std::string height_s = size_str.substr(delimiter_pos + 1);
+          try {
+            g_capture_width = std::stoi(width_s);
+            g_capture_height = std::stoi(height_s);
+            if (g_capture_width <= 0 || g_capture_height <= 0) {
+              std::cerr
+                  << "Error: Frame dimensions must be positive for --size."
+                  << std::endl;
+              return 1;
             }
+            if (bDebug) {
+              std::cout << "Debug: Requested capture size set to "
+                        << g_capture_width << "x" << g_capture_height
+                        << " by option." << std::endl;
+            }
+          } catch (const std::invalid_argument &ia) {
+            std::cerr << "Error: Invalid number format in --size argument: "
+                      << size_str << std::endl;
+            return 1;
+          } catch (const std::out_of_range &oor) {
+            std::cerr << "Error: Number out of range in --size argument: "
+                      << size_str << std::endl;
+            return 1;
+          }
+        } else {
+          std::cerr << "Error: Invalid format for --size. Expected "
+                       "WIDTHxHEIGHT (e.g., 640x480)."
+                    << std::endl;
+          return 1;
         }
-        break;
+      } // End of scope for case 'S'
+      break;
       case 'h':
         displayHelpMessage();
         return 0;
