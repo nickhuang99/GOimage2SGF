@@ -43,9 +43,9 @@ g++ -g image.cpp sgf.cpp snapshot.cpp gem.cpp camera.cpp -o gem.exe `pkg-config 
 
 This command compiles all the C++ source files and links them with the necessary OpenCV and V4L2 libraries. The -g flag includes debugging symbols.
 
-## **Important: Permissions and the share Directory**
+*** **Important: Permissions and the share Directory**
 
-### **Webcam Access (V4L2)**
+*** **Webcam Access (V4L2)**
 
 Operations involving direct webcam access via V4L2 (like probing devices, taking snapshots with the V4L2 backend, or calibration) require permission to access video device files (e.g., /dev/video0).
 
@@ -55,7 +55,7 @@ Operations involving direct webcam access via V4L2 (like probing devices, taking
   sudo usermod -aG video $USER  
   You will need to **log out and log back in** for this change to take effect.
 
-### **The share Directory**
+*** **The share Directory**
 
 Even when running as a non-root user who is a member of the video group, there's a nuance: the program, when accessing V4L2 devices, might operate under the effective group ID of video. This video group might not have write permissions in your user's home directory or the project's current working directory if it was created solely by your user.  
 To ensure that GEM can save files like snapshot.jpg (from snapshot/calibration) and config.txt (from calibration) without permission errors, a share subdirectory is used. You need to create this directory and give it open permissions:
@@ -67,11 +67,11 @@ chmod 777 share
 
 This allows the program, even when its effective group for device access might be video, to write necessary files into the share folder. The calibration process specifically saves snapshot.jpg (or snapshot_osd.jpg in debug mode) and config.txt into this share directory.
 
-## **Usage**
+** **Usage**
 
 ./gem.exe [options]
 
-### **Options:**
+*** **Options:**
 
 * -d, --debug: Enable debug output. Place this option first if used.  
 * -D, --device <device_path>: Specify the video device path (default: /dev/video0). Place this option early if used with device-dependent operations.  
@@ -88,7 +88,7 @@ This allows the program, even when its effective group for device access might b
 * -t, --test-perspective <image_path>: (Development/Test) Test the perspective correction on an image.  
 * -h, --help: Display the help message.
 
-### **Examples:**
+*** **Examples:**
 
 1. **Enable debug mode and specify a different camera for probing:**  
    Bash  
@@ -116,7 +116,7 @@ This allows the program, even when its effective group for device access might b
    Bash  
    ./gem.exe -r share/live_game.sgf
 
-## **Functionality Details**
+*** **Functionality Details**
 
 * **Board Processing (processGoBoard in image.cpp):**  
   1. Applies perspective correction using corners defined in share/config.txt (if available and dimensions match) or default percentages.  
