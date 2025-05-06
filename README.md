@@ -1,45 +1,45 @@
-\# Go Environment Manager (GEM)
+# Go Environment Manager (GEM)
 
-\#\# Overview
+## Overview
 
 The Go Environment Manager (GEM) is a command-line tool designed to analyze Go board positions from images or live webcams, manage SGF (Smart Game Format) files, and assist in Go game recording. It leverages OpenCV for image processing and V4L2 (or OpenCV's backend) for webcam interactions.
 
-\#\# Features
+## Features
 
-\* \*\*Image Processing:\*\*  
-    \* Corrects perspective distortion in Go board images.  
-    \* Detects the 19x19 grid lines on the Go board.  
-    \* Identifies black and white stones at intersections using color clustering (Lab color space).  
-    \* Applies post-processing filters to improve stone detection accuracy.  
-\* \*\*SGF Management:\*\*  
-    \* Generates SGF files from an analyzed board state (AB/AW setup).  
-    \* Parses SGF files to extract header information, setup stones, and game moves.  
-    \* Verifies a board image against an SGF file by overlaying SGF data on the image.  
-    \* Compares two SGF files for semantic equivalence.  
-    \* Determines the SGF move made between two board states.  
-\* \*\*Video Capture & Calibration:\*\*  
-    \* Probes connected video devices to list available webcams and their capabilities.  
-    \* Captures snapshots (images) from a specified webcam.  
-    \* Provides an interactive calibration mode to define the board area in the webcam view, saving these coordinates to \`share/config.txt\`. The \`getBoardCorners\` function in \`image.cpp\` will then use this configuration.  
-    \* Supports two capture backends: direct V4L2 calls and OpenCV's VideoCapture (which can also use V4L2).  
-\* \*\*Command-Line Interface:\*\*  
-    \* Flexible options to perform various tasks.  
-    \* Debug mode (\`-d\` or \`--debug\`) for verbose output.  
-\* \*\*Error Handling:\*\*  
-    \* Custom error classes (\`GEMError\`, \`SGFError\`) for more informative diagnostics.
+* **Image Processing:**  
+    * Corrects perspective distortion in Go board images.  
+    * Detects the 19x19 grid lines on the Go board.  
+    * Identifies black and white stones at intersections using color clustering (Lab color space).  
+    * Applies post-processing filters to improve stone detection accuracy.  
+* **SGF Management:**  
+    * Generates SGF files from an analyzed board state (AB/AW setup).  
+    * Parses SGF files to extract header information, setup stones, and game moves.  
+    * Verifies a board image against an SGF file by overlaying SGF data on the image.  
+    * Compares two SGF files for semantic equivalence.  
+    * Determines the SGF move made between two board states.  
+* **Video Capture & Calibration:**  
+    * Probes connected video devices to list available webcams and their capabilities.  
+    * Captures snapshots (images) from a specified webcam.  
+    * Provides an interactive calibration mode to define the board area in the webcam view, saving these coordinates to `share/config.txt`. The `getBoardCorners` function in `image.cpp` will then use this configuration.  
+    * Supports two capture backends: direct V4L2 calls and OpenCV's VideoCapture (which can also use V4L2).  
+* **Command-Line Interface:**  
+    * Flexible options to perform various tasks.  
+    * Debug mode (`-d` or `--debug`) for verbose output.  
+* **Error Handling:**  
+    * Custom error classes (`GEMError`, `SGFError`) for more informative diagnostics.
 
-\#\# Building
+## Building
 
 To build GEM, you need:
 
-\* A C++ compiler supporting C++17 (e.g., g++)  
-\* OpenCV (version 4 or later) \- Development libraries (\`libopencv-dev\`)  
-\* libv4l-dev (for V4L2 support)
+* A C++ compiler supporting C++17 (e.g., g++)  
+* OpenCV (version 4 or later) \- Development libraries (`libopencv-dev`)  
+* libv4l-dev (for V4L2 support)
 
 Use the following command to compile the source code:
 
-\`\`\`bash  
-g++ \-g image.cpp sgf.cpp snapshot.cpp gem.cpp camera.cpp \-o gem.exe \`pkg-config \--cflags \--libs opencv4\` \-lv4l2
+```bash  
+g++ \-g image.cpp sgf.cpp snapshot.cpp gem.cpp camera.cpp \-o gem.exe `pkg-config \--cflags \--libs opencv4` \-lv4l2
 
 This command compiles all the C++ source files and links them with the necessary OpenCV and V4L2 libraries. The \-g flag includes debugging symbols.
 
