@@ -19,6 +19,7 @@ using namespace std;
 
 // Global debug variable
 bool bDebug = false;
+CaptureMode gCaptureMode = MODE_V4L2; // Default capture mode is V4L2
 
 void displayHelpMessage() {
   cout << "Go Environment Manager (GEM)" << endl;
@@ -29,6 +30,10 @@ void displayHelpMessage() {
        << endl;
   cout << "  -D, --device <device_path>      : Specify the video device path "
           "(default: /dev/video0). Must be at the beginning."
+       << endl;
+  cout << "  -b, --calibration               : Run calibration workflow "
+          "(displays " // Added option
+          "live webcam feed)."
        << endl;
   cout << "  -p, --process-image <image_path> : Process the Go board image."
        << endl;
@@ -54,6 +59,10 @@ void displayHelpMessage() {
   cout << "\n  Note: Snapshot and recording operations (--probe-devices, "
           "-s/--snapshot, -r/--record-sgf) often require root privileges (use "
           "sudo).\n";
+  // Added option
+  cout << "  -M, --mode <backend>          : Specify capture backend ('v4l2' "
+          "or 'opencv', default: v4l2)."
+       << endl;
 }
 
 void processImageWorkflow(const std::string &imagePath) {
@@ -248,33 +257,37 @@ void probeVideoDevicesWorkflow() {
 
 void captureSnapshotWorkflow(const std::string &selected_device,
                              const std::string &output) {
-  // For now, let's just try to capture from the first available device
-  std::cout << "\nAttempting to capture from: " << selected_device << "\n";
+  cout << "\nAttempting to capture snapshot from: " << selected_device
+       << " using " << (gCaptureMode == MODE_OPENCV ? "OpenCV" : "V4L2")
+       << " mode.\n";
+  // captureSnapshot function now respects gCaptureMode internally
   if (captureSnapshot(selected_device, output)) {
     std::cout << "Snapshot saved to " << output << std::endl;
   } else {
-    std::cout << "Failed to capture snapshot from " << selected_device << ".\n";
+    // Error message printed within captureSnapshot or its called functions
   }
 }
 
 void recordSGFWorkflow(const std::string &device_path,
                        const std::string &output_sgf) {
-  cout << "Capturing snapshot, processing, and generating SGF to: "
-       << output_sgf << " from device: " << device_path << endl;
+  cout << "Capturing snapshot using "
+       << (gCaptureMode == MODE_OPENCV ? "OpenCV" : "V4L2")
+       << " mode, processing, and generating SGF to: " << output_sgf
+       << " from device: " << device_path << endl;
 
-  Mat captured_image;
-  try {
-    if (!captureFrame(device_path, captured_image)) { // Use captureFrame
+  Mat captured_image; 
+  try {       
+    if (!captureFrame(device_path, captured_image)) {
       THROWGEMERROR("Failed to capture frame from device.");
     }
 
+    // --- Rest of processing remains the same ---
     Mat board_state, board_with_stones;
     vector<Point2f> intersections;
     processGoBoard(captured_image, board_state, board_with_stones,
-                   intersections); // Process the captured image
+                   intersections);
 
-    string sgf_content =
-        generateSGF(board_state, intersections); // Generate SGF
+    string sgf_content = generateSGF(board_state, intersections);
 
     ofstream outfile(output_sgf);
     if (!outfile.is_open()) {
@@ -283,8 +296,11 @@ void recordSGFWorkflow(const std::string &device_path,
     outfile << sgf_content << endl;
     outfile.close();
     cout << "SGF content written to: " << output_sgf << endl;
+
   } catch (const cv::Exception &e) {
     THROWGEMERROR("OpenCV error in recordSGFWorkflow: " + string(e.what()));
+  } catch (const GEMError &e) { // Catch GEMError specifically
+    THROWGEMERROR(string("Error in recordSGFWorkflow: ") + e.what());
   }
 }
 
@@ -296,6 +312,40 @@ void testPerspectiveTransform(const std::string& imagePath) {
     return;
   }
   Mat correct_image = correctPerspective(image);
+}
+
+// --- NEW Calibration Workflow Function ---
+void calibrationWorkflow(const std::string &device_path) {
+  cout << "Starting Calibration Workflow..." << endl;
+
+  // Extract camera index from device path (e.g., /dev/video0 -> 0)
+  int camera_index = 0; // Default
+  size_t last_digit_pos = device_path.find_last_of("0123456789");
+  if (last_digit_pos != string::npos) {
+    size_t first_digit_pos = last_digit_pos;
+    while (first_digit_pos > 0 && isdigit(device_path[first_digit_pos - 1])) {
+      first_digit_pos--;
+    }
+    try {
+      string index_str = device_path.substr(first_digit_pos);
+      camera_index = std::stoi(index_str);
+    } catch (const std::exception &e) {
+      cerr << "Warning: Could not parse camera index from device path '"
+           << device_path << "'. Using default index 0. Error: " << e.what()
+           << endl;
+      camera_index = 0;
+    }
+  } else {
+    cerr << "Warning: Could not find camera index in device path '"
+         << device_path << "'. Using default index 0." << endl;
+    camera_index = 0;
+  }
+
+  cout << "Displaying live feed from camera index: " << camera_index
+       << " (derived from " << device_path << ")" << endl;
+  // Call the function (defined in snapshot.cpp)
+  runInteractiveCalibration(camera_index);
+  cout << "Calibration workflow finished." << endl;
 }
 
 int main(int argc, char *argv[]) {
@@ -310,6 +360,7 @@ int main(int argc, char *argv[]) {
     std::string record_sgf_output;
     std::string test_image_path; // For -t option
     bool probe_only = false;
+    bool run_calibration = false;    // Flag for calibration mode
 
     struct option long_options[] = {
         {"process-image", required_argument, nullptr, 'p'},
@@ -324,11 +375,13 @@ int main(int argc, char *argv[]) {
         {"device", required_argument, nullptr, 'D'},
         {"record-sgf", required_argument, nullptr, 'r'},
         {"test-perspective", required_argument, nullptr, 't'}, // Add -t option
+        {"calibration", no_argument, nullptr, 'b'}, // Added calibration long option 
+        {"mode", required_argument, nullptr, 'M'}, // Added mode option    
         {nullptr, 0, nullptr, 0}};
 
     int c;
     // Process all options in a single loop
-    while ((c = getopt_long(argc, argv, "dp:g:v:c:h:s:r:D:t:", long_options,
+    while ((c = getopt_long(argc, argv, "dp:g:v:c:h:s:r:D:t:bM:", long_options,
                             &option_index)) != -1) {
       switch (c) {
       case 'd':
@@ -337,6 +390,27 @@ int main(int argc, char *argv[]) {
         break;
       case 'D':
         device_path = optarg;
+        break;
+      case 'b': // Handle calibration option
+        run_calibration = true;
+        break;
+      case 'M': // Handle capture mode option
+        if (optarg) {
+          std::string mode_str(optarg);
+          if (mode_str == "opencv") {
+            gCaptureMode = MODE_OPENCV;
+          } else if (mode_str == "v4l2") {
+            gCaptureMode = MODE_V4L2;
+          } else {
+            std::cerr << "Warning: Invalid capture mode '" << mode_str
+                      << "'. Using default (v4l2)." << std::endl;
+            gCaptureMode = MODE_V4L2;
+          }
+          if (bDebug)
+            std::cout << "Debug: Capture mode set to "
+                      << (gCaptureMode == MODE_OPENCV ? "OpenCV" : "V4L2")
+                      << std::endl;
+        }
         break;
       case 'p':
         processImageWorkflow(optarg);
@@ -394,6 +468,11 @@ int main(int argc, char *argv[]) {
       }
     }
 
+    // Calibration takes precedence if set
+    if (run_calibration) {
+      calibrationWorkflow(device_path);
+      return 0; // Exit after calibration
+    }
     // Handle any remaining non-option arguments here if needed
     if (probe_only) {
       return 0; // Exit if only probing devices

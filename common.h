@@ -10,6 +10,8 @@
 #include <sstream>
 #include <vector>
 
+extern bool bDebug;
+
 // Custom exception class for GEM errors
 class GEMError : public std::runtime_error {
   public:
@@ -49,7 +51,12 @@ class GEMError : public std::runtime_error {
     SGFError(const std::string &message) : std::runtime_error(message) {}
   };
 
-
+// --- Capture Mode Selection ---
+enum CaptureMode {
+  MODE_V4L2,    // Use direct V4L2 calls
+  MODE_OPENCV   // Use OpenCV VideoCapture
+};
+extern CaptureMode gCaptureMode; // Defined and defaulted in gem.cpp
 
 struct SGFHeader {
   int gm;         // Game
@@ -105,8 +112,17 @@ void parseSGFGame(const std::string &sgfContent,
                   std::vector<Move> &moves);
 SGFHeader parseSGFHeader(const std::string &sgf_content);
 std::vector<VideoDeviceInfo> probeVideoDevices(int max_devices = 256);
-bool captureSnapshot(const std::string &device_path,
-                     const std::string &output_path);
+
 bool captureFrame(const std::string &device_path, cv::Mat &frame);
+
+// // captureSnapshot now uses the selected mode via gCaptureMode
+bool captureSnapshot(const std::string &device_path, const std::string &output_path);
+// Keep displayWebcamFeed declaration if it's in snapshot.cpp now
+
+// void displayWebcamFeed(int camera_index); // Or runInteractiveCalibration
 cv::Mat correctPerspective(const cv::Mat &image);
+
+// Declare the function to display webcam feed (defined in snapshot.cpp)
+void runInteractiveCalibration(int camera_index);
+
 #endif // UTILITY_H
