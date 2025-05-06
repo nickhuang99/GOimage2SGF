@@ -131,39 +131,49 @@ VideoDeviceInfo probeSingleDevice(const std::string &device_path) {
           if (!first_size) {
             sizes_string += ", ";
           }
-          sizes_string += std::to_string(frmsize.discrete.width) + "x" + std::to_string(frmsize.discrete.height);
+          sizes_string += std::to_string(frmsize.discrete.width) + "x" +
+                          std::to_string(frmsize.discrete.height);
           first_size = false;
         } else if (frmsize.type == V4L2_FRMSIZE_TYPE_STEPWISE) {
           if (!first_size) {
             sizes_string += ", ";
           }
-          sizes_string += "Stepwise (Min: " + std::to_string(frmsize.stepwise.min_width) + "x" + std::to_string(frmsize.stepwise.min_height) +
-                         " Max: " + std::to_string(frmsize.stepwise.max_width) + "x" + std::to_string(frmsize.stepwise.max_height) +
-                         " Step: " + std::to_string(frmsize.stepwise.step_width) + "x" + std::to_string(frmsize.stepwise.step_height) + ")";
+          sizes_string +=
+              "Stepwise (Min: " + std::to_string(frmsize.stepwise.min_width) +
+              "x" + std::to_string(frmsize.stepwise.min_height) +
+              " Max: " + std::to_string(frmsize.stepwise.max_width) + "x" +
+              std::to_string(frmsize.stepwise.max_height) +
+              " Step: " + std::to_string(frmsize.stepwise.step_width) + "x" +
+              std::to_string(frmsize.stepwise.step_height) + ")";
           first_size = false;
         }
-        // You could also enumerate frame intervals (FPS) here for each size if needed, using VIDIOC_ENUM_FRAMEINTERVALS
+        // You could also enumerate frame intervals (FPS) here for each size if
+        // needed, using VIDIOC_ENUM_FRAMEINTERVALS
         frmsize.index++;
       }
-      if (first_size) { // No sizes found or ENUM_FRAMESIZES failed for the first index
-          // This can happen if the format doesn't support size enumeration or only supports a default size not listed this way.
-          sizes_string += "N/A or Default";
+      if (first_size) { // No sizes found or ENUM_FRAMESIZES failed for the
+                        // first index
+        // This can happen if the format doesn't support size enumeration or
+        // only supports a default size not listed this way.
+        sizes_string += "N/A or Default";
       }
       sizes_string += ")";
       current_format_details += sizes_string;
-      
+
       deviceInfo.supported_format_details.push_back(current_format_details);
 
       if (bDebug) {
         // The detailed print is now part of the collected string,
         // but we can still log the basic format finding.
         std::cout << "  Debug: Found format " << fmtdesc.index << ": "
-                  << format_name << " (0x" << std::hex << fmtdesc.pixelformat << std::dec
-                  << ") - Details: " << current_format_details << "\n";
+                  << format_name << " (0x" << std::hex << fmtdesc.pixelformat
+                  << std::dec << ") - Details: " << current_format_details
+                  << "\n";
       }
       fmtdesc.index++;
     }
-  } catch (const std::runtime_error &e) { // Should ideally not be hit if we check returns
+  } catch (const std::runtime_error
+               &e) { // Should ideally not be hit if we check returns
     std::cerr << "Error probing " << device_path << ": " << e.what()
               << std::endl;
   }
@@ -269,30 +279,35 @@ bool captureFrameV4L2(const std::string &device_path, cv::Mat &frame) {
       std::cout << "Debug: Device supports streaming.\n";
     }
 
-    // Set video format to MJPEG
+    // Set video format
     struct v4l2_format fmt;
     memset(&fmt, 0, sizeof(fmt));
     fmt.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
-    fmt.fmt.pix.width = 640;
-    fmt.fmt.pix.height = 480;
+    fmt.fmt.pix.width = g_capture_width;   // USE GLOBAL
+    fmt.fmt.pix.height = g_capture_height; // USE GLOBAL
     fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_MJPEG;
-    fmt.fmt.pix.field = V4L2_FIELD_INTERLACED;
+    fmt.fmt.pix.field =
+        V4L2_FIELD_INTERLACED; // Or V4L2_FIELD_NONE if progressive
+
     if (ioctl(fd, VIDIOC_S_FMT, &fmt) < 0) {
-      std::cerr << "Warning: Failed to set MJPEG format, trying YUYV."
-                << std::endl;
+      std::cerr << "Warning: Failed to set MJPEG format at " << g_capture_width
+                << "x" << g_capture_height << ". Trying YUYV." << std::endl;
+      // Keep same requested dimensions for YUYV attempt
       fmt.fmt.pix.pixelformat = V4L2_PIX_FMT_YUYV;
       if (ioctl(fd, VIDIOC_S_FMT, &fmt) < 0) {
-        THROWGEMERROR("Failed to set YUYV format");
+        THROWGEMERROR(std::string("Failed to set YUYV format at ") +
+                      Num2Str(g_capture_width).str() + "x" +
+                      Num2Str(g_capture_height).str());
       }
     }
     if (bDebug) {
-      std::cout << "Debug: VIDIOC_S_FMT successful. Using format: Width="
-                << fmt.fmt.pix.width << ", Height=" << fmt.fmt.pix.height
-                << ", PixelFormat="
+      std::cout << "Debug: VIDIOC_S_FMT attempted for " << g_capture_width
+                << "x" << g_capture_height
+                << ". Actual format set: Width=" << fmt.fmt.pix.width
+                << ", Height=" << fmt.fmt.pix.height << ", PixelFormat="
                 << getFormatDescription(fmt.fmt.pix.pixelformat) << " (0x"
                 << std::hex << fmt.fmt.pix.pixelformat << std::dec << ")\n";
     }
-
     // Request buffers
     struct v4l2_requestbuffers req;
     memset(&req, 0, sizeof(req));
@@ -467,9 +482,24 @@ bool captureFrameOpenCV(const std::string &device_path, cv::Mat &frame) {
            cv::CAP_V4L2); // Explicitly suggest V4L2 backend for OpenCV on Linux
 
   if (!cap.isOpened()) {
-    std::cerr << "Error: Cannot open video capture device with index "
-              << camera_index << " using OpenCV." << std::endl;
-    return false;
+    THROWGEMERROR(std::string("Error: Cannot open video capture device with index ") +
+        Num2Str(camera_index).str() + std::string(" using OpenCV."));    
+  }
+  if (bDebug)
+    std::cout << "Debug: OpenCV - Requesting frame size " << g_capture_width
+              << "x" << g_capture_height << "." << std::endl;
+  cap.set(cv::CAP_PROP_FRAME_WIDTH,
+          static_cast<double>(g_capture_width)); // USE GLOBAL
+  cap.set(cv::CAP_PROP_FRAME_HEIGHT,
+          static_cast<double>(g_capture_height)); // USE GLOBAL
+
+  int actual_width = cap.get(cv::CAP_PROP_FRAME_WIDTH);
+  int actual_height = cap.get(cv::CAP_PROP_FRAME_HEIGHT);
+  if (actual_width != g_capture_width || actual_height != g_capture_height) {
+    THROWGEMERROR(
+        std::string("OpenCV - Actual frame size reported by camera: ") +
+        Num2Str(actual_width).str() + std::string("x") +
+        Num2Str(actual_height).str());
   }
 
   // Optional: Allow camera to warm up slightly
@@ -494,11 +524,11 @@ bool captureFrameOpenCV(const std::string &device_path, cv::Mat &frame) {
   return true;
 }
 
-bool captureFrame(const std::string &device_path, cv::Mat &captured_image){
-   // Select capture function based on global mode
-   if (gCaptureMode == MODE_OPENCV) {
+bool captureFrame(const std::string &device_path, cv::Mat &captured_image) {
+  // Select capture function based on global mode
+  if (gCaptureMode == MODE_OPENCV) {
     return captureFrameOpenCV(device_path, captured_image);
   } else { // Default or explicitly MODE_V4L2
-    return  captureFrameV4L2(device_path, captured_image);
+    return captureFrameV4L2(device_path, captured_image);
   }
 }
