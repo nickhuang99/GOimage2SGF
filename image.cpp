@@ -16,8 +16,6 @@
 
 using namespace std;
 using namespace cv;
-
-
 struct Line {
   double value; // y for horizontal, x for vertical
   double angle;
@@ -41,20 +39,26 @@ struct ClusterInfoLab {
 };
 
 // Function to classify clusters based on Lab centers
-// NOTE: This requires tuning thresholds based on typical Lab values from your images!
+// NOTE: This requires tuning thresholds based on typical Lab values from your
+// images!
 void classifyClustersLab(const Mat &centers, int &label_black, int &label_white,
-                       int &label_board) {
+                         int &label_board) {
 
   if (centers.rows != 3) {
-      std::cerr << "Error: Expected 3 cluster centers, but found " << centers.rows << std::endl;
-      label_black = -1; label_white = -1; label_board = -1;
-      THROWGEMERROR(std::string("Expected 3 cluster centers, found ") + Num2Str(centers.rows).str());
-      return;
+    std::cerr << "Error: Expected 3 cluster centers, but found " << centers.rows
+              << std::endl;
+    label_black = -1;
+    label_white = -1;
+    label_board = -1;
+    THROWGEMERROR(std::string("Expected 3 cluster centers, found ") +
+                  Num2Str(centers.rows).str());
+    return;
   }
 
   std::vector<ClusterInfoLab> cluster_data;
   for (int i = 0; i < centers.rows; ++i) {
-      cluster_data.emplace_back(i, centers.at<float>(i, 0), centers.at<float>(i, 1), centers.at<float>(i, 2));
+    cluster_data.emplace_back(i, centers.at<float>(i, 0),
+                              centers.at<float>(i, 1), centers.at<float>(i, 2));
   }
 
   // --- Scoring Parameters for Lab (NEEDS TUNING) ---
@@ -69,83 +73,109 @@ void classifyClustersLab(const Mat &centers, int &label_black, int &label_white,
          << "board_ab_thresh:" << board_ab_thresh << endl;
   }
   // --- Calculate Scores for each cluster ---
-  for (auto& cluster : cluster_data) {
-      float da = std::abs(cluster.a - 128.0f); // Distance from neutral 'a'
-      float db = std::abs(cluster.b - 128.0f); // Distance from neutral 'b'
-      float chromatic_dist = std::sqrt(da*da + db*db); // How "colorful" is it?
+  for (auto &cluster : cluster_data) {
+    float da = std::abs(cluster.a - 128.0f); // Distance from neutral 'a'
+    float db = std::abs(cluster.b - 128.0f); // Distance from neutral 'b'
+    float chromatic_dist =
+        std::sqrt(da * da + db * db); // How "colorful" is it?
 
-      // Score for Black: Low L*, Low a*/b* (close to 128)
-      // Penalize high L* and high chromatic distance
-      cluster.black_score = (cluster.l / 255.0f) + (chromatic_dist / 180.0f); // Normalize roughly
-      if (cluster.l > black_l_thresh) cluster.black_score += 0.5f; // Penalty if too bright
-      if (chromatic_dist > stone_ab_thresh) cluster.black_score += 0.5f; // Penalty if too colorful
+    // Score for Black: Low L*, Low a*/b* (close to 128)
+    // Penalize high L* and high chromatic distance
+    cluster.black_score =
+        (cluster.l / 255.0f) + (chromatic_dist / 180.0f); // Normalize roughly
+    if (cluster.l > black_l_thresh)
+      cluster.black_score += 0.5f; // Penalty if too bright
+    if (chromatic_dist > stone_ab_thresh)
+      cluster.black_score += 0.5f; // Penalty if too colorful
 
-      // Score for White: High L*, Low a*/b* (close to 128)
-      // Penalize low L* and high chromatic distance
-      cluster.white_score = ((255.0f - cluster.l) / 255.0f) + (chromatic_dist / 180.0f); // Normalize roughly
-      if (cluster.l < white_l_thresh) cluster.white_score += 0.5f; // Penalty if too dark
-      if (chromatic_dist > stone_ab_thresh) cluster.white_score += 0.5f; // Penalty if too colorful
+    // Score for White: High L*, Low a*/b* (close to 128)
+    // Penalize low L* and high chromatic distance
+    cluster.white_score = ((255.0f - cluster.l) / 255.0f) +
+                          (chromatic_dist / 180.0f); // Normalize roughly
+    if (cluster.l < white_l_thresh)
+      cluster.white_score += 0.5f; // Penalty if too dark
+    if (chromatic_dist > stone_ab_thresh)
+      cluster.white_score += 0.5f; // Penalty if too colorful
 
-      // Score for Board: Mid L*, Higher a*/b* (away from 128)
-      // Penalize very low/high L* and low chromatic distance
-      float l_mid_penalty = std::abs(cluster.l - 128.0f) / 128.0f; // Penalize distance from mid-L*
-      float chromatic_low_penalty = (chromatic_dist < board_ab_thresh) ? (board_ab_thresh - chromatic_dist) / board_ab_thresh : 0.0f; // Penalize low color
-      cluster.board_score = l_mid_penalty + chromatic_low_penalty * 1.5f; // Weight low color penalty
+    // Score for Board: Mid L*, Higher a*/b* (away from 128)
+    // Penalize very low/high L* and low chromatic distance
+    float l_mid_penalty =
+        std::abs(cluster.l - 128.0f) / 128.0f; // Penalize distance from mid-L*
+    float chromatic_low_penalty =
+        (chromatic_dist < board_ab_thresh)
+            ? (board_ab_thresh - chromatic_dist) / board_ab_thresh
+            : 0.0f; // Penalize low color
+    cluster.board_score = l_mid_penalty + chromatic_low_penalty *
+                                              1.5f; // Weight low color penalty
   }
 
   // --- Assign Labels based on lowest scores (same logic as before) ---
-  std::sort(cluster_data.begin(), cluster_data.end(), [](const ClusterInfoLab& a, const ClusterInfoLab& b) {
-      return a.black_score < b.black_score;
-  });
+  std::sort(cluster_data.begin(), cluster_data.end(),
+            [](const ClusterInfoLab &a, const ClusterInfoLab &b) {
+              return a.black_score < b.black_score;
+            });
   label_black = cluster_data[0].index;
 
-  std::sort(cluster_data.begin(), cluster_data.end(), [&](const ClusterInfoLab& a, const ClusterInfoLab& b) {
-      if (a.index == label_black) return false;
-      if (b.index == label_black) return true;
-      return a.white_score < b.white_score;
-  });
-  label_white = (cluster_data[0].index != label_black) ? cluster_data[0].index : cluster_data[1].index;
+  std::sort(cluster_data.begin(), cluster_data.end(),
+            [&](const ClusterInfoLab &a, const ClusterInfoLab &b) {
+              if (a.index == label_black)
+                return false;
+              if (b.index == label_black)
+                return true;
+              return a.white_score < b.white_score;
+            });
+  label_white = (cluster_data[0].index != label_black) ? cluster_data[0].index
+                                                       : cluster_data[1].index;
 
-   // Find best candidate for Board (excluding Black and White) - simplified fallback assignment
-   label_board = -1; // Initialize
-   for(const auto& cluster : cluster_data) {
-       if (cluster.index != label_black && cluster.index != label_white) {
-           label_board = cluster.index;
-           break;
-       }
-   }
-   // Add a check if board label wasn't found (should not happen with 3 clusters)
-   if (label_board == -1) {
-       std::cerr << "Warning: Could not assign a unique board label!" << std::endl;
-       // Handle error case appropriately, maybe assign the last remaining index if needed
-       if(cluster_data.size() == 3) { // Basic fallback for 3 clusters
-           for(int i=0; i<3; ++i) if (i != label_black && i != label_white) label_board = i;
-       }
-   }
+  // Find best candidate for Board (excluding Black and White) - simplified
+  // fallback assignment
+  label_board = -1; // Initialize
+  for (const auto &cluster : cluster_data) {
+    if (cluster.index != label_black && cluster.index != label_white) {
+      label_board = cluster.index;
+      break;
+    }
+  }
+  // Add a check if board label wasn't found (should not happen with 3 clusters)
+  if (label_board == -1) {
+    std::cerr << "Warning: Could not assign a unique board label!" << std::endl;
+    // Handle error case appropriately, maybe assign the last remaining index if
+    // needed
+    if (cluster_data.size() == 3) { // Basic fallback for 3 clusters
+      for (int i = 0; i < 3; ++i)
+        if (i != label_black && i != label_white)
+          label_board = i;
+    }
+  }
 
   // --- Debug Output (Optional) ---
-   if (bDebug) {
-      std::cout << "\n--- Cluster Classification Scores (Lab) ---\n";
-      std::cout << std::fixed << std::setprecision(3);
-      for (const auto& cluster : cluster_data) {
-           std::cout << "Cluster " << cluster.index
-                     << ": Lab(" << cluster.l << ", " << cluster.a << ", " << cluster.b << ")"
-                     << " Scores[Blk:" << cluster.black_score
-                     << ", Wht:" << cluster.white_score
-                     << ", Brd:" << cluster.board_score << "]\n";
-      }
-      // ...(label assignment debug output)...
-       // Sanity check: ensure labels are unique and valid
-      if (label_black == label_white || label_black == label_board || label_white == label_board || label_black == -1 || label_white == -1 || label_board == -1) {
-           std::cerr << "Warning: Label assignment resulted in duplicate or invalid labels!\n";
-      }
-   }
+  if (bDebug) {
+    std::cout << "\n--- Cluster Classification Scores (Lab) ---\n";
+    std::cout << std::fixed << std::setprecision(3);
+    for (const auto &cluster : cluster_data) {
+      std::cout << "Cluster " << cluster.index << ": Lab(" << cluster.l << ", "
+                << cluster.a << ", " << cluster.b << ")"
+                << " Scores[Blk:" << cluster.black_score
+                << ", Wht:" << cluster.white_score
+                << ", Brd:" << cluster.board_score << "]\n";
+    }
+    // ...(label assignment debug output)...
+    // Sanity check: ensure labels are unique and valid
+    if (label_black == label_white || label_black == label_board ||
+        label_white == label_board || label_black == -1 || label_white == -1 ||
+        label_board == -1) {
+      std::cerr << "Warning: Label assignment resulted in duplicate or invalid "
+                   "labels!\n";
+    }
+  }
 }
 
-// Function to find the closest cluster center in Lab space using weighted Euclidean distance
+// Function to find the closest cluster center in Lab space using weighted
+// Euclidean distance
 int findClosestCenterLab(const Vec3f &lab_sample, const Mat &centers) {
   const int num_clusters = centers.rows;
-  if (num_clusters == 0) return -1;
+  if (num_clusters == 0)
+    return -1;
 
   // --- Weights for Lab components (TUNABLE PARAMETERS) ---
   // Since Lab is more perceptually uniform, equal weights might work well.
@@ -164,137 +194,172 @@ int findClosestCenterLab(const Vec3f &lab_sample, const Mat &centers) {
   int closest_center_index = -1;
 
   for (int i = 0; i < num_clusters; ++i) {
-      Vec3f cluster_center(centers.at<float>(i, 0), centers.at<float>(i, 1), centers.at<float>(i, 2));
+    Vec3f cluster_center(centers.at<float>(i, 0), centers.at<float>(i, 1),
+                         centers.at<float>(i, 2));
 
-      // Calculate normalized differences for each component
-      // No special handling needed for a* and b* like Hue
-      float dl_normalized = std::abs(lab_sample[0] - cluster_center[0]) / max_l_diff;
-      float da_normalized = std::abs(lab_sample[1] - cluster_center[1]) / max_a_diff;
-      float db_normalized = std::abs(lab_sample[2] - cluster_center[2]) / max_b_diff;
+    // Calculate normalized differences for each component
+    // No special handling needed for a* and b* like Hue
+    float dl_normalized =
+        std::abs(lab_sample[0] - cluster_center[0]) / max_l_diff;
+    float da_normalized =
+        std::abs(lab_sample[1] - cluster_center[1]) / max_a_diff;
+    float db_normalized =
+        std::abs(lab_sample[2] - cluster_center[2]) / max_b_diff;
 
-      // Calculate weighted squared Euclidean distance
-      float distance_sq = weight_l * std::pow(dl_normalized, 2) +
-                          weight_a * std::pow(da_normalized, 2) +
-                          weight_b * std::pow(db_normalized, 2);
+    // Calculate weighted squared Euclidean distance
+    float distance_sq = weight_l * std::pow(dl_normalized, 2) +
+                        weight_a * std::pow(da_normalized, 2) +
+                        weight_b * std::pow(db_normalized, 2);
 
-      if (distance_sq < min_distance_sq) {
-          min_distance_sq = distance_sq;
-          closest_center_index = i;
-      }
+    if (distance_sq < min_distance_sq) {
+      min_distance_sq = distance_sq;
+      closest_center_index = i;
+    }
   }
   return closest_center_index;
 }
 
+// --- NEW HELPER FUNCTION to load corners from config ---
+static bool loadCornersFromConfig(const std::string &config_path,
+                                  int current_width, int current_height,
+                                  std::vector<cv::Point2f> &board_corners) {
+  ifstream configFile(config_path);
+  if (!configFile.is_open()) {
+    if (bDebug)
+      cout << "Debug: Config file '" << config_path << "' not found." << endl;
+    return false;
+  }
+
+  if (bDebug)
+    cout << "Debug: Found config file: " << config_path
+         << ". Attempting to parse." << endl;
+  map<string, string> config_data;
+  string line;
+  try {
+    while (getline(configFile, line)) {
+      line.erase(0, line.find_first_not_of(" \t\n\r\f\v"));
+      line.erase(line.find_last_not_of(" \t\n\r\f\v") + 1);
+      if (line.empty() || line[0] == '#')
+        continue;
+
+      size_t equals_pos = line.find('=');
+      if (equals_pos != string::npos) {
+        string key = line.substr(0, equals_pos);
+        string value = line.substr(equals_pos + 1);
+        key.erase(0, key.find_first_not_of(" \t"));
+        key.erase(key.find_last_not_of(" \t") + 1);
+        value.erase(0, value.find_first_not_of(" \t"));
+        value.erase(value.find_last_not_of(" \t") + 1);
+        config_data[key] = value;
+      }
+    }
+    configFile.close();
+
+    if (config_data.count("ImageWidth") && config_data.count("ImageHeight")) {
+      int config_width = std::stoi(config_data["ImageWidth"]);
+      int config_height = std::stoi(config_data["ImageHeight"]);
+
+      if (config_width == current_width && config_height == current_height) {
+        if (bDebug)
+          cout << "Debug: Config dimensions match current image ("
+               << current_width << "x" << current_height << ")." << endl;
+
+        if (config_data.count("TL_X_PX") && config_data.count("TL_Y_PX") &&
+            config_data.count("TR_X_PX") && config_data.count("TR_Y_PX") &&
+            config_data.count("BL_X_PX") && config_data.count("BL_Y_PX") &&
+            config_data.count("BR_X_PX") && config_data.count("BR_Y_PX")) {
+
+          Point2f tl(std::stof(config_data["TL_X_PX"]),
+                     std::stof(config_data["TL_Y_PX"]));
+          Point2f tr(std::stof(config_data["TR_X_PX"]),
+                     std::stof(config_data["TR_Y_PX"]));
+          Point2f bl(std::stof(config_data["BL_X_PX"]),
+                     std::stof(config_data["BL_Y_PX"]));
+          Point2f br(std::stof(config_data["BR_X_PX"]),
+                     std::stof(config_data["BR_Y_PX"]));
+
+          board_corners = {tl, tr, br, bl};
+          if (bDebug)
+            cout << "Debug: Successfully loaded corners from config file."
+                 << endl;
+          return true;
+        } else {
+          if (bDebug)
+            cerr << "Warning: Config file missing one or more pixel coordinate "
+                    "keys (_PX)."
+                 << endl;
+        }
+      } else {
+        if (bDebug)
+          cerr << "Warning: Config file dimensions (" << config_width << "x"
+               << config_height << ") do not match image dimensions ("
+               << current_width << "x" << current_height
+               << "). Ignoring config." << endl;
+      }
+    } else {
+      if (bDebug)
+        cerr << "Warning: Config file missing ImageWidth or ImageHeight."
+             << endl;
+    }
+  } catch (const std::exception &e) {
+    if (bDebug)
+      cerr << "Warning: Error parsing config file '" << config_path
+           << "': " << e.what() << ". Using defaults." << endl;
+    if (configFile.is_open())
+      configFile.close();
+    return false; // Ensure returns false if parsing fails
+  }
+  return false; // Default return if conditions not met
+}
+
 // Function to find the corners of the Go board.
-// Attempts to load from config file first, otherwise uses hardcoded percentages.
+// Attempts to load from config file first, otherwise uses hardcoded
+// percentages.
 vector<Point2f> getBoardCorners(const Mat &inputImage) {
   const string config_path = "./share/config.txt";
-  vector<Point2f> board_corners;
+  vector<Point2f> board_corners_result; // Use a different name to avoid
+                                        // conflict with helper's out param
   bool loaded_from_config = false;
 
   int current_width = inputImage.cols;
   int current_height = inputImage.rows;
 
-  ifstream configFile(config_path);
-  if (configFile.is_open()) {
-      if (bDebug) cout << "Debug: Found config file: " << config_path << ". Attempting to parse." << endl;
-      map<string, string> config_data;
-      string line;
-      try {
-          // Read config file line by line
-          while (getline(configFile, line)) {
-              // Remove leading/trailing whitespace (optional but good practice)
-              line.erase(0, line.find_first_not_of(" \t\n\r\f\v"));
-              line.erase(line.find_last_not_of(" \t\n\r\f\v") + 1);
-
-              if (line.empty() || line[0] == '#') { // Skip empty lines and comments
-                  continue;
-              }
-
-              size_t equals_pos = line.find('=');
-              if (equals_pos != string::npos) {
-                  string key = line.substr(0, equals_pos);
-                  string value = line.substr(equals_pos + 1);
-                  // Trim whitespace from key/value if necessary
-                  key.erase(0, key.find_first_not_of(" \t"));
-                  key.erase(key.find_last_not_of(" \t") + 1);
-                  value.erase(0, value.find_first_not_of(" \t"));
-                  value.erase(value.find_last_not_of(" \t") + 1);
-                  config_data[key] = value;
-              }
-          }
-          configFile.close();
-
-          // --- Validate Config Data ---
-          if (config_data.count("ImageWidth") && config_data.count("ImageHeight")) {
-              int config_width = std::stoi(config_data["ImageWidth"]);
-              int config_height = std::stoi(config_data["ImageHeight"]);
-
-              if (config_width == current_width && config_height == current_height) {
-                  if (bDebug) cout << "Debug: Config dimensions match current image (" << current_width << "x" << current_height << ")." << endl;
-
-                  // Check if all pixel keys exist
-                  if (config_data.count("TL_X_PX") && config_data.count("TL_Y_PX") &&
-                      config_data.count("TR_X_PX") && config_data.count("TR_Y_PX") &&
-                      config_data.count("BL_X_PX") && config_data.count("BL_Y_PX") &&
-                      config_data.count("BR_X_PX") && config_data.count("BR_Y_PX"))
-                  {
-                      // Parse pixel coordinates
-                      Point2f tl(std::stof(config_data["TL_X_PX"]), std::stof(config_data["TL_Y_PX"]));
-                      Point2f tr(std::stof(config_data["TR_X_PX"]), std::stof(config_data["TR_Y_PX"]));
-                      Point2f bl(std::stof(config_data["BL_X_PX"]), std::stof(config_data["BL_Y_PX"]));
-                      Point2f br(std::stof(config_data["BR_X_PX"]), std::stof(config_data["BR_Y_PX"]));
-
-                      board_corners = {tl, tr, br, bl}; // Use order TL, TR, BR, BL
-                      loaded_from_config = true;
-                      if (bDebug) cout << "Debug: Successfully loaded corners from config file." << endl;
-
-                  } else {
-                       if (bDebug) cerr << "Warning: Config file missing one or more pixel coordinate keys (_PX)." << endl;
-                  }
-              } else {
-                  if (bDebug) cerr << "Warning: Config file dimensions (" << config_width << "x" << config_height
-                                   << ") do not match image dimensions (" << current_width << "x" << current_height
-                                   << "). Ignoring config." << endl;
-              }
-          } else {
-              if (bDebug) cerr << "Warning: Config file missing ImageWidth or ImageHeight." << endl;
-          }
-      } catch (const std::exception& e) {
-          if (bDebug) cerr << "Warning: Error parsing config file '" << config_path << "': " << e.what() << ". Using defaults." << endl;
-           loaded_from_config = false; // Ensure fallback if parsing fails
-           if(configFile.is_open()) configFile.close(); // Close if error happened mid-read
-      }
-  } else {
-       if (bDebug) cout << "Debug: Config file '" << config_path << "' not found. Using default percentages." << endl;
-  }
-
+  // Attempt to load from config using the helper function
+  loaded_from_config = loadCornersFromConfig(
+      config_path, current_width, current_height, board_corners_result);
 
   // --- Fallback to Hardcoded Percentages ---
   if (!loaded_from_config) {
-      if (bDebug && !configFile.is_open() ) { // Only print this if we didn't try loading
-           cout << "Debug: Using hardcoded percentage values for corners." << endl;
-      } else if (bDebug && loaded_from_config == false) { // Print if loading failed
-           cout << "Debug: Falling back to hardcoded percentage values for corners." << endl;
-      }
-      // Use the original hardcoded percentage logic
-      float tl_x_percent = 20.0f; float tl_y_percent = 8.0f;
-      float tr_x_percent = 73.0f; float tr_y_percent = 5.0f;
-      float br_x_percent = 97.0f; float br_y_percent = 45.0f;
-      float bl_x_percent = 5.0f;  float bl_y_percent = 52.0f;
+    if (bDebug) {
+      cout << "Debug: Falling back to hardcoded percentage values for corners "
+              "(either config not found, not applicable, or parsing failed)."
+           << endl;
+    }
+    // Use the original hardcoded percentage logic
+    float tl_x_percent = 20.0f;
+    float tl_y_percent = 8.0f;
+    float tr_x_percent = 73.0f;
+    float tr_y_percent = 5.0f;
+    float br_x_percent = 97.0f;
+    float br_y_percent = 45.0f;
+    float bl_x_percent = 5.0f;
+    float bl_y_percent = 52.0f;
 
-      board_corners = {
-          Point2f(current_width * tl_x_percent / 100.0f, current_height * tl_y_percent / 100.0f),
-          Point2f(current_width * tr_x_percent / 100.0f, current_height * tr_y_percent / 100.0f),
-          Point2f(current_width * br_x_percent / 100.0f, current_height * br_y_percent / 100.0f),
-          Point2f(current_width * bl_x_percent / 100.0f, current_height * bl_y_percent / 100.0f)
-      };
+    board_corners_result = {// Assign to the result vector
+                            Point2f(current_width * tl_x_percent / 100.0f,
+                                    current_height * tl_y_percent / 100.0f),
+                            Point2f(current_width * tr_x_percent / 100.0f,
+                                    current_height * tr_y_percent / 100.0f),
+                            Point2f(current_width * br_x_percent / 100.0f,
+                                    current_height * br_y_percent / 100.0f),
+                            Point2f(current_width * bl_x_percent / 100.0f,
+                                    current_height * bl_y_percent / 100.0f)};
   }
 
-  return board_corners;
+  return board_corners_result;
 }
 
-vector<Point2f> getBoardCornersCorrected(const Mat& image){
+vector<Point2f> getBoardCornersCorrected(const Mat &image) {
   int width = image.cols;
   int height = image.rows;
   int dest_percent = 15; // Start with 15 and adjust if needed
@@ -308,7 +373,6 @@ vector<Point2f> getBoardCornersCorrected(const Mat& image){
               height * (100 - dest_percent) / 100.0f)};
   return output_corners;
 }
-
 Mat correctPerspective(const Mat &image) {
   int width = image.cols;
   int height = image.rows;
@@ -376,7 +440,8 @@ vector<Vec4i> detectLineSegments(const Mat &edges, bool bDebug) {
   int height = edges.rows;
 
   // 1. Get Board Corners (You'll need to implement this correctly)
-  // Use getBoardCornersCorrected to define the region of interest for HoughLinesP
+  // Use getBoardCornersCorrected to define the region of interest for
+  // HoughLinesP
   vector<Point2f> board_corners = getBoardCornersCorrected(edges);
   float board_height = board_corners[2].y - board_corners[0].y;
   float board_width = board_corners[1].x - board_corners[0].x;
@@ -385,15 +450,13 @@ vector<Vec4i> detectLineSegments(const Mat &edges, bool bDebug) {
   // You might want to slightly expand this rectangle beyond the strict corners
   // to ensure lines right at the edge are detected.
   int margin = 10; // Pixels to expand the mask
-   Rect board_rect(
-      static_cast<int>(board_corners[0].x) - margin,
-      static_cast<int>(board_corners[0].y) - margin,
-      static_cast<int>(board_width) + 2 * margin,
-      static_cast<int>(board_height) + 2 * margin);
+  Rect board_rect(static_cast<int>(board_corners[0].x) - margin,
+                  static_cast<int>(board_corners[0].y) - margin,
+                  static_cast<int>(board_width) + 2 * margin,
+                  static_cast<int>(board_height) + 2 * margin);
 
   // Ensure the rectangle is within image bounds
   board_rect = board_rect & Rect(0, 0, width, height);
-
 
   Mat board_mask = Mat::zeros(height, width, CV_8U);
   board_mask(board_rect) = 255;
@@ -407,10 +470,10 @@ vector<Vec4i> detectLineSegments(const Mat &edges, bool bDebug) {
   // Increased max_line_gap to connect fragmented Canny edges
   int hough_threshold = 30; // Adjust as needed
   int min_line_length = 40; // Adjust as needed
-  int max_line_gap = 15;   // Increased significantly
+  int max_line_gap = 15;    // Increased significantly
 
-  HoughLinesP(masked_edges, all_segments, 1, CV_PI / 180,
-              hough_threshold, min_line_length, max_line_gap);
+  HoughLinesP(masked_edges, all_segments, 1, CV_PI / 180, hough_threshold,
+              min_line_length, max_line_gap);
 
   if (bDebug && false) {
     cout << "Total detected line segments: " << all_segments.size() << endl;
@@ -421,13 +484,14 @@ vector<Vec4i> detectLineSegments(const Mat &edges, bool bDebug) {
     int mask_thickness = 2;
     Scalar line_color = Scalar(0, 255, 255); // Yellow for all lines
 
-    rectangle(mask_and_lines, board_rect, mask_color, mask_thickness); // Draw board mask
+    rectangle(mask_and_lines, board_rect, mask_color,
+              mask_thickness); // Draw board mask
 
     // Draw all line segments
     cout << "\n----all line segments---\n";
     for (const auto &line : all_segments) {
-      cv::line(mask_and_lines, cv::Point(line[0], line[1]), cv::Point(line[2], line[3]),
-           line_color, 1);
+      cv::line(mask_and_lines, cv::Point(line[0], line[1]),
+               cv::Point(line[2], line[3]), line_color, 1);
       cout << "[" << line[0] << "," << line[1] << "]:" << "[" << line[2] << ","
            << line[3] << "]\n";
     }
@@ -444,7 +508,8 @@ pair<vector<Line>, vector<Line>>
 convertSegmentsToLines(const vector<Vec4i> &all_segments, bool bDebug) {
   vector<Line> horizontal_lines_raw, vertical_lines_raw;
 
-  // Angle tolerance for classifying lines as horizontal or vertical (in radians)
+  // Angle tolerance for classifying lines as horizontal or vertical (in
+  // radians)
   double angle_tolerance = CV_PI / 180.0 * 10; // 10 degrees tolerance
 
   for (const auto &segment : all_segments) {
@@ -456,7 +521,7 @@ convertSegmentsToLines(const vector<Vec4i> &all_segments, bool bDebug) {
 
     // Normalize angle to be within [0, PI)
     if (angle < 0) {
-        angle += CV_PI;
+      angle += CV_PI;
     }
 
     // Determine if the line is horizontal or vertical based on angle
@@ -465,11 +530,11 @@ convertSegmentsToLines(const vector<Vec4i> &all_segments, bool bDebug) {
 
     // Check for horizontal lines (angle near 0 or PI)
     if (abs(angle) < angle_tolerance || abs(angle - CV_PI) < angle_tolerance) {
-        is_horizontal = true;
+      is_horizontal = true;
     }
     // Check for vertical lines (angle near PI/2)
     else if (abs(angle - CV_PI / 2.0) < angle_tolerance) {
-        is_vertical = true;
+      is_vertical = true;
     }
 
     if (is_horizontal) {
@@ -479,17 +544,18 @@ convertSegmentsToLines(const vector<Vec4i> &all_segments, bool bDebug) {
       double value = (pt1.x + pt2.x) / 2.0; // Average x-coordinate
       vertical_lines_raw.push_back({value, angle});
     }
-    // Segments that are neither horizontal nor vertical within tolerance are ignored
+    // Segments that are neither horizontal nor vertical within tolerance are
+    // ignored
   }
 
   sort(horizontal_lines_raw.begin(), horizontal_lines_raw.end(), compareLines);
   sort(vertical_lines_raw.begin(), vertical_lines_raw.end(), compareLines);
 
   if (bDebug) {
-    cout << "Raw horizontal lines count (after angle classification): " << horizontal_lines_raw.size()
-         << endl;
-    cout << "Raw vertical lines count (after angle classification): " << vertical_lines_raw.size()
-         << endl;
+    cout << "Raw horizontal lines count (after angle classification): "
+         << horizontal_lines_raw.size() << endl;
+    cout << "Raw vertical lines count (after angle classification): "
+         << vertical_lines_raw.size() << endl;
   }
   return std::make_pair(horizontal_lines_raw, vertical_lines_raw);
 }
@@ -536,10 +602,12 @@ struct LineMatch {
   int matched_count;
   double score;
   double start_value;
-  vector<pair<double, double>> matched_values; // Store (clustered_value, distance)
+  vector<pair<double, double>>
+      matched_values; // Store (clustered_value, distance)
 
-  // Custom comparison: prioritize matched_count (descending), then score (ascending)
-  bool operator<(const LineMatch& other) const {
+  // Custom comparison: prioritize matched_count (descending), then score
+  // (ascending)
+  bool operator<(const LineMatch &other) const {
     if (matched_count != other.matched_count) {
       return matched_count > other.matched_count; // Descending order by count
     }
@@ -551,7 +619,7 @@ struct LineMatch {
   }
 };
 
-vector<double> findUniformGridLinesImproved(const vector<double>& values,
+vector<double> findUniformGridLinesImproved(const vector<double> &values,
                                             double dominant_distance,
                                             int target_count, double tolerance,
                                             bool bDebug) {
@@ -603,13 +671,15 @@ vector<double> findUniformGridLinesImproved(const vector<double>& values,
           closest_value = clustered_value;
         }
       }
-      current_matched_values.push_back({closest_value, min_diff}); // Store clustered_value!
+      current_matched_values.push_back(
+          {closest_value, min_diff}); // Store clustered_value!
       if (min_diff < tolerance) {
         current_fit_score += min_diff;
-        matched_lines_count++;        
+        matched_lines_count++;
       }
     }
-    match_data.insert({matched_lines_count, current_fit_score, start_value, current_matched_values});
+    match_data.insert({matched_lines_count, current_fit_score, start_value,
+                       current_matched_values});
   }
 
   // 2. Basis Line Selection
@@ -620,21 +690,24 @@ vector<double> findUniformGridLinesImproved(const vector<double>& values,
     return uniform_lines; // Return empty
   }
 
-  const vector<pair<double, double>>& best_matched_values = match_data.begin()->matched_values; // Get matched_values from best candidate
+  const vector<pair<double, double>> &best_matched_values =
+      match_data.begin()
+          ->matched_values; // Get matched_values from best candidate
 
   // 3. Final Line Selection
   if (best_matched_values.size() > target_count) {
     vector<pair<double, double>> sorted_matched_values = best_matched_values;
     sort(sorted_matched_values.begin(), sorted_matched_values.end(),
-         [](const pair<double, double>& a, const pair<double, double>& b) {
+         [](const pair<double, double> &a, const pair<double, double> &b) {
            return a.second < b.second; // Sort by distance
          });
 
     for (int i = 0; i < target_count; ++i) {
-      uniform_lines.push_back(sorted_matched_values[i].first); // Store clustered_value
+      uniform_lines.push_back(
+          sorted_matched_values[i].first); // Store clustered_value
     }
   } else {
-    for (const auto& pair : best_matched_values) {
+    for (const auto &pair : best_matched_values) {
       uniform_lines.push_back(pair.first); // Store clustered_value
     }
   }
@@ -738,20 +811,19 @@ vector<double> findUniformGridLines(vector<double> &values, int target_count,
 
   // 3. Find the best starting line and generate the 19 uniform lines.
   return findUniformGridLinesImproved(values, dominant_distance, 19,
-                                      dominant_distance * tolerance,
-                                      bDebug);
+                                      dominant_distance * tolerance, bDebug);
 }
 
 // Helper function to find the optimal clustering for a given set of lines
 pair<vector<double>, double> findOptimalClusteringForOrientation(
-  const vector<Line>& raw_lines,
-  int target_count,
-  const string& orientation, // "horizontal" or "vertical" for debugging output
-  bool bDebug) {
+    const vector<Line> &raw_lines, int target_count,
+    const string
+        &orientation, // "horizontal" or "vertical" for debugging output
+    bool bDebug) {
 
   double cluster_threshold = 1.0; // Starting threshold - needs tuning
-  double threshold_step = 0.5;   // Step to increase threshold - needs tuning
-  int max_iterations = 20;       // Limit iterations - needs tuning
+  double threshold_step = 0.5;    // Step to increase threshold - needs tuning
+  int max_iterations = 20;        // Limit iterations - needs tuning
 
   vector<double> clustered_lines;
   vector<double> prev_clustered_lines;
@@ -761,58 +833,73 @@ pair<vector<double>, double> findOptimalClusteringForOrientation(
   prev_clustered_lines = clusterAndAverageLines(raw_lines, 0.1, bDebug);
 
   if (bDebug) {
-      cout << "Initial Clustering (" << orientation << ") with threshold 0.1: " << prev_clustered_lines.size() << " lines\n";
+    cout << "Initial Clustering (" << orientation
+         << ") with threshold 0.1: " << prev_clustered_lines.size()
+         << " lines\n";
   }
 
-  clustered_lines = prev_clustered_lines; // Initialize with the initial clustering
+  clustered_lines =
+      prev_clustered_lines; // Initialize with the initial clustering
 
   for (int i = 0; i < max_iterations; ++i) {
-      // Store current results
-      prev_clustered_lines = clustered_lines;
+    // Store current results
+    prev_clustered_lines = clustered_lines;
 
-      // Perform clustering with the current threshold
-      clustered_lines = clusterAndAverageLines(raw_lines, cluster_threshold, bDebug);
+    // Perform clustering with the current threshold
+    clustered_lines =
+        clusterAndAverageLines(raw_lines, cluster_threshold, bDebug);
 
+    if (bDebug) {
+      cout << "Clustering Attempt (" << orientation << ") " << i + 1
+           << " with threshold " << cluster_threshold << ": "
+           << clustered_lines.size() << " lines\n";
+    }
+
+    if (clustered_lines.size() < target_count) {
       if (bDebug) {
-          cout << "Clustering Attempt (" << orientation << ") " << i + 1 << " with threshold " << cluster_threshold << ": " << clustered_lines.size() << " lines\n";
+        cout << "Clustered line count (" << orientation
+             << ") dropped below target (" << target_count
+             << "). Returning previous threshold's results.\n";
       }
+      return make_pair(prev_clustered_lines,
+                       optimal_threshold); // Return previous (better) result
+    }
 
-      if (clustered_lines.size() < target_count) {
-          if (bDebug) {
-              cout << "Clustered line count (" << orientation << ") dropped below target (" << target_count << "). Returning previous threshold's results.\n";
-          }
-          return make_pair(prev_clustered_lines, optimal_threshold); // Return previous (better) result
+    if (clustered_lines.size() == target_count) {
+      if (bDebug) {
+        cout << "Found target number of clustered lines (" << target_count
+             << ") for " << orientation << ".\n";
       }
+      return make_pair(clustered_lines, cluster_threshold);
+    }
 
-      if (clustered_lines.size() == target_count) {
-          if (bDebug) {
-              cout << "Found target number of clustered lines (" << target_count << ") for " << orientation << ".\n";
-          }
-          return make_pair(clustered_lines, cluster_threshold);
-      }
-
-      optimal_threshold = cluster_threshold; // Update optimal threshold as we are still at or above target
-      cluster_threshold += threshold_step;   // Increase threshold for the next attempt
+    optimal_threshold = cluster_threshold; // Update optimal threshold as we are
+                                           // still at or above target
+    cluster_threshold +=
+        threshold_step; // Increase threshold for the next attempt
   }
 
   if (bDebug) {
-      cout << "Max iterations reached for " << orientation << " without finding target count or dropping below. Returning last iteration's results.\n";
+    cout << "Max iterations reached for " << orientation
+         << " without finding target count or dropping below. Returning last "
+            "iteration's results.\n";
   }
   return make_pair(clustered_lines, optimal_threshold);
 }
 
 // Main function to call the helper functions for horizontal and vertical lines
-pair<vector<double>, vector<double>> findOptimalClustering(
-  const vector<Line>& horizontal_lines_raw,
-  const vector<Line>& vertical_lines_raw,
-  int target_count,
-  bool bDebug) {
+pair<vector<double>, vector<double>>
+findOptimalClustering(const vector<Line> &horizontal_lines_raw,
+                      const vector<Line> &vertical_lines_raw, int target_count,
+                      bool bDebug) {
 
   pair<vector<double>, double> horizontal_result =
-      findOptimalClusteringForOrientation(horizontal_lines_raw, target_count, "horizontal", bDebug);
+      findOptimalClusteringForOrientation(horizontal_lines_raw, target_count,
+                                          "horizontal", bDebug);
 
   pair<vector<double>, double> vertical_result =
-      findOptimalClusteringForOrientation(vertical_lines_raw, target_count, "vertical", bDebug);
+      findOptimalClusteringForOrientation(vertical_lines_raw, target_count,
+                                          "vertical", bDebug);
 
   return make_pair(horizontal_result.first, vertical_result.first);
 }
@@ -820,15 +907,14 @@ pair<vector<double>, vector<double>> findOptimalClustering(
 // Refactored detectUniformGrid to use the new findOptimalClustering function
 pair<vector<double>, vector<double>> detectUniformGrid(const Mat &image) {
   Mat processed_image = preprocessImage(image, bDebug);
-  vector<Vec4i> mixed_segments =
-      detectLineSegments(processed_image, bDebug);
+  vector<Vec4i> mixed_segments = detectLineSegments(processed_image, bDebug);
   auto [horizontal_lines_raw, vertical_lines_raw] =
       convertSegmentsToLines(mixed_segments, bDebug);
 
-  // Use the new function to find the optimal clustering to get potentially 19 lines
-  // We pass 19 as the target count for clustering
-  auto [clustered_horizontal_y, clustered_vertical_x] =
-      findOptimalClustering(horizontal_lines_raw, vertical_lines_raw, 19, bDebug);
+  // Use the new function to find the optimal clustering to get potentially 19
+  // lines We pass 19 as the target count for clustering
+  auto [clustered_horizontal_y, clustered_vertical_x] = findOptimalClustering(
+      horizontal_lines_raw, vertical_lines_raw, 19, bDebug);
 
   vector<double> final_horizontal_y;
   vector<double> final_vertical_x;
@@ -861,8 +947,8 @@ pair<vector<double>, vector<double>> detectUniformGrid(const Mat &image) {
                   " vertical lines after uniform grid finding.");
   }
 
-  // The lines are already sorted by clusterAndAverageLines and verified by findUniformGridLines.
-  // No need to sort again here.
+  // The lines are already sorted by clusterAndAverageLines and verified by
+  // findUniformGridLines. No need to sort again here.
 
   if (bDebug) {
     cout << "Final detected uniform horizontal lines (y): ";
@@ -913,145 +999,167 @@ float colorDistance(const Vec3f &color1, const Vec3f &color2) {
               pow(color1[2] - color2[2], 2));
 }
 
-#include <vector>
-#include <limits>
-#include <cmath>
-#include <algorithm> // Required for std::sort, std::abs
-
 // Helper structure to store cluster index and its properties/scores
 struct ClusterInfo {
-    int index;
-    float h, s, v;
-    float black_score;
-    float white_score;
-    float board_score;
+  int index;
+  float h, s, v;
+  float black_score;
+  float white_score;
+  float board_score;
 
-    ClusterInfo(int idx, float h_val, float s_val, float v_val)
-        : index(idx), h(h_val), s(s_val), v(v_val),
-          black_score(std::numeric_limits<float>::max()),
-          white_score(std::numeric_limits<float>::max()),
-          board_score(std::numeric_limits<float>::max()) {}
+  ClusterInfo(int idx, float h_val, float s_val, float v_val)
+      : index(idx), h(h_val), s(s_val), v(v_val),
+        black_score(std::numeric_limits<float>::max()),
+        white_score(std::numeric_limits<float>::max()),
+        board_score(std::numeric_limits<float>::max()) {}
 };
 
 // Revised function to classify clusters using H, S, and V components
 void classifyClusters(const Mat &centers, int &label_black, int &label_white,
                       int &label_board) {
 
-    if (centers.rows != 3) {
-        // Handle the case where k-means didn't return exactly 3 clusters
-        // For now, throw an error or fallback to the old method if desired.
-        // This implementation assumes 3 clusters as per the original k-means setup.
-        std::cerr << "Error: Expected 3 cluster centers, but found " << centers.rows << std::endl;
-        // Assign default/invalid values
-        label_black = -1;
-        label_white = -1;
-        label_board = -1;
-        // Optionally, you could try the old V-based logic here as a fallback
-        // Or throw an exception:
-        THROWGEMERROR(std::string("Expected 3 cluster centers, found ") + Num2Str(centers.rows).str());
-        return; // Or throw
+  if (centers.rows != 3) {
+    // Handle the case where k-means didn't return exactly 3 clusters
+    // For now, throw an error or fallback to the old method if desired.
+    // This implementation assumes 3 clusters as per the original k-means setup.
+    std::cerr << "Error: Expected 3 cluster centers, but found " << centers.rows
+              << std::endl;
+    // Assign default/invalid values
+    label_black = -1;
+    label_white = -1;
+    label_board = -1;
+    // Optionally, you could try the old V-based logic here as a fallback
+    // Or throw an exception:
+    THROWGEMERROR(std::string("Expected 3 cluster centers, found ") +
+                  Num2Str(centers.rows).str());
+    return; // Or throw
+  }
+
+  std::vector<ClusterInfo> cluster_data;
+  for (int i = 0; i < centers.rows; ++i) {
+    cluster_data.emplace_back(i, centers.at<float>(i, 0),
+                              centers.at<float>(i, 1), centers.at<float>(i, 2));
+  }
+
+  // --- Scoring Parameters (These may need tuning based on typical images) ---
+  const float low_s_threshold =
+      60.0f; // Saturation below this suggests black/white stone
+  const float high_s_threshold = 40.0f; // Saturation above this suggests board
+  const float low_v_threshold = 80.0f;  // Value below this suggests black stone
+  const float high_v_threshold =
+      170.0f; // Value above this suggests white stone
+
+  // --- Calculate Scores for each cluster ---
+  for (auto &cluster : cluster_data) {
+    // Score for Black: Low V, Low S
+    // Penalize high V and high S
+    cluster.black_score = (cluster.v / 255.0f) + (cluster.s / 255.0f);
+    // Add a larger penalty if V is clearly too high or S is too high
+    if (cluster.v > low_v_threshold * 1.5)
+      cluster.black_score += 1.0f; // Heavier penalty if too bright
+    if (cluster.s > low_s_threshold)
+      cluster.black_score += 0.5f; // Penalty if saturated
+
+    // Score for White: High V, Low S
+    // Penalize low V and high S
+    cluster.white_score =
+        ((255.0f - cluster.v) / 255.0f) + (cluster.s / 255.0f);
+    // Add a larger penalty if V is clearly too low or S is too high
+    if (cluster.v < high_v_threshold * 0.8)
+      cluster.white_score += 1.0f; // Heavier penalty if too dark
+    if (cluster.s > low_s_threshold)
+      cluster.white_score += 0.5f; // Penalty if saturated
+
+    // Score for Board: Mid V, Higher S (relative to stones)
+    // Penalize very low/high V and very low S
+    float v_mid_penalty = std::abs(cluster.v - 128.0f) /
+                          128.0f; // Penalize distance from mid-value
+    float s_low_penalty =
+        (cluster.s < high_s_threshold)
+            ? (high_s_threshold - cluster.s) / high_s_threshold
+            : 0.0f; // Penalize low saturation
+    cluster.board_score =
+        v_mid_penalty + s_low_penalty * 1.5f; // Weight low S penalty more
+  }
+
+  // --- Assign Labels based on lowest scores ---
+
+  // Find best candidate for Black
+  std::sort(cluster_data.begin(), cluster_data.end(),
+            [](const ClusterInfo &a, const ClusterInfo &b) {
+              return a.black_score < b.black_score;
+            });
+  label_black = cluster_data[0].index;
+
+  // Find best candidate for White (excluding the one chosen for Black)
+  std::sort(cluster_data.begin(), cluster_data.end(),
+            [&](const ClusterInfo &a, const ClusterInfo &b) {
+              if (a.index == label_black)
+                return false; // Ensure black label is not chosen
+              if (b.index == label_black)
+                return true; // Ensure black label is not chosen
+              return a.white_score < b.white_score;
+            });
+  // The best white candidate (that isn't black) will be at the start now
+  // Need to handle the edge case where the first element *is* the black label
+  label_white = (cluster_data[0].index != label_black) ? cluster_data[0].index
+                                                       : cluster_data[1].index;
+
+  // Find best candidate for Board (excluding Black and White)
+  std::sort(cluster_data.begin(), cluster_data.end(),
+            [&](const ClusterInfo &a, const ClusterInfo &b) {
+              if (a.index == label_black || a.index == label_white)
+                return false; // Exclude black/white
+              if (b.index == label_black || b.index == label_white)
+                return true; // Exclude black/white
+              return a.board_score < b.board_score;
+            });
+  // The best board candidate (that isn't black or white) will be at the start
+  // Need to handle edge cases where the first/second elements are black/white
+  if (cluster_data[0].index != label_black &&
+      cluster_data[0].index != label_white) {
+    label_board = cluster_data[0].index;
+  } else if (cluster_data.size() > 1 && cluster_data[1].index != label_black &&
+             cluster_data[1].index != label_white) {
+    label_board = cluster_data[1].index;
+  } else if (cluster_data.size() > 2 && cluster_data[2].index != label_black &&
+             cluster_data[2].index != label_white) {
+    label_board = cluster_data[2].index; // Should be the last one if size is 3
+  } else {
+    // This case should theoretically not happen if there are 3 distinct
+    // clusters and labels are assigned correctly, but as a fallback:
+    for (const auto &cluster : cluster_data) {
+      if (cluster.index != label_black && cluster.index != label_white) {
+        label_board = cluster.index;
+        break;
+      }
     }
+  }
 
-    std::vector<ClusterInfo> cluster_data;
-    for (int i = 0; i < centers.rows; ++i) {
-        cluster_data.emplace_back(i, centers.at<float>(i, 0), centers.at<float>(i, 1), centers.at<float>(i, 2));
+  // --- Debug Output (Optional) ---
+  if (bDebug) { // Assuming bDebug is accessible here or passed as argument
+    std::cout << "\n--- Cluster Classification Scores ---\n";
+    std::cout << std::fixed << std::setprecision(3);
+    for (const auto &cluster : cluster_data) {
+      std::cout << "Cluster " << cluster.index << ": HSV(" << cluster.h << ", "
+                << cluster.s << ", " << cluster.v << ")"
+                << " Scores[Blk:" << cluster.black_score
+                << ", Wht:" << cluster.white_score
+                << ", Brd:" << cluster.board_score << "]\n";
     }
+    std::cout << "\n--- Assigned Labels (Score Based) ---\n";
+    std::cout << "Black Cluster ID: " << label_black << std::endl;
+    std::cout << "White Cluster ID: " << label_white << std::endl;
+    std::cout << "Board Cluster ID: " << label_board << std::endl;
 
-    // --- Scoring Parameters (These may need tuning based on typical images) ---
-    const float low_s_threshold = 60.0f;  // Saturation below this suggests black/white stone
-    const float high_s_threshold = 40.0f; // Saturation above this suggests board
-    const float low_v_threshold = 80.0f;  // Value below this suggests black stone
-    const float high_v_threshold = 170.0f;// Value above this suggests white stone
-
-    // --- Calculate Scores for each cluster ---
-    for (auto& cluster : cluster_data) {
-        // Score for Black: Low V, Low S
-        // Penalize high V and high S
-        cluster.black_score = (cluster.v / 255.0f) + (cluster.s / 255.0f);
-        // Add a larger penalty if V is clearly too high or S is too high
-        if (cluster.v > low_v_threshold * 1.5) cluster.black_score += 1.0f; // Heavier penalty if too bright
-        if (cluster.s > low_s_threshold) cluster.black_score += 0.5f; // Penalty if saturated
-
-        // Score for White: High V, Low S
-        // Penalize low V and high S
-        cluster.white_score = ((255.0f - cluster.v) / 255.0f) + (cluster.s / 255.0f);
-         // Add a larger penalty if V is clearly too low or S is too high
-        if (cluster.v < high_v_threshold * 0.8) cluster.white_score += 1.0f; // Heavier penalty if too dark
-        if (cluster.s > low_s_threshold) cluster.white_score += 0.5f; // Penalty if saturated
-
-        // Score for Board: Mid V, Higher S (relative to stones)
-        // Penalize very low/high V and very low S
-        float v_mid_penalty = std::abs(cluster.v - 128.0f) / 128.0f; // Penalize distance from mid-value
-        float s_low_penalty = (cluster.s < high_s_threshold) ? (high_s_threshold - cluster.s) / high_s_threshold : 0.0f; // Penalize low saturation
-        cluster.board_score = v_mid_penalty + s_low_penalty * 1.5f; // Weight low S penalty more
+    // Sanity check: ensure labels are unique and valid
+    if (label_black == label_white || label_black == label_board ||
+        label_white == label_board || label_black == -1 || label_white == -1 ||
+        label_board == -1) {
+      std::cerr << "Warning: Label assignment resulted in duplicate or invalid "
+                   "labels!\n";
     }
-
-    // --- Assign Labels based on lowest scores ---
-
-    // Find best candidate for Black
-    std::sort(cluster_data.begin(), cluster_data.end(), [](const ClusterInfo& a, const ClusterInfo& b) {
-        return a.black_score < b.black_score;
-    });
-    label_black = cluster_data[0].index;
-
-    // Find best candidate for White (excluding the one chosen for Black)
-    std::sort(cluster_data.begin(), cluster_data.end(), [&](const ClusterInfo& a, const ClusterInfo& b) {
-        if (a.index == label_black) return false; // Ensure black label is not chosen
-        if (b.index == label_black) return true;  // Ensure black label is not chosen
-        return a.white_score < b.white_score;
-    });
-     // The best white candidate (that isn't black) will be at the start now
-     // Need to handle the edge case where the first element *is* the black label
-    label_white = (cluster_data[0].index != label_black) ? cluster_data[0].index : cluster_data[1].index;
-
-
-    // Find best candidate for Board (excluding Black and White)
-    std::sort(cluster_data.begin(), cluster_data.end(), [&](const ClusterInfo& a, const ClusterInfo& b) {
-        if (a.index == label_black || a.index == label_white) return false; // Exclude black/white
-        if (b.index == label_black || b.index == label_white) return true;  // Exclude black/white
-        return a.board_score < b.board_score;
-    });
-    // The best board candidate (that isn't black or white) will be at the start
-    // Need to handle edge cases where the first/second elements are black/white
-     if (cluster_data[0].index != label_black && cluster_data[0].index != label_white) {
-         label_board = cluster_data[0].index;
-     } else if (cluster_data.size() > 1 && cluster_data[1].index != label_black && cluster_data[1].index != label_white) {
-         label_board = cluster_data[1].index;
-     } else if (cluster_data.size() > 2 && cluster_data[2].index != label_black && cluster_data[2].index != label_white) {
-         label_board = cluster_data[2].index; // Should be the last one if size is 3
-     } else {
-         // This case should theoretically not happen if there are 3 distinct clusters
-         // and labels are assigned correctly, but as a fallback:
-         for(const auto& cluster : cluster_data) {
-             if (cluster.index != label_black && cluster.index != label_white) {
-                 label_board = cluster.index;
-                 break;
-             }
-         }
-     }
-
-
-    // --- Debug Output (Optional) ---
-    if (bDebug) { // Assuming bDebug is accessible here or passed as argument
-        std::cout << "\n--- Cluster Classification Scores ---\n";
-        std::cout << std::fixed << std::setprecision(3);
-        for (const auto& cluster : cluster_data) {
-             std::cout << "Cluster " << cluster.index
-                       << ": HSV(" << cluster.h << ", " << cluster.s << ", " << cluster.v << ")"
-                       << " Scores[Blk:" << cluster.black_score
-                       << ", Wht:" << cluster.white_score
-                       << ", Brd:" << cluster.board_score << "]\n";
-        }
-         std::cout << "\n--- Assigned Labels (Score Based) ---\n";
-         std::cout << "Black Cluster ID: " << label_black << std::endl;
-         std::cout << "White Cluster ID: " << label_white << std::endl;
-         std::cout << "Board Cluster ID: " << label_board << std::endl;
-
-         // Sanity check: ensure labels are unique and valid
-        if (label_black == label_white || label_black == label_board || label_white == label_board || label_black == -1 || label_white == -1 || label_board == -1) {
-             std::cerr << "Warning: Label assignment resulted in duplicate or invalid labels!\n";
-        }
-    }
+  }
 }
 
 // Function to sample a region around a point and get the average HSV
@@ -1086,28 +1194,31 @@ double getSampleRadiusSize(const vector<double> &horizontal_lines,
   // range of [1,3]
   return min(3.0, max(2.0, (abs(horizontal_lines[1] - horizontal_lines[0]) +
                             abs(vertical_lines[1] - vertical_lines[0])) /
-                                   2.0f / 8.0f));
+                               2.0f / 8.0f));
 }
 
-// Helper function to calculate the shortest distance between two hues (0-180 range)
+// Helper function to calculate the shortest distance between two hues (0-180
+// range)
 inline float hueDistance(float h1, float h2) {
   float diff = std::abs(h1 - h2);
   // OpenCV HSV uses H range 0-179
   return std::min(diff, 180.0f - diff);
 }
 
-// Revised function to find the closest cluster center using weighted Euclidean distance in HSV space
+// Revised function to find the closest cluster center using weighted Euclidean
+// distance in HSV space
 int findClosestCenter(const Vec3f &hsv, const Mat &centers) {
   const int num_clusters = centers.rows;
   if (num_clusters == 0) {
-      // Handle case with no centers
-      return -1; // Or throw an error
+    // Handle case with no centers
+    return -1; // Or throw an error
   }
 
   // --- Weights for HSV components (TUNABLE PARAMETERS) ---
-  // These weights determine the relative importance of Hue, Saturation, and Value.
-  // For Black/White/Board distinction:
-  // - Saturation (S) is often important to separate stones (low S) from board (higher S).
+  // These weights determine the relative importance of Hue, Saturation, and
+  // Value. For Black/White/Board distinction:
+  // - Saturation (S) is often important to separate stones (low S) from board
+  // (higher S).
   // - Value (V) is crucial to separate Black (low V) from White (high V).
   // - Hue (H) might be less critical for stones but useful for board color.
   // Adjust these based on testing:
@@ -1116,39 +1227,44 @@ int findClosestCenter(const Vec3f &hsv, const Mat &centers) {
   const float weight_v = 1.5f; // More weight for Value
 
   // --- Normalization factors (Max values for OpenCV HSV) ---
-  // We normalize the differences by the max possible range before applying weights
-  // to make weights more comparable across components.
-  const float max_h_diff = 90.0f;  // Max possible hueDistance is 180/2 = 90
+  // We normalize the differences by the max possible range before applying
+  // weights to make weights more comparable across components.
+  const float max_h_diff = 90.0f; // Max possible hueDistance is 180/2 = 90
   const float max_s = 255.0f;
   const float max_v = 255.0f;
 
-
-  float min_distance_sq = std::numeric_limits<float>::max(); // Compare squared distances to avoid sqrt
+  float min_distance_sq =
+      std::numeric_limits<float>::max(); // Compare squared distances to avoid
+                                         // sqrt
   int closest_center_index = -1;
 
   for (int i = 0; i < num_clusters; ++i) {
-      Vec3f cluster_center(centers.at<float>(i, 0), centers.at<float>(i, 1), centers.at<float>(i, 2));
+    Vec3f cluster_center(centers.at<float>(i, 0), centers.at<float>(i, 1),
+                         centers.at<float>(i, 2));
 
-      // Calculate normalized differences for each component
-      float dh_normalized = hueDistance(hsv[0], cluster_center[0]) / max_h_diff;
-      float ds_normalized = std::abs(hsv[1] - cluster_center[1]) / max_s;
-      float dv_normalized = std::abs(hsv[2] - cluster_center[2]) / max_v;
+    // Calculate normalized differences for each component
+    float dh_normalized = hueDistance(hsv[0], cluster_center[0]) / max_h_diff;
+    float ds_normalized = std::abs(hsv[1] - cluster_center[1]) / max_s;
+    float dv_normalized = std::abs(hsv[2] - cluster_center[2]) / max_v;
 
-      // Calculate weighted squared Euclidean distance
-      // d^2 = w_h * (normalized_dh)^2 + w_s * (normalized_ds)^2 + w_v * (normalized_dv)^2
-      float distance_sq = weight_h * std::pow(dh_normalized, 2) +
-                          weight_s * std::pow(ds_normalized, 2) +
-                          weight_v * std::pow(dv_normalized, 2);
+    // Calculate weighted squared Euclidean distance
+    // d^2 = w_h * (normalized_dh)^2 + w_s * (normalized_ds)^2 + w_v *
+    // (normalized_dv)^2
+    float distance_sq = weight_h * std::pow(dh_normalized, 2) +
+                        weight_s * std::pow(ds_normalized, 2) +
+                        weight_v * std::pow(dv_normalized, 2);
 
-      if (distance_sq < min_distance_sq) {
-          min_distance_sq = distance_sq;
-          closest_center_index = i;
-      }
+    if (distance_sq < min_distance_sq) {
+      min_distance_sq = distance_sq;
+      closest_center_index = i;
+    }
   }
 
   // Optional Debug Output
   // if (bDebug) {
-  //     std::cout << "Sample HSV: [" << hsv[0] << "," << hsv[1] << "," << hsv[2] << "] -> Closest Center: " << closest_center_index << " (Dist^2: " << min_distance_sq << ")" << std::endl;
+  //     std::cout << "Sample HSV: [" << hsv[0] << "," << hsv[1] << "," <<
+  //     hsv[2] << "] -> Closest Center: " << closest_center_index << " (Dist^2:
+  //     " << min_distance_sq << ")" << std::endl;
   // }
 
   return closest_center_index;
@@ -1203,7 +1319,8 @@ Vec3f getAverageLab(const Mat &image_lab, Point2f center, int radius) {
     // Return default Lab (e.g., mid-gray) if no valid pixels found
     return Vec3f(128.0f, 128.0f, 128.0f);
   }
-  return Vec3f(sum[0] / count, sum[1] / count, sum[2] / count); // <-- Still Mean!
+  return Vec3f(sum[0] / count, sum[1] / count,
+               sum[2] / count); // <-- Still Mean!
 }
 
 // Function to process the Go board image and determine the board state
@@ -1211,7 +1328,7 @@ void processGoBoard(const Mat &image_bgr_in, Mat &board_state,
                     Mat &board_with_stones,
                     vector<Point2f> &intersection_points) {
   Mat image_bgr = correctPerspective(image_bgr_in);
- 
+
   if (bDebug) {
     // imshow("image int", image_bgr_in);
     // waitKey(0);
@@ -1219,7 +1336,7 @@ void processGoBoard(const Mat &image_bgr_in, Mat &board_state,
     waitKey(0);
   }
 
-  Mat image_lab; // Use Lab instead of HSV
+  Mat image_lab;                                 // Use Lab instead of HSV
   cvtColor(image_bgr, image_lab, COLOR_BGR2Lab); // Convert BGR to Lab
   if (bDebug) {
     imshow("lab Image", image_bgr);
@@ -1251,16 +1368,17 @@ void processGoBoard(const Mat &image_bgr_in, Mat &board_state,
   if (bDebug) {
     cout << "sample_radius:" << sample_radius << endl;
     Mat debug_radius = image_bgr.clone();
-    for (auto const& pt : intersection_points) {
-      circle(debug_radius, pt, sample_radius, Scalar(0, 0, 255), -1); // Red circles
-    } 
+    for (auto const &pt : intersection_points) {
+      circle(debug_radius, pt, sample_radius, Scalar(0, 0, 255),
+             -1); // Red circles
+    }
     imshow("debug sample radius", debug_radius);
     waitKey(0);
   }
   // --- Sampling using Lab ---
   Mat samples(num_intersections, 3, CV_32F);
   vector<Vec3f> average_lab_values(num_intersections); // Store Lab values
-  
+
   for (int i = 0; i < num_intersections; ++i) {
     // Use a new function to get average Lab
     Vec3f avg_lab =
@@ -1303,14 +1421,15 @@ void processGoBoard(const Mat &image_bgr_in, Mat &board_state,
          << "-- -" << endl;
   }
 
-  cout << fixed << setprecision(2); 
+  cout << fixed << setprecision(2);
 
   for (int i = 0; i < num_intersections; ++i) {
     int row = i / 19;
     int col = i % 19;
-    Vec3f lab_sample = average_lab_values[i]; // Get the average Lab for this point
+    Vec3f lab_sample =
+        average_lab_values[i]; // Get the average Lab for this point
 
-    int closest_cluster = findClosestCenterLab(lab_sample, centers);   
+    int closest_cluster = findClosestCenterLab(lab_sample, centers);
     if (bDebug) {
       cout << "[" << row << "," << col << "] Lab: [" << lab_sample[0] << ", "
            << lab_sample[1] << ", " << lab_sample[2]
@@ -1381,7 +1500,7 @@ void processGoBoard(const Mat &image_bgr_in, Mat &board_state,
       }
     }
   }
-   // Optional: Display the board after filtering
+  // Optional: Display the board after filtering
   if (bDebug) {
     imshow("Filtered Stones", board_with_stones);
     waitKey(0);
