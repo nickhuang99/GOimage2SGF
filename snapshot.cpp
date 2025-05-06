@@ -79,7 +79,7 @@ VideoDeviceInfo probeSingleDevice(const std::string &device_path) {
         std::cerr << "Debug: Failed to open device " << device_path << " ("
                   << strerror(errno) << ")\n";
       }
-      return deviceInfo;
+      return deviceInfo; // Return empty deviceInfo
     }
 
     struct v4l2_capability cap;
@@ -87,7 +87,7 @@ VideoDeviceInfo probeSingleDevice(const std::string &device_path) {
       std::cerr << "Warning: VIDIOC_QUERYCAP failed for " << device_path << " ("
                 << strerror(errno) << ")\n";
       close(fd);
-      return deviceInfo;
+      return deviceInfo; // Return empty deviceInfo
     }
 
     if (!(cap.capabilities & V4L2_CAP_VIDEO_CAPTURE)) {
@@ -96,7 +96,7 @@ VideoDeviceInfo probeSingleDevice(const std::string &device_path) {
                   << " does not support video capture\n";
       }
       close(fd);
-      return deviceInfo;
+      return deviceInfo; // Return empty deviceInfo
     }
 
     deviceInfo.driver_name = reinterpret_cast<char *>(cap.driver);
@@ -115,18 +115,55 @@ VideoDeviceInfo probeSingleDevice(const std::string &device_path) {
     memset(&fmtdesc, 0, sizeof(fmtdesc));
     fmtdesc.type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
     while (ioctl(fd, VIDIOC_ENUM_FMT, &fmtdesc) == 0) {
-      if (format_descriptions.find(fmtdesc.pixelformat) !=
-          format_descriptions.end()) {
-        deviceInfo.supported_formats.push_back(fmtdesc.pixelformat);
+      std::string format_name = getFormatDescription(fmtdesc.pixelformat);
+      std::string current_format_details = format_name;
+
+      // Enumerate frame sizes for this format
+      struct v4l2_frmsizeenum frmsize;
+      memset(&frmsize, 0, sizeof(frmsize));
+      frmsize.pixel_format = fmtdesc.pixelformat;
+      frmsize.index = 0;
+
+      std::string sizes_string = " (Sizes: ";
+      bool first_size = true;
+      while (ioctl(fd, VIDIOC_ENUM_FRAMESIZES, &frmsize) == 0) {
+        if (frmsize.type == V4L2_FRMSIZE_TYPE_DISCRETE) {
+          if (!first_size) {
+            sizes_string += ", ";
+          }
+          sizes_string += std::to_string(frmsize.discrete.width) + "x" + std::to_string(frmsize.discrete.height);
+          first_size = false;
+        } else if (frmsize.type == V4L2_FRMSIZE_TYPE_STEPWISE) {
+          if (!first_size) {
+            sizes_string += ", ";
+          }
+          sizes_string += "Stepwise (Min: " + std::to_string(frmsize.stepwise.min_width) + "x" + std::to_string(frmsize.stepwise.min_height) +
+                         " Max: " + std::to_string(frmsize.stepwise.max_width) + "x" + std::to_string(frmsize.stepwise.max_height) +
+                         " Step: " + std::to_string(frmsize.stepwise.step_width) + "x" + std::to_string(frmsize.stepwise.step_height) + ")";
+          first_size = false;
+        }
+        // You could also enumerate frame intervals (FPS) here for each size if needed, using VIDIOC_ENUM_FRAMEINTERVALS
+        frmsize.index++;
       }
+      if (first_size) { // No sizes found or ENUM_FRAMESIZES failed for the first index
+          // This can happen if the format doesn't support size enumeration or only supports a default size not listed this way.
+          sizes_string += "N/A or Default";
+      }
+      sizes_string += ")";
+      current_format_details += sizes_string;
+      
+      deviceInfo.supported_format_details.push_back(current_format_details);
+
       if (bDebug) {
-        std::cout << "  Debug: Supported format " << fmtdesc.index << ": "
-                  << getFormatDescription(fmtdesc.pixelformat) << " (0x"
-                  << std::hex << fmtdesc.pixelformat << std::dec << ")\n";
+        // The detailed print is now part of the collected string,
+        // but we can still log the basic format finding.
+        std::cout << "  Debug: Found format " << fmtdesc.index << ": "
+                  << format_name << " (0x" << std::hex << fmtdesc.pixelformat << std::dec
+                  << ") - Details: " << current_format_details << "\n";
       }
       fmtdesc.index++;
     }
-  } catch (const std::runtime_error &e) {
+  } catch (const std::runtime_error &e) { // Should ideally not be hit if we check returns
     std::cerr << "Error probing " << device_path << ": " << e.what()
               << std::endl;
   }
