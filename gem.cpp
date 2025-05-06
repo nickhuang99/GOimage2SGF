@@ -242,16 +242,21 @@ void probeVideoDevicesWorkflow() {
   std::cout << "Available video capture devices:\n";
   for (size_t i = 0; i < available_devices.size(); ++i) {
     std::cout << "[" << i << "] Path: " << available_devices[i].device_path
-              << ", Driver: " << available_devices[i].driver_name
-              << ", Card: " << available_devices[i].card_name
-              << ", Capabilities: "
+              << "\n  Driver: " << available_devices[i].driver_name
+              << "\n  Card: " << available_devices[i].card_name
+              << "\n  Capabilities: "
               << getCapabilityDescription(available_devices[i].capabilities)
               << " (0x" << std::hex << available_devices[i].capabilities
-              << std::dec << "), Supported Formats:";
-    for (uint32_t format : available_devices[i].supported_formats) {
-      std::cout << " " << getFormatDescription(format);
+              << std::dec << ")"
+              << "\n  Supported Formats & Sizes:";
+    if (available_devices[i].supported_format_details.empty()) {
+        std::cout << " None listed or error in enumeration.";
+    } else {
+        for (const std::string& detail : available_devices[i].supported_format_details) {
+            std::cout << "\n    - " << detail;
+        }
     }
-    std::cout << "\n";
+    std::cout << "\n\n"; // Add an extra newline for better separation
   }
 }
 

@@ -72,7 +72,8 @@ struct VideoDeviceInfo {
   std::string driver_name;
   std::string card_name;
   uint32_t capabilities;
-  std::vector<uint32_t> supported_formats;
+  // std::vector<uint32_t> supported_formats; // OLD
+  std::vector<std::string> supported_format_details; // NEW: Will store "FORMAT (WxH, WxH...)"
 };
 
 // Structure to represent a single move, including captured stones
