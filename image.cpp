@@ -62,7 +62,12 @@ void classifyClustersLab(const Mat &centers, int &label_black, int &label_white,
   const float white_l_thresh = 210.0f; // INCREASED SIGNIFICANTLY from 190
   const float stone_ab_thresh = 15.0f; // DECREASED from 30
   const float board_ab_thresh = 35.0f; // Keep for now
-  
+  if (bDebug) {
+    cout << "black_l_thresh:" << black_l_thresh << endl
+         << "white_l_thresh:" << white_l_thresh << endl
+         << "stone_ab_thresh:" << stone_ab_thresh << endl
+         << "board_ab_thresh:" << board_ab_thresh << endl;
+  }
   // --- Calculate Scores for each cluster ---
   for (auto& cluster : cluster_data) {
       float da = std::abs(cluster.a - 128.0f); // Distance from neutral 'a'
@@ -1065,8 +1070,11 @@ int findClosestCenter(const Vec3f &hsv, const Mat &centers) {
 // Function to sample a region around a point and get the average Lab
 // NOTE: Assumes input image is already in Lab format (CV_8UC3)
 Vec3f getAverageLab(const Mat &image_lab, Point2f center, int radius) {
-  Vec3d sum(0.0, 0.0, 0.0); // Use Vec3d for summation accuracy
-  int count = 0;
+  Vec3d sum(0.0, 0.0, 0.0);
+  std::vector<uchar> l_values;
+  std::vector<uchar> a_values;
+  std::vector<uchar> b_values;
+
   // Define the square boundary for sampling
   int x_min = max(0, static_cast<int>(center.x - radius));
   int x_max = min(image_lab.cols - 1, static_cast<int>(center.x + radius));
@@ -1075,26 +1083,41 @@ Vec3f getAverageLab(const Mat &image_lab, Point2f center, int radius) {
 
   for (int y = y_min; y <= y_max; ++y) {
     for (int x = x_min; x <= x_max; ++x) {
-        // Simple distance check for circular area (optional but potentially better)
-        // if (std::pow(x - center.x, 2) + std::pow(y - center.y, 2) <= std::pow(radius, 2)) {
-            Vec3b lab = image_lab.at<Vec3b>(y, x);
-            sum[0] += lab[0]; // L
-            sum[1] += lab[1]; // a
-            sum[2] += lab[2]; // b
-            count++;
-        // }
+      // Optional: Check if the pixel is within the circular radius
+      if (std::pow(x - center.x, 2) + std::pow(y - center.y, 2) <=
+          std::pow(radius, 2)) {
+        Vec3b lab = image_lab.at<Vec3b>(y, x);
+        l_values.push_back(lab[0]); // L
+        a_values.push_back(lab[1]); // a
+        b_values.push_back(lab[2]); // b
+      }
     }
   }
 
+  size_t count = l_values.size(); // Number of pixels sampled
+
   if (count > 0) {
-    // Return the average as Vec3f
-    return Vec3f(sum[0] / count, sum[1] / count, sum[2] / count);
+    // Sort each channel's values independently
+    std::sort(l_values.begin(), l_values.end());
+    std::sort(a_values.begin(), a_values.end());
+    std::sort(b_values.begin(), b_values.end());
+
+    // Find the median index
+    size_t mid_index = count / 2;
+
+    // Extract the median value for each channel
+    // (Using the middle element - simple approach for even/odd counts)
+    float median_l = static_cast<float>(l_values[mid_index]);
+    float median_a = static_cast<float>(a_values[mid_index]);
+    float median_b = static_cast<float>(b_values[mid_index]);
+
+    return Vec3f(median_l, median_a, median_b);
   } else {
     // Return default Lab (e.g., mid-gray) if no valid pixels found
-    return Vec3f(128, 128, 128);
+    return Vec3f(128.0f, 128.0f, 128.0f);
   }
+  return Vec3f(sum[0] / count, sum[1] / count, sum[2] / count); // <-- Still Mean!
 }
-
 
 // Function to process the Go board image and determine the board state
 void processGoBoard(const Mat &image_bgr_in, Mat &board_state,
