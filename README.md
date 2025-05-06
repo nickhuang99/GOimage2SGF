@@ -33,15 +33,15 @@ The Go Environment Manager (GEM) is a command-line tool designed to analyze Go b
 To build GEM, you need:
 
 * A C++ compiler supporting C++17 (e.g., g++)  
-* OpenCV (version 4 or later) \- Development libraries (`libopencv-dev`)  
+* OpenCV (version 4 or later) - Development libraries (`libopencv-dev`)  
 * libv4l-dev (for V4L2 support)
 
 Use the following command to compile the source code:
 
 ```bash  
-g++ \-g image.cpp sgf.cpp snapshot.cpp gem.cpp camera.cpp \-o gem.exe `pkg-config \--cflags \--libs opencv4` \-lv4l2
+g++ -g image.cpp sgf.cpp snapshot.cpp gem.cpp camera.cpp -o gem.exe `pkg-config --cflags --libs opencv4` -lv4l2
 
-This command compiles all the C++ source files and links them with the necessary OpenCV and V4L2 libraries. The \-g flag includes debugging symbols.
+This command compiles all the C++ source files and links them with the necessary OpenCV and V4L2 libraries. The -g flag includes debugging symbols.
 
 ## **Important: Permissions and the share Directory**
 
@@ -49,10 +49,10 @@ This command compiles all the C++ source files and links them with the necessary
 
 Operations involving direct webcam access via V4L2 (like probing devices, taking snapshots with the V4L2 backend, or calibration) require permission to access video device files (e.g., /dev/video0).
 
-* **Running as root (sudo):** The simplest way is to run the application with sudo ./gem.exe .... However, this is generally not recommended for regular use due to security risks.  
-* **Using the video group (Recommended):** A better approach is to add your user to the video group. This group typically has the necessary permissions to access video devices without needing root privileges for the application itself.  
+  **Running as root (sudo):** The simplest way is to run the application with sudo ./gem.exe .... However, this is generally not recommended for regular use due to security risks.  
+  **Using the video group (Recommended):** A better approach is to add your user to the video group. This group typically has the necessary permissions to access video devices without needing root privileges for the application itself.  
   Bash  
-  sudo usermod \-aG video $USER  
+  sudo usermod -aG video $USER  
   You will need to **log out and log back in** for this change to take effect.
 
 ### **The share Directory**
@@ -65,56 +65,56 @@ Bash
 mkdir share  
 chmod 777 share
 
-This allows the program, even when its effective group for device access might be video, to write necessary files into the share folder. The calibration process specifically saves snapshot.jpg (or snapshot\_osd.jpg in debug mode) and config.txt into this share directory.
+This allows the program, even when its effective group for device access might be video, to write necessary files into the share folder. The calibration process specifically saves snapshot.jpg (or snapshot_osd.jpg in debug mode) and config.txt into this share directory.
 
 ## **Usage**
 
-./gem.exe \[options\]
+./gem.exe [options]
 
 ### **Options:**
 
-* \-d, \--debug: Enable debug output. Place this option first if used.  
-* \-D, \--device \<device\_path\>: Specify the video device path (default: /dev/video0). Place this option early if used with device-dependent operations.  
-* \-M, \--mode \<backend\>: Specify capture backend ('v4l2' or 'opencv', default: v4l2).  
-* \-b, \--calibration: Run interactive board corner calibration using the webcam. Saves results to share/config.txt and a snapshot to share/snapshot.jpg.  
-* \-p, \--process-image \<image\_path\>: Process the specified Go board image and display the result (if debug mode is active or explicitly coded).  
-* \-g, \--generate-sgf \<input\_image\> \<output\_sgf\>: Process an image and generate an SGF file representing the board state.  
-* \-v, \--verify \<image\_path\> \<sgf\_path\>: Overlay SGF data on the image to visually verify stone positions.  
-* \-c, \--compare \<sgf\_path1\> \<sgf\_path2\>: Compare two SGF files for semantic equivalence.  
-* \--parse \<sgf\_path\>: Parse an SGF file and print its header, setup stones, and moves.  
-* \--probe-devices: List available video capture devices and their supported formats.  
-* \-s, \--snapshot \<output\_file\_path\>: Capture a snapshot from the webcam and save it to the specified path (e.g., share/my\_snapshot.jpg).  
-* \-r, \--record-sgf \<output\_sgf\_path\>: Capture a snapshot, process it, and generate an SGF file (e.g., share/recorded\_game.sgf).  
-* \-t, \--test-perspective \<image\_path\>: (Development/Test) Test the perspective correction on an image.  
-* \-h, \--help: Display the help message.
+* -d, --debug: Enable debug output. Place this option first if used.  
+* -D, --device <device_path>: Specify the video device path (default: /dev/video0). Place this option early if used with device-dependent operations.  
+* -M, --mode <backend>: Specify capture backend ('v4l2' or 'opencv', default: v4l2).  
+* -b, --calibration: Run interactive board corner calibration using the webcam. Saves results to share/config.txt and a snapshot to share/snapshot.jpg.  
+* -p, --process-image <image_path>: Process the specified Go board image and display the result (if debug mode is active or explicitly coded).  
+* -g, --generate-sgf <input_image> <output_sgf>: Process an image and generate an SGF file representing the board state.  
+* -v, --verify <image_path> <sgf_path>: Overlay SGF data on the image to visually verify stone positions.  
+* -c, --compare <sgf_path1> <sgf_path2>: Compare two SGF files for semantic equivalence.  
+* --parse <sgf_path>: Parse an SGF file and print its header, setup stones, and moves.  
+* --probe-devices: List available video capture devices and their supported formats.  
+* -s, --snapshot <output_file_path>: Capture a snapshot from the webcam and save it to the specified path (e.g., share/my_snapshot.jpg).  
+* -r, --record-sgf <output_sgf_path>: Capture a snapshot, process it, and generate an SGF file (e.g., share/recorded_game.sgf).  
+* -t, --test-perspective <image_path>: (Development/Test) Test the perspective correction on an image.  
+* -h, --help: Display the help message.
 
 ### **Examples:**
 
 1. **Enable debug mode and specify a different camera for probing:**  
    Bash  
-   ./gem.exe \-d \-D /dev/video1 \--probe-devices
+   ./gem.exe -d -D /dev/video1 --probe-devices
 
 2. **Run interactive calibration for /dev/video0 using OpenCV backend:**  
    Bash  
-   ./gem.exe \-M opencv \-b
+   ./gem.exe -M opencv -b
 
    *(Ensure the share directory exists and is writable as explained above.)*  
-3. **Take a snapshot from /dev/video0 and save it to share/board\_setup.jpg:**  
+3. **Take a snapshot from /dev/video0 and save it to share/board_setup.jpg:**  
    Bash  
-   ./gem.exe \-s share/board\_setup.jpg
+   ./gem.exe -s share/board_setup.jpg
 
    *(Ensure you have permissions or are in the video group, and share is writable.)*  
 4. **Process a local image:**  
    Bash  
-   ./gem.exe \-p ./my\_go\_game.png
+   ./gem.exe -p ./my_go_game.png
 
 5. **Generate an SGF from an image:**  
    Bash  
-   ./gem.exe \-g ./go\_board\_image.jpg ./output\_game.sgf
+   ./gem.exe -g ./go_board_image.jpg ./output_game.sgf
 
 6. **Record a current board position from webcam to an SGF file:**  
    Bash  
-   ./gem.exe \-r share/live\_game.sgf
+   ./gem.exe -r share/live_game.sgf
 
 ## **Functionality Details**
 
@@ -130,13 +130,13 @@ This allows the program, even when its effective group for device access might b
   * Displays a live feed from the selected camera.  
   * Allows interactive adjustment of the four corner points of the Go board area using keyboard inputs (u/d for up/down, w/n for wider/narrower).  
   * Saves the adjusted corner coordinates (both pixel and percentage values, along with image dimensions) to share/config.txt.  
-  * Saves a snapshot of the current frame to share/snapshot.jpg (or share/snapshot\_osd.jpg if bDebug is true).  
+  * Saves a snapshot of the current frame to share/snapshot.jpg (or share/snapshot_osd.jpg if bDebug is true).  
 * **SGF Generation (generateSGF in sgf.cpp):** Creates an SGF file with AB (add black) and AW (add white) properties based on the detected board state.  
 * **Device Probing (probeVideoDevices in snapshot.cpp):** Iterates through /dev/videoX devices, queries their capabilities (driver, card name, supported formats) using V4L2 ioctl calls.
 
 ## **Contributing**
 
-Contributions to GEM are welcome\! Please follow these general steps:
+Contributions to GEM are welcome! Please follow these general steps:
 
 1. Fork the repository.  
 2. Create a new branch for your feature or bug fix.  
