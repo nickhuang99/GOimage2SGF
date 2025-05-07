@@ -10,6 +10,98 @@
 
 #include "common.h"
 
+// Enum to represent the active corner for adjustment
+enum class ActiveCorner {
+  NONE,
+  TOP_LEFT,
+  TOP_RIGHT,
+  BOTTOM_LEFT,
+  BOTTOM_RIGHT
+};
+ActiveCorner currentActiveCorner = ActiveCorner::TOP_LEFT; // Default to TL
+
+// Function to modify a single point based on direction keys
+void movePoint(cv::Point2f &point, int move_key, int step, int frame_width,
+               int frame_height) {
+  switch (move_key) {
+  case 'i':
+    point.y -= step;
+    break; // Up
+  case 'k':
+    point.y += step;
+    break; // Down
+  case 'j':
+    point.x -= step;
+    break; // Left
+  case 'l':
+    point.x += step;
+    break; // Right
+  }
+  // Boundary checks
+  point.x = std::max(0.0f, std::min((float)frame_width - 1, point.x));
+  point.y = std::max(0.0f, std::min((float)frame_height - 1, point.y));
+}
+
+// This function will be called by runInteractiveCalibration's main loop
+// It replaces the old big switch in handleCalibrationInput for movement.
+// It returns 's' for save, 27 for ESC, or 0 for other handled keys.
+int processCalibrationKeyPress(
+    int key, cv::Point2f &tl, cv::Point2f &tr, cv::Point2f &bl, cv::Point2f &br,
+    int frame_width, int frame_height,
+    ActiveCorner &activeCorner) { // Pass activeCorner by reference
+  const int step = 5;
+
+  switch (key) {
+  // Corner Selection
+  case '1':
+    activeCorner = ActiveCorner::TOP_LEFT;
+    break;
+  case '2':
+    activeCorner = ActiveCorner::TOP_RIGHT;
+    break;
+  case '3':
+    activeCorner = ActiveCorner::BOTTOM_LEFT;
+    break;
+  case '4':
+    activeCorner = ActiveCorner::BOTTOM_RIGHT;
+    break;
+
+  // Movement Keys for the active corner
+  case 'i': // Up
+  case 'k': // Down
+  case 'j': // Left
+  case 'l': // Right
+    if (activeCorner == ActiveCorner::TOP_LEFT)
+      movePoint(tl, key, step, frame_width, frame_height);
+    else if (activeCorner == ActiveCorner::TOP_RIGHT)
+      movePoint(tr, key, step, frame_width, frame_height);
+    else if (activeCorner == ActiveCorner::BOTTOM_LEFT)
+      movePoint(bl, key, step, frame_width, frame_height);
+    else if (activeCorner == ActiveCorner::BOTTOM_RIGHT)
+      movePoint(br, key, step, frame_width, frame_height);
+    break;
+
+  case 's':
+    return 's'; // Signal save
+  case 27:
+    return 27; // Signal exit (ESC)
+  default:
+    return 0; // Or key if you want to pass unhandled ones
+  }
+
+  // Anti-crossing logic can be more complex with free individual corner
+  // movement. For now, we'll rely on boundary checks within movePoint. A more
+  // robust solution might check if the quadrilateral becomes self-intersecting.
+  // Simple horizontal anti-crossing (less relevant now but can be adapted if
+  // needed): if (tr.x < tl.x + 10.0f) tr.x = tl.x + 10.0f; if (br.x < bl.x
+  // + 10.0f) br.x = bl.x + 10.0f; Simple vertical anti-crossing: if (bl.y <
+  // tl.y + 10.0f) bl.y = tl.y + 10.0f; if (br.y < tr.y + 10.0f) br.y = tr.y
+  // + 10.0f; This basic anti-crossing might need refinement depending on
+  // desired behavior.
+
+  return 0; // Default: key was handled for movement/selection
+}
+
 // --- Helper Function to Handle Keyboard Input for Calibration ---
 // Takes the pressed key, modifies corner points (by reference).
 // Update function signature:
@@ -122,25 +214,46 @@ int handleCalibrationInput(int key, cv::Point2f &topLeft, cv::Point2f &topRight,
   return return_signal;
 }
 
-// --- Helper Function to Draw Calibration OSD (Unchanged) ---
-void drawCalibrationOSD(cv::Mat &display_frame, const cv::Point2f &tl,
-                        const cv::Point2f &tr, const cv::Point2f &bl,
-                        const cv::Point2f &br) {
-  // ... (code from previous response: draws circles, lines, text in red etc)
-  // ...
-  // --- Draw the Four Corner Circles ---
+// --- Helper Function to Draw Calibration OSD (Unchanged for drawing
+// points/lines) ---
+void drawCalibrationOSD(
+    cv::Mat &display_frame, const cv::Point2f &tl, const cv::Point2f &tr,
+    const cv::Point2f &bl, const cv::Point2f &br,
+    ActiveCorner activeCorner) { // Add activeCorner parameter
+  // --- Draw Corner Circles (highlight active corner) ---
   int circle_radius = 5;
-  cv::circle(display_frame, tl, circle_radius, cv::Scalar(0, 0, 255),
-             -1); // Red TL
-  cv::circle(display_frame, tr, circle_radius, cv::Scalar(255, 0, 0),
-             -1); // Blue TR
-  cv::circle(display_frame, br, circle_radius, cv::Scalar(0, 255, 255),
-             -1); // Yellow BR
-  cv::circle(display_frame, bl, circle_radius, cv::Scalar(255, 0, 255),
-             -1); // Magenta BL
+  int active_circle_radius = 8;
+  cv::Scalar inactive_color(150, 150, 150); // Dim color for inactive
+
+  cv::circle(display_frame, tl,
+             (activeCorner == ActiveCorner::TOP_LEFT ? active_circle_radius
+                                                     : circle_radius),
+             (activeCorner == ActiveCorner::TOP_LEFT ? cv::Scalar(0, 0, 255)
+                                                     : inactive_color),
+             -1); // Red if active
+  cv::circle(display_frame, tr,
+             (activeCorner == ActiveCorner::TOP_RIGHT ? active_circle_radius
+                                                      : circle_radius),
+             (activeCorner == ActiveCorner::TOP_RIGHT ? cv::Scalar(255, 0, 0)
+                                                      : inactive_color),
+             -1); // Blue if active
+  cv::circle(display_frame, bl,
+             (activeCorner == ActiveCorner::BOTTOM_LEFT ? active_circle_radius
+                                                        : circle_radius),
+             (activeCorner == ActiveCorner::BOTTOM_LEFT
+                  ? cv::Scalar(255, 0, 255)
+                  : inactive_color),
+             -1); // Magenta if active
+  cv::circle(display_frame, br,
+             (activeCorner == ActiveCorner::BOTTOM_RIGHT ? active_circle_radius
+                                                         : circle_radius),
+             (activeCorner == ActiveCorner::BOTTOM_RIGHT
+                  ? cv::Scalar(0, 255, 255)
+                  : inactive_color),
+             -1); // Yellow if active
 
   // --- Draw Connecting Lines ---
-  cv::Scalar line_color(0, 255, 0); // Green lines
+  cv::Scalar line_color(0, 255, 0);
   int line_thickness = 1;
   cv::line(display_frame, tl, tr, line_color, line_thickness);
   cv::line(display_frame, tr, br, line_color, line_thickness);
@@ -149,25 +262,47 @@ void drawCalibrationOSD(cv::Mat &display_frame, const cv::Point2f &tl,
 
   // --- OSD Text Settings ---
   int font_face = cv::FONT_HERSHEY_SIMPLEX;
-  cv::Scalar help_text_color(0, 0, 255);    // Red for help text
+  cv::Scalar help_text_color(0, 0, 255);
   cv::Scalar coord_text_color(255, 200, 0); // Cyan for coordinates
   int text_thickness = 1;
-  double help_font_scale = 0.5;
+  double help_font_scale = 0.45; // Slightly smaller to fit more text
   cv::Point help_text_origin(10, 20);
   cv::Point help_text_origin_line2(10, 35);
+  cv::Point help_text_origin_line3(10, 50);
 
   // --- Draw Help Text OSD ---
-  // UPDATED HELP TEXT with 'l' and all lowercase
-  std::string help_text_line1 =
-      "top: u/d (y), w/n (x) | bot: k/j (y), l/m (x)"; // Changed ',' to 'l'
-  std::string help_text_line2 = "s: save, esc: exit";  // All lowercase
+  std::string active_corner_str = "Active: ";
+  switch (activeCorner) {
+  case ActiveCorner::TOP_LEFT:
+    active_corner_str += "TL (1)";
+    break;
+  case ActiveCorner::TOP_RIGHT:
+    active_corner_str += "TR (2)";
+    break;
+  case ActiveCorner::BOTTOM_LEFT:
+    active_corner_str += "BL (3)";
+    break;
+  case ActiveCorner::BOTTOM_RIGHT:
+    active_corner_str += "BR (4)";
+    break;
+  default:
+    active_corner_str += "None";
+    break;
+  }
+
+  std::string help_text_line1 = "Select: 1(TL) 2(TR) 3(BL) 4(BR)";
+  std::string help_text_line2 =
+      "Move (" + active_corner_str + "): i(up) k(down) j(left) l(right)";
+  std::string help_text_line3 = "s: save, esc: exit";
 
   cv::putText(display_frame, help_text_line1, help_text_origin, font_face,
-              help_font_scale, help_text_color, text_thickness, cv::LINE_AA);
+              help_font_scale, help_text_color, 1, cv::LINE_AA);
   cv::putText(display_frame, help_text_line2, help_text_origin_line2, font_face,
-              help_font_scale, help_text_color, text_thickness, cv::LINE_AA);
+              help_font_scale, help_text_color, 1, cv::LINE_AA);
+  cv::putText(display_frame, help_text_line3, help_text_origin_line3, font_face,
+              help_font_scale, help_text_color, 1, cv::LINE_AA);
 
-  // --- Draw Coordinate Text OSD ---
+  // --- Draw Coordinate Text OSD (no change here) ---
   double coord_font_scale = 0.4;
   std::stringstream ss;
   ss << std::fixed << std::setprecision(0);
@@ -371,11 +506,13 @@ void runInteractiveCalibration(int camera_index) {
   std::cout << "Opened Camera Index: " << camera_index << std::endl;
   std::cout << "Starting Interactive Calibration..." << std::endl;
 
-  std::string window_name = "Calibration - Adjust Top Corners (ESC to finish)";
+  std::string window_name = "Calibration - Adjust Corners (ESC: exit, S: save)";
   cv::namedWindow(window_name, cv::WINDOW_AUTOSIZE);
 
   cv::Mat frame;
   cv::Mat clean_frame_to_save;
+
+  // Initialize corners (as before)
   float init_percent_x = 15.0f;
   float init_percent_y = 15.0f;
   cv::Point2f topLeft(frame_width * init_percent_x / 100.0f,
@@ -387,50 +524,46 @@ void runInteractiveCalibration(int camera_index) {
   cv::Point2f bottomRight(frame_width * (100.0f - init_percent_x) / 100.0f,
                           frame_height * (100.0f - init_percent_y) / 100.0f);
 
-  // UPDATED CONSOLE HELP TEXT with 'l' and all lowercase
+  ActiveCorner currentActiveCorner =
+      ActiveCorner::TOP_LEFT; // Default active corner
+
   std::cout << "Initial Corners Set. Use Keys to Adjust:" << std::endl;
-  std::cout << "  top edge controls:" << std::endl;
-  std::cout << "    u: move top edge up" << std::endl;
-  std::cout << "    d: move top edge down" << std::endl;
-  std::cout << "    w: make top edge wider" << std::endl;
-  std::cout << "    n: make top edge narrower" << std::endl;
-  std::cout << "  bottom edge controls:" << std::endl;
-  std::cout << "    k: move bottom edge up" << std::endl;
-  std::cout << "    j: move bottom edge down" << std::endl;
-  std::cout << "    l: make bottom edge wider"
-            << std::endl; // Changed from COMMA
-  std::cout << "    m: make bottom edge narrower" << std::endl;
+  std::cout << "  SELECT CORNER: 1 (Top-Left), 2 (Top-Right), 3 (Bottom-Left), "
+               "4 (Bottom-Right)"
+            << std::endl;
+  std::cout << "  MOVE ACTIVE CORNER:" << std::endl;
+  std::cout << "    i: move UP" << std::endl;
+  std::cout << "    k: move DOWN" << std::endl;
+  std::cout << "    j: move LEFT" << std::endl;
+  std::cout << "    l: move RIGHT" << std::endl;
   std::cout << "------------------------------------" << std::endl;
   std::cout << "  s: save current snapshot and config to ./share/" << std::endl;
   std::cout << "  esc: exit" << std::endl;
+  std::cout << "Currently Active Corner: TL (Top-Left)" << std::endl;
 
-  while (true) { // Simple loop, break on ESC or error
+  while (true) {
     bool success = cap.read(frame);
-    if (!success || frame.empty()) {
-      std::cerr << "Warning: Could not read frame." << std::endl;
-      if (cv::waitKey(50) == 27)
-        break; // Allow ESC exit even on error
+    if (!success || frame.empty()) { /* ... error handling ... */
       continue;
     }
 
-    // Store the clean frame
     clean_frame_to_save = frame.clone();
-
-    // Create display copy and draw OSD
     cv::Mat display_frame = frame.clone();
+
+    // Pass currentActiveCorner to OSD
     drawCalibrationOSD(display_frame, topLeft, topRight, bottomLeft,
-                       bottomRight);
+                       bottomRight, currentActiveCorner);
     cv::imshow(window_name, display_frame);
 
-    // Get key press and handle input/exit/save
-    int key = cv::waitKey(30); // Wait 30ms and process events
-    int key_result =
-        handleCalibrationInput(key, topLeft, topRight, bottomLeft, bottomRight,
-                               frame_width, frame_height);
+    int key = cv::waitKey(30);
+    // Call the new key processing function
+    int key_result = processCalibrationKeyPress(
+        key, topLeft, topRight, bottomLeft, bottomRight, frame_width,
+        frame_height, currentActiveCorner);
 
-    if (key_result == 27) {         // ESC pressed
-      break;                        // Exit loop
-    } else if (key_result == 's') { // 's' pressed
+    if (key_result == 27)
+      break;
+    else if (key_result == 's') { // 's' pressed
       std::string image_filename = "./share/snapshot.jpg";
       std::string config_filename = "./share/config.txt";
       std::string debug_image_filename = "./share/snapshot_osd.jpg";
