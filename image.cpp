@@ -823,7 +823,7 @@ pair<vector<double>, double> findOptimalClusteringForOrientation(
 
   double cluster_threshold = 1.0; // Starting threshold - needs tuning
   double threshold_step = 0.5;    // Step to increase threshold - needs tuning
-  int max_iterations = 20;        // Limit iterations - needs tuning
+  int max_iterations = 30;        // Limit iterations - needs tuning
 
   vector<double> clustered_lines;
   vector<double> prev_clustered_lines;
