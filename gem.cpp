@@ -68,6 +68,9 @@ void displayHelpMessage() {
   cout << "  --size <WxH>                  : Specify capture resolution (e.g., "
           "1280x720). Default: 640x480."
        << endl; // New option
+  cout << "  --test-calibration-config     : Load calibration snapshot and "
+          "config, draw corners."
+       << endl; // New option
 }
 
 void processImageWorkflow(const std::string &imagePath) {
@@ -358,6 +361,78 @@ void calibrationWorkflow(const std::string &device_path) {
   cout << "Calibration workflow finished." << endl;
 }
 
+// --- NEW Workflow Function ---
+void testCalibrationConfigWorkflow() {
+  std::cout << "Testing Calibration Config..." << std::endl;
+
+  // 1. Determine snapshot file path
+  std::string snapshot_path =
+      bDebug ? CALIB_SNAPSHOT_DEBUG_PATH : CALIB_SNAPSHOT_PATH;
+  std::cout << "  Loading snapshot image: " << snapshot_path << std::endl;
+
+  // 2. Load the snapshot image
+  cv::Mat image = cv::imread(snapshot_path);
+  if (image.empty()) {
+    THROWGEMERROR("Failed to load calibration snapshot image: " +
+                  snapshot_path);
+  }
+
+  // 3. Load corner coordinates from config file
+  std::cout << "  Loading config file: " << CALIB_CONFIG_PATH << std::endl;
+  std::vector<cv::Point2f> corners =
+      loadCornersFromConfigFile(CALIB_CONFIG_PATH); // Uses new function
+
+  if (corners.size() != 4) {
+    THROWGEMERROR("Failed to load valid corner data (expected 4 points) from "
+                  "config file: " +
+                  CALIB_CONFIG_PATH);
+  } else {
+    if (bDebug) {
+      std::cout << "  Debug: Loaded Corners (TL, TR, BR, BL): " << corners[0]
+                << ", " << corners[1] << ", " << corners[2] << ", "
+                << corners[3] << std::endl;
+    }
+  }
+
+  // 4. Choose marker color and draw markers
+  // Calibration OSD uses: Red TL, Blue TR, Yellow BR, Magenta BL
+  // Let's use different colors for verification:
+  cv::Scalar marker_color_tl =
+      bDebug ? cv::Scalar(0, 255, 0)
+             : cv::Scalar(0, 0, 255); // Debug: Green, Normal: Red
+  cv::Scalar marker_color_tr =
+      bDebug ? cv::Scalar(255, 255, 0)
+             : cv::Scalar(255, 0, 0); // Debug: Cyan, Normal: Blue
+  cv::Scalar marker_color_br =
+      bDebug ? cv::Scalar(0, 165, 255)
+             : cv::Scalar(0, 255, 255); // Debug: Orange, Normal: Yellow
+  cv::Scalar marker_color_bl =
+      bDebug ? cv::Scalar(255, 0, 128)
+             : cv::Scalar(255, 0, 255); // Debug: Pink, Normal: Magenta
+
+  int marker_size = 20;
+  int marker_thickness = 2;
+
+  // Draw crosses at the corners
+  // Note: corners vector order is TL, TR, BR, BL from loadCornersFromConfigFile
+  cv::drawMarker(image, corners[0], marker_color_tl, cv::MARKER_CROSS,
+                 marker_size, marker_thickness); // TL
+  cv::drawMarker(image, corners[1], marker_color_tr, cv::MARKER_CROSS,
+                 marker_size, marker_thickness); // TR
+  cv::drawMarker(image, corners[2], marker_color_br, cv::MARKER_CROSS,
+                 marker_size, marker_thickness); // BR
+  cv::drawMarker(image, corners[3], marker_color_bl, cv::MARKER_CROSS,
+                 marker_size, marker_thickness); // BL
+
+  // 5. Display the image
+  std::string window_title = "Calibration Test Verification";
+  cv::imshow(window_title, image);
+  std::cout << "  Displaying image with marked corners. Press any key to close."
+            << std::endl;
+  cv::waitKey(0);
+  std::cout << "Calibration Test Finished." << std::endl;
+}
+
 int main(int argc, char *argv[]) {
   try {
     if (argc == 1) {
@@ -371,6 +446,7 @@ int main(int argc, char *argv[]) {
     std::string test_image_path; // For -t option
     bool probe_only = false;
     bool run_calibration = false;    // Flag for calibration mode
+    bool run_test_calibration = false; // Flag for the new mode
 
     struct option long_options[] = {
         {"process-image", required_argument, nullptr, 'p'},
@@ -387,12 +463,13 @@ int main(int argc, char *argv[]) {
         {"test-perspective", required_argument, nullptr, 't'}, // Add -t option
         {"calibration", no_argument, nullptr, 'b'}, // Added calibration long option 
         {"mode", required_argument, nullptr, 'M'}, // Added mode option 
-        {"size", required_argument, nullptr, 'S'}, // Use S as a unique identifier for --size   
+        {"size", required_argument, nullptr, 'S'}, // Use S as a unique identifier for --size 
+        {"test-calibration-config", no_argument, nullptr, 'f'}, // Use f as unique value  
         {nullptr, 0, nullptr, 0}};
 
     int c;
     // Process all options in a single loop
-    while ((c = getopt_long(argc, argv, "dp:g:v:c:h:s:r:D:t:bM:S:", long_options,
+    while ((c = getopt_long(argc, argv, "dp:g:v:c:h:s:r:D:t:bM:S:f", long_options,
                             &option_index)) != -1) {
       switch (c) {
       case 'd':
@@ -486,6 +563,9 @@ int main(int argc, char *argv[]) {
         }
       } // End of scope for case 'S'
       break;
+      case 'f': // Corresponds to --test-calibration-config      
+          run_test_calibration = true;      
+      break;
       case 'h':
         displayHelpMessage();
         return 0;
@@ -521,6 +601,10 @@ int main(int argc, char *argv[]) {
     if (run_calibration) {
       calibrationWorkflow(device_path);
       return 0; // Exit after calibration
+    }
+    if (run_test_calibration) { // Then test calibration if requested
+      testCalibrationConfigWorkflow();
+      return 0;
     }
     // Handle any remaining non-option arguments here if needed
     if (probe_only) {

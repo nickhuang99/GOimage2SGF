@@ -4,6 +4,7 @@
 #include <linux/videodev2.h>
 #include <map>
 #include <opencv2/opencv.hpp>
+#include <opencv2/core/types.hpp> // For cv::Point2f
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -13,6 +14,10 @@
 extern bool bDebug;
 extern int g_capture_width;
 extern int g_capture_height;
+
+extern const std::string CALIB_CONFIG_PATH;
+extern const std::string CALIB_SNAPSHOT_PATH;
+extern const std::string CALIB_SNAPSHOT_DEBUG_PATH;
 
 // Custom exception class for GEM errors
 class GEMError : public std::runtime_error {
@@ -132,5 +137,9 @@ void runInteractiveCalibration(int camera_index);
 bool trySetCameraResolution(
     cv::VideoCapture &cap, int desired_width, int desired_height,
     bool attempt_fallback_format = true); // Default to attempt fallback
+
+// Function to load only the corner coordinates from the config file
+std::vector<cv::Point2f>
+loadCornersFromConfigFile(const std::string &config_path);
 
 #endif // UTILITY_H

@@ -38,6 +38,94 @@ struct ClusterInfoLab {
         board_score(std::numeric_limits<float>::max()) {}
 };
 
+// --- Existing static helper (slightly modified) ---
+// Tries to load corners and checks dimensions. Returns true on success, false
+// otherwise.
+static bool loadCornersAndCheckDims(
+    const std::string &config_path, int current_width, int current_height,
+    std::vector<cv::Point2f> &board_corners_out) { // Renamed param
+  // --- Load corners using the new function ---
+  std::vector<cv::Point2f> loaded_corners =
+      loadCornersFromConfigFile(config_path);
+  if (loaded_corners.empty()) {
+    // Error message printed by loadCornersFromConfigFile in debug mode
+    return false; // Loading corners failed
+  }
+
+  // --- Now, perform the dimension check (requires reading config file again,
+  // or enhancing loadCornersFromConfigFile) --- For simplicity now, let's
+  // re-read just for dimensions. A more optimal way would be to have
+  // loadCornersFromConfigFile also return dimensions, maybe via out-params or a
+  // struct. Re-reading for now:
+  std::ifstream configFile(config_path);
+  std::map<std::string, std::string> config_data;
+  std::string line;
+  if (!configFile.is_open())
+    return false; // Should not happen if corners loaded, but check anyway
+
+  try {
+    while (getline(configFile, line)) {
+      // Simplified parsing just for dimensions
+      line.erase(0, line.find_first_not_of(" \t\n\r\f\v"));
+      line.erase(line.find_last_not_of(" \t\n\r\f\v") + 1);
+      if (line.empty() || line[0] == '#')
+        continue;
+      size_t equals_pos = line.find('=');
+      if (equals_pos != std::string::npos) {
+        std::string key = line.substr(0, equals_pos);
+        std::string value = line.substr(equals_pos + 1);
+        // Quick trim
+        key.erase(0, key.find_first_not_of(" \t"));
+        key.erase(key.find_last_not_of(" \t") + 1);
+        value.erase(0, value.find_first_not_of(" \t"));
+        value.erase(value.find_last_not_of(" \t") + 1);
+        config_data[key] = value;
+      }
+    }
+    configFile.close();
+
+    if (config_data.count("ImageWidth") && config_data.count("ImageHeight")) {
+      int config_width = std::stoi(config_data["ImageWidth"]);
+      int config_height = std::stoi(config_data["ImageHeight"]);
+
+      if (config_width == current_width && config_height == current_height) {
+        if (bDebug)
+          std::cout
+              << "Debug (loadCornersAndCheckDims): Config dimensions match "
+                 "current image ("
+              << current_width << "x" << current_height << ")." << std::endl;
+        board_corners_out =
+            loaded_corners; // Assign loaded corners to output parameter
+        return true;        // Success!
+      } else {
+        if (bDebug)
+          std::cerr
+              << "Warning (loadCornersAndCheckDims): Config file dimensions ("
+              << config_width << "x" << config_height
+              << ") do not match image dimensions (" << current_width << "x"
+              << current_height << "). Ignoring config corners." << std::endl;
+        return false; // Dimension mismatch
+      }
+    } else {
+      if (bDebug)
+        std::cerr << "Warning (loadCornersAndCheckDims): Config file missing "
+                     "ImageWidth or ImageHeight."
+                  << std::endl;
+      return false; // Missing dimensions
+    }
+  } catch (const std::exception &e) {
+    if (bDebug)
+      std::cerr
+          << "Warning (loadCornersAndCheckDims): Error parsing dimensions "
+             "from config '"
+          << config_path << "': " << e.what() << std::endl;
+    if (configFile.is_open())
+      configFile.close();
+    return false; // Error during dimension check
+  }
+  return false; // Should not be reached
+}
+
 // Function to classify clusters based on Lab centers
 // NOTE: This requires tuning thresholds based on typical Lab values from your
 // images!
@@ -315,47 +403,36 @@ static bool loadCornersFromConfig(const std::string &config_path,
 // Function to find the corners of the Go board.
 // Attempts to load from config file first, otherwise uses hardcoded
 // percentages.
-vector<Point2f> getBoardCorners(const Mat &inputImage) {
-  const string config_path = "./share/config.txt";
-  vector<Point2f> board_corners_result; // Use a different name to avoid
-                                        // conflict with helper's out param
+// --- getBoardCorners uses the static helper ---
+std::vector<cv::Point2f> getBoardCorners(const cv::Mat &inputImage) {
+  // const string config_path = "./share/config.txt"; // Defined globally now
+  std::vector<cv::Point2f> board_corners_result;
   bool loaded_from_config = false;
 
   int current_width = inputImage.cols;
   int current_height = inputImage.rows;
 
-  // Attempt to load from config using the helper function
-  loaded_from_config = loadCornersFromConfig(
-      config_path, current_width, current_height, board_corners_result);
+  // Attempt to load from config using the helper function that also checks dimensions
+  loaded_from_config = loadCornersAndCheckDims(CALIB_CONFIG_PATH, current_width, current_height, board_corners_result);
 
-  // --- Fallback to Hardcoded Percentages ---
+  // Fallback to Hardcoded Percentages
   if (!loaded_from_config) {
-    if (bDebug) {
-      cout << "Debug: Falling back to hardcoded percentage values for corners "
-              "(either config not found, not applicable, or parsing failed)."
-           << endl;
-    }
-    // Use the original hardcoded percentage logic
-    float tl_x_percent = 20.0f;
-    float tl_y_percent = 8.0f;
-    float tr_x_percent = 73.0f;
-    float tr_y_percent = 5.0f;
-    float br_x_percent = 97.0f;
-    float br_y_percent = 45.0f;
-    float bl_x_percent = 5.0f;
-    float bl_y_percent = 52.0f;
+      if (bDebug) {
+           std::cout << "Debug (getBoardCorners): Falling back to hardcoded percentage values for corners." << std::endl;
+      }
+      // Use the original hardcoded percentage logic
+      float tl_x_percent = 20.0f; float tl_y_percent = 8.0f;
+      float tr_x_percent = 73.0f; float tr_y_percent = 5.0f;
+      float br_x_percent = 97.0f; float br_y_percent = 45.0f;
+      float bl_x_percent = 5.0f;  float bl_y_percent = 52.0f;
 
-    board_corners_result = {// Assign to the result vector
-                            Point2f(current_width * tl_x_percent / 100.0f,
-                                    current_height * tl_y_percent / 100.0f),
-                            Point2f(current_width * tr_x_percent / 100.0f,
-                                    current_height * tr_y_percent / 100.0f),
-                            Point2f(current_width * br_x_percent / 100.0f,
-                                    current_height * br_y_percent / 100.0f),
-                            Point2f(current_width * bl_x_percent / 100.0f,
-                                    current_height * bl_y_percent / 100.0f)};
+      board_corners_result = { // Assign to the result vector
+          cv::Point2f(current_width * tl_x_percent / 100.0f, current_height * tl_y_percent / 100.0f),
+          cv::Point2f(current_width * tr_x_percent / 100.0f, current_height * tr_y_percent / 100.0f),
+          cv::Point2f(current_width * br_x_percent / 100.0f, current_height * br_y_percent / 100.0f),
+          cv::Point2f(current_width * bl_x_percent / 100.0f, current_height * bl_y_percent / 100.0f)
+      };
   }
-
   return board_corners_result;
 }
 
@@ -1524,4 +1601,62 @@ void processGoBoard(const Mat &image_bgr_in, Mat &board_state,
     }
     imshow("Detected Intersections (Raw)", debug_intersections);
   }
+}
+
+std::vector<cv::Point2f> loadCornersFromConfigFile(const std::string& config_path) {
+  std::vector<cv::Point2f> corners;
+  std::ifstream configFile(config_path);
+  if (!configFile.is_open()) {
+      if (bDebug) std::cout << "Debug (loadCornersFromConfigFile): Config file '" << config_path << "' not found." << std::endl;
+      return corners; // Return empty vector
+  }
+
+  if (bDebug) std::cout << "Debug (loadCornersFromConfigFile): Found config file: " << config_path << ". Attempting to parse corners." << std::endl;
+  std::map<std::string, std::string> config_data;
+  std::string line;
+  try {
+      while (getline(configFile, line)) {
+          line.erase(0, line.find_first_not_of(" \t\n\r\f\v"));
+          line.erase(line.find_last_not_of(" \t\n\r\f\v") + 1);
+          if (line.empty() || line[0] == '#') continue;
+
+          size_t equals_pos = line.find('=');
+          if (equals_pos != std::string::npos) {
+              std::string key = line.substr(0, equals_pos);
+              std::string value = line.substr(equals_pos + 1);
+              key.erase(0, key.find_first_not_of(" \t"));
+              key.erase(key.find_last_not_of(" \t") + 1);
+              value.erase(0, value.find_first_not_of(" \t"));
+              value.erase(value.find_last_not_of(" \t") + 1);
+              config_data[key] = value;
+          }
+      }
+      configFile.close();
+
+      // Check if all required pixel coordinate keys exist
+      if (config_data.count("TL_X_PX") && config_data.count("TL_Y_PX") &&
+          config_data.count("TR_X_PX") && config_data.count("TR_Y_PX") &&
+          config_data.count("BL_X_PX") && config_data.count("BL_Y_PX") &&
+          config_data.count("BR_X_PX") && config_data.count("BR_Y_PX"))
+      {
+          cv::Point2f tl(std::stof(config_data["TL_X_PX"]), std::stof(config_data["TL_Y_PX"]));
+          cv::Point2f tr(std::stof(config_data["TR_X_PX"]), std::stof(config_data["TR_Y_PX"]));
+          // IMPORTANT: Config file saves BL before BR based on previous logic, but perspective expects TL, TR, BR, BL
+          // Let's load them based on key names and return in the standard order.
+          cv::Point2f bl(std::stof(config_data["BL_X_PX"]), std::stof(config_data["BL_Y_PX"]));
+          cv::Point2f br(std::stof(config_data["BR_X_PX"]), std::stof(config_data["BR_Y_PX"]));
+
+          corners = {tl, tr, br, bl}; // Standard order: TL, TR, BR, BL
+          if (bDebug) std::cout << "Debug (loadCornersFromConfigFile): Successfully loaded corners from config file." << std::endl;
+
+      } else {
+          if (bDebug) std::cerr << "Warning (loadCornersFromConfigFile): Config file missing one or more pixel coordinate keys (_PX)." << std::endl;
+      }
+
+  } catch (const std::exception& e) {
+      if (bDebug) std::cerr << "Warning (loadCornersFromConfigFile): Error parsing config file '" << config_path << "': " << e.what() << std::endl;
+      if(configFile.is_open()) configFile.close();
+      corners.clear(); // Ensure empty vector on error
+  }
+  return corners;
 }

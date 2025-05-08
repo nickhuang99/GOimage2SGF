@@ -1,0 +1,23 @@
+# Go Board Corner Configuration...
+ImageWidth=800
+ImageHeight=600
+
+# Pixel Coordinates
+TL_X_PX=195.0
+TL_Y_PX=200.0
+TR_X_PX=610.0
+TR_Y_PX=190.0
+BL_X_PX=75.0
+BL_Y_PX=550.0
+BR_X_PX=740.0
+BR_Y_PX=545.0
+
+# Percentage Coordinates (%)
+TL_X_PC=24.4
+TL_Y_PC=33.3
+TR_X_PC=76.2
+TR_Y_PC=31.7
+BL_X_PC=9.4
+BL_Y_PC=91.7
+BR_X_PC=92.5
+BR_Y_PC=90.8
