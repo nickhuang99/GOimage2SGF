@@ -20,6 +20,11 @@ enum class ActiveCorner {
 };
 ActiveCorner currentActiveCorner = ActiveCorner::TOP_LEFT; // Default to TL
 
+// --- NEW: Define calibration output paths ---
+const std::string CALIB_CONFIG_PATH = "./share/config.txt";
+const std::string CALIB_SNAPSHOT_PATH = "./share/snapshot.jpg";
+const std::string CALIB_SNAPSHOT_DEBUG_PATH = "./share/snapshot_osd.jpg";
+
 // Function to modify a single point based on direction keys
 void movePoint(cv::Point2f &point, int move_key, int step, int frame_width,
                int frame_height) {
@@ -563,22 +568,20 @@ void runInteractiveCalibration(int camera_index) {
 
     if (key_result == 27)
       break;
-    else if (key_result == 's') { // 's' pressed
-      std::string image_filename = "./share/snapshot.jpg";
-      std::string config_filename = "./share/config.txt";
-      std::string debug_image_filename = "./share/snapshot_osd.jpg";
+    else if (key_result == 's') { // 's' pressed     
       std::cout << "Saving snapshot and config..." << std::endl;
 
-      bool saved_image = false;
-      if (bDebug) {
-        saved_image = cv::imwrite(debug_image_filename, display_frame);
-      } else {
-        saved_image = cv::imwrite(image_filename, clean_frame_to_save);
+      bool saved_image = false;   
+
+      if (bDebug) {        
+        saved_image = cv::imwrite(CALIB_SNAPSHOT_DEBUG_PATH, display_frame);
+      } else {        
+        saved_image = cv::imwrite(CALIB_SNAPSHOT_PATH, clean_frame_to_save);
       }
       if (!saved_image)
         std::cerr << "Error: Failed to save snapshot!" << std::endl;
 
-      if (!saveCornerConfig(config_filename, topLeft, topRight, bottomLeft,
+      if (!saveCornerConfig(CALIB_CONFIG_PATH, topLeft, topRight, bottomLeft,
                             bottomRight, frame_width, frame_height)) {
         std::cerr << "Error: Failed to save config!" << std::endl;
       }
