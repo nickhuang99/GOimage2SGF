@@ -1238,55 +1238,71 @@ static void classifyIntersectionsByCalibration( // Renamed as per your request
   }
 
   for (int i = 0; i < num_intersections; ++i) {
-      int row = i / 19;
-      int col = i % 19;
-      if (row >= 19 || col >= 19) continue;
+    int row = i / 19;
+    int col = i % 19;
+    if (row >= 19 || col >= 19)
+      continue;
 
-      cv::Vec3f current_intersection_lab = average_lab_values[i];
-      int classification;
+    cv::Vec3f current_intersection_lab = average_lab_values[i];
+    int classification;
 
-      if (current_intersection_lab[0] < 0) { 
-          if (bDebug) std::cout << "    Intersection ["<< std::setw(2) << row << "," << std::setw(2) << col << "] - Invalid Lab sample (-1). Classifying as Empty." << std::endl;
-          classification = 0; 
-          if (!intersection_points.empty() && static_cast<size_t>(i) < intersection_points.size()) {
-               cv::circle(board_with_stones_output, intersection_points[i], 8, cv::Scalar(0, 128, 255), 2); 
-          }
-      } else {
-          classification = classifySingleIntersectionByDistance(
-              current_intersection_lab,
-              avg_black_calib,
-              avg_white_calib,
-              calib_data.lab_board_avg
-          );
+    if (current_intersection_lab[0] < 0) {
+      if (bDebug)
+        std::cout << "    Intersection [" << std::setw(2) << row << ","
+                  << std::setw(2) << col
+                  << "] - Invalid Lab sample (-1). Classifying as Empty."
+                  << std::endl;
+      classification = 0;
+      if (!intersection_points.empty() &&
+          static_cast<size_t>(i) < intersection_points.size()) {
+        // cv::circle(board_with_stones_output, intersection_points[i], 8,
+        //            cv::Scalar(0, 128, 255), 2);
       }
-      
-      board_state_output.at<uchar>(row, col) = classification;
+    } else {
+      classification = classifySingleIntersectionByDistance(
+          current_intersection_lab, avg_black_calib, avg_white_calib,
+          calib_data.lab_board_avg);
+    }
 
-      if (bDebug && current_intersection_lab[0] >= 0) {
-          float dist_b = cv::norm(current_intersection_lab, avg_black_calib, cv::NORM_L2);
-          float dist_w = cv::norm(current_intersection_lab, avg_white_calib, cv::NORM_L2);
-          float dist_empty = cv::norm(current_intersection_lab, calib_data.lab_board_avg, cv::NORM_L2);
-          std::string stone_type_str = (classification == 1) ? "Black" : (classification == 2 ? "White" : "Empty/Board");
-          
-          std::cout << "    Int [" << std::setw(2) << row << "," << std::setw(2) << col
-                    << "] Lab: [" << std::setw(5) << std::fixed << std::setprecision(1) << current_intersection_lab[0] 
-                    << "," << std::setw(5) << current_intersection_lab[1] 
-                    << "," << std::setw(5) << current_intersection_lab[2] << "]"
-                    << " D(B):" << std::setw(5) << std::setprecision(1) << dist_b  // Added precision for distances
-                    << " D(W):" << std::setw(5) << std::setprecision(1) << dist_w 
-                    << " D(E):" << std::setw(5) << std::setprecision(1) << dist_empty
-                    << " -> Class: " << stone_type_str << " (" << classification << ")" << std::endl;
-      }
+    board_state_output.at<uchar>(row, col) = classification;
 
-      if (static_cast<size_t>(i) < intersection_points.size()) { 
-          if (classification == 1) {
-              cv::circle(board_with_stones_output, intersection_points[i], 8, cv::Scalar(0, 0, 0), -1);
-          } else if (classification == 2) {
-              cv::circle(board_with_stones_output, intersection_points[i], 8, cv::Scalar(255, 255, 255), -1);
-          } else if (current_intersection_lab[0] >= 0) { 
-              cv::circle(board_with_stones_output, intersection_points[i], 8, cv::Scalar(0, 255, 0), 2);
-          }
+    if (bDebug && current_intersection_lab[0] >= 0) {
+      float dist_b =
+          cv::norm(current_intersection_lab, avg_black_calib, cv::NORM_L2);
+      float dist_w =
+          cv::norm(current_intersection_lab, avg_white_calib, cv::NORM_L2);
+      float dist_empty = cv::norm(current_intersection_lab,
+                                  calib_data.lab_board_avg, cv::NORM_L2);
+      std::string stone_type_str =
+          (classification == 1)
+              ? "Black"
+              : (classification == 2 ? "White" : "Empty/Board");
+
+      std::cout << "    Int [" << std::setw(2) << row << "," << std::setw(2)
+                << col << "] Lab: [" << std::setw(5) << std::fixed
+                << std::setprecision(1) << current_intersection_lab[0] << ","
+                << std::setw(5) << current_intersection_lab[1] << ","
+                << std::setw(5) << current_intersection_lab[2] << "]"
+                << " D(B):" << std::setw(5) << std::setprecision(1)
+                << dist_b // Added precision for distances
+                << " D(W):" << std::setw(5) << std::setprecision(1) << dist_w
+                << " D(E):" << std::setw(5) << std::setprecision(1)
+                << dist_empty << " -> Class: " << stone_type_str << " ("
+                << classification << ")" << std::endl;
+    }
+
+    if (static_cast<size_t>(i) < intersection_points.size()) {
+      if (classification == 1) {
+        cv::circle(board_with_stones_output, intersection_points[i], 8,
+                   cv::Scalar(0, 0, 0), -1);
+      } else if (classification == 2) {
+        cv::circle(board_with_stones_output, intersection_points[i], 8,
+                   cv::Scalar(255, 255, 255), -1);
+      } else if (current_intersection_lab[0] >= 0) {
+        cv::circle(board_with_stones_output, intersection_points[i], 8,
+                   cv::Scalar(127, 127, 127), 2);
       }
+    }
   }
 
   if (bDebug) {
