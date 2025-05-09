@@ -167,4 +167,8 @@ cv::Vec3f getAverageLab(const cv::Mat &image_lab, cv::Point2f center,
                         int radius);
 CalibrationData loadCalibrationData(const std::string &config_path);
 
+int calculateAdaptiveSampleRadius(float board_pixel_width,
+                                  float board_pixel_height,
+                                  float factor = 0.25f);
+
 #endif // UTILITY_H
