@@ -1,23 +1,39 @@
-# Go Board Corner Configuration...
+# Go Board Corner Configuration
+# Generated on: 
+# Frame Dimensions (at time of save)
 ImageWidth=800
 ImageHeight=600
 
-# Pixel Coordinates
+# Corner Pixel Coordinates (TL, TR, BL, BR)
 TL_X_PX=195.0
-TL_Y_PX=200.0
-TR_X_PX=610.0
-TR_Y_PX=190.0
-BL_X_PX=75.0
+TL_Y_PX=195.0
+TR_X_PX=615.0
+TR_Y_PX=185.0
+BL_X_PX=70.0
 BL_Y_PX=550.0
 BR_X_PX=740.0
-BR_Y_PX=545.0
+BR_Y_PX=550.0
 
-# Percentage Coordinates (%)
+# Sampled Corner Lab Colors (L: 0-255, a/b: 0-255 approx)
+TL_L=96.0
+TL_A=130.0
+TL_B=111.0
+TR_L=208.0
+TR_A=127.0
+TR_B=109.0
+BL_L=100.0
+BL_A=127.0
+BL_B=109.0
+BR_L=204.0
+BR_A=126.0
+BR_B=110.0
+
+# Corner Percentage Coordinates (%)
 TL_X_PC=24.4
-TL_Y_PC=33.3
-TR_X_PC=76.2
-TR_Y_PC=31.7
-BL_X_PC=9.4
+TL_Y_PC=32.5
+TR_X_PC=76.9
+TR_Y_PC=30.8
+BL_X_PC=8.8
 BL_Y_PC=91.7
 BR_X_PC=92.5
-BR_Y_PC=90.8
+BR_Y_PC=91.7

@@ -400,6 +400,107 @@ static bool loadCornersFromConfig(const std::string &config_path,
   return false; // Default return if conditions not met
 }
 
+CalibrationData loadCalibrationData(const std::string& config_path) {
+  CalibrationData data; // Initialize with default values (flags false)
+  std::ifstream configFile(config_path);
+  if (!configFile.is_open()) {
+      if (bDebug) std::cerr << "Debug (loadCalibrationData): Config file not found: " << config_path << std::endl;
+      return data; // Return default data
+  }
+
+  if (bDebug) std::cout << "Debug (loadCalibrationData): Parsing config file: " << config_path << std::endl;
+
+  std::map<std::string, std::string> config_map;
+  std::string line;
+  int line_num = 0;
+
+  // --- Read file into map ---
+  while (getline(configFile, line)) {
+      line_num++;
+      line.erase(0, line.find_first_not_of(" \t\n\r\f\v"));
+      line.erase(line.find_last_not_of(" \t\n\r\f\v") + 1);
+      if (line.empty() || line[0] == '#') continue;
+
+      size_t equals_pos = line.find('=');
+      if (equals_pos != std::string::npos) {
+          std::string key = line.substr(0, equals_pos);
+          std::string value = line.substr(equals_pos + 1);
+          // Basic trim
+          key.erase(0, key.find_first_not_of(" \t")); key.erase(key.find_last_not_of(" \t") + 1);
+          value.erase(0, value.find_first_not_of(" \t")); value.erase(value.find_last_not_of(" \t") + 1);
+          config_map[key] = value;
+      } else {
+           if (bDebug) std::cerr << "Warning (loadCalibrationData): Invalid line format (no '=') at line " << line_num << ": " << line << std::endl;
+      }
+  }
+  configFile.close();
+
+  // --- Parse data from map ---
+  try {
+      // Parse Dimensions
+      if (config_map.count("ImageWidth") && config_map.count("ImageHeight")) {
+          data.image_width = std::stoi(config_map["ImageWidth"]);
+          data.image_height = std::stoi(config_map["ImageHeight"]);
+          data.dimensions_loaded = true;
+           if (bDebug) std::cout << "  Debug: Loaded Dimensions: " << data.image_width << "x" << data.image_height << std::endl;
+      } else {
+           if (bDebug) std::cerr << "  Warning: ImageWidth or ImageHeight missing from config." << std::endl;
+      }
+
+      // Parse Corners (_PX)
+      if (config_map.count("TL_X_PX") && config_map.count("TL_Y_PX") &&
+          config_map.count("TR_X_PX") && config_map.count("TR_Y_PX") &&
+          config_map.count("BL_X_PX") && config_map.count("BL_Y_PX") &&
+          config_map.count("BR_X_PX") && config_map.count("BR_Y_PX"))
+      {
+          cv::Point2f tl(std::stof(config_map["TL_X_PX"]), std::stof(config_map["TL_Y_PX"]));
+          cv::Point2f tr(std::stof(config_map["TR_X_PX"]), std::stof(config_map["TR_Y_PX"]));
+          cv::Point2f bl(std::stof(config_map["BL_X_PX"]), std::stof(config_map["BL_Y_PX"]));
+          cv::Point2f br(std::stof(config_map["BR_X_PX"]), std::stof(config_map["BR_Y_PX"]));
+          data.corners = {tl, tr, br, bl}; // Standard order TL, TR, BR, BL
+          data.corners_loaded = true;
+          if (bDebug) std::cout << "  Debug: Loaded Corners (TL, TR, BR, BL): " << tl << ", " << tr << ", " << br << ", " << bl << std::endl;
+      } else {
+          if (bDebug) std::cerr << "  Warning: One or more corner pixel keys (_PX) missing." << std::endl;
+      }
+
+      // Parse Colors (L, A, B)
+      if (config_map.count("TL_L") && config_map.count("TL_A") && config_map.count("TL_B") &&
+          config_map.count("TR_L") && config_map.count("TR_A") && config_map.count("TR_B") &&
+          config_map.count("BL_L") && config_map.count("BL_A") && config_map.count("BL_B") &&
+          config_map.count("BR_L") && config_map.count("BR_A") && config_map.count("BR_B"))
+      {
+          data.lab_tl[0] = std::stof(config_map["TL_L"]); data.lab_tl[1] = std::stof(config_map["TL_A"]); data.lab_tl[2] = std::stof(config_map["TL_B"]);
+          data.lab_tr[0] = std::stof(config_map["TR_L"]); data.lab_tr[1] = std::stof(config_map["TR_A"]); data.lab_tr[2] = std::stof(config_map["TR_B"]);
+          data.lab_bl[0] = std::stof(config_map["BL_L"]); data.lab_bl[1] = std::stof(config_map["BL_A"]); data.lab_bl[2] = std::stof(config_map["BL_B"]);
+          data.lab_br[0] = std::stof(config_map["BR_L"]); data.lab_br[1] = std::stof(config_map["BR_A"]); data.lab_br[2] = std::stof(config_map["BR_B"]);
+          data.colors_loaded = true;
+           if (bDebug) {
+              std::cout << std::fixed << std::setprecision(1);
+              std::cout << "  Debug: Loaded TL Lab: [" << data.lab_tl[0] << "," << data.lab_tl[1] << "," << data.lab_tl[2] << "]" << std::endl;
+              std::cout << "  Debug: Loaded TR Lab: [" << data.lab_tr[0] << "," << data.lab_tr[1] << "," << data.lab_tr[2] << "]" << std::endl;
+              std::cout << "  Debug: Loaded BL Lab: [" << data.lab_bl[0] << "," << data.lab_bl[1] << "," << data.lab_bl[2] << "]" << std::endl;
+              std::cout << "  Debug: Loaded BR Lab: [" << data.lab_br[0] << "," << data.lab_br[1] << "," << data.lab_br[2] << "]" << std::endl;
+           }
+      } else {
+          if (bDebug) std::cerr << "  Warning: One or more corner Lab color keys (L/A/B) missing." << std::endl;
+      }
+
+  } catch (const std::invalid_argument& ia) {
+      std::cerr << "Error (loadCalibrationData): Invalid number format in config file '" << config_path << "'. " << ia.what() << std::endl;
+      // Reset flags potentially affected by partial success before error
+      data.corners_loaded = false; data.colors_loaded = false; data.dimensions_loaded = false;
+  } catch (const std::out_of_range& oor) {
+      std::cerr << "Error (loadCalibrationData): Number out of range in config file '" << config_path << "'. " << oor.what() << std::endl;
+      data.corners_loaded = false; data.colors_loaded = false; data.dimensions_loaded = false;
+  } catch (const std::exception& e) { // Catch other potential errors
+       std::cerr << "Error (loadCalibrationData): Generic error parsing config file '" << config_path << "': " << e.what() << std::endl;
+       data.corners_loaded = false; data.colors_loaded = false; data.dimensions_loaded = false;
+  }
+
+  return data;
+}
+
 // Function to find the corners of the Go board.
 // Attempts to load from config file first, otherwise uses hardcoded
 // percentages.
@@ -407,31 +508,79 @@ static bool loadCornersFromConfig(const std::string &config_path,
 std::vector<cv::Point2f> getBoardCorners(const cv::Mat &inputImage) {
   // const string config_path = "./share/config.txt"; // Defined globally now
   std::vector<cv::Point2f> board_corners_result;
-  bool loaded_from_config = false;
+  bool use_config_corners = false;
 
   int current_width = inputImage.cols;
   int current_height = inputImage.rows;
 
-  // Attempt to load from config using the helper function that also checks dimensions
-  loaded_from_config = loadCornersAndCheckDims(CALIB_CONFIG_PATH, current_width, current_height, board_corners_result);
+  // Load all data, including potential colors
+  CalibrationData calib_data = loadCalibrationData(CALIB_CONFIG_PATH);
 
-  // Fallback to Hardcoded Percentages
-  if (!loaded_from_config) {
-      if (bDebug) {
-           std::cout << "Debug (getBoardCorners): Falling back to hardcoded percentage values for corners." << std::endl;
-      }
-      // Use the original hardcoded percentage logic
-      float tl_x_percent = 20.0f; float tl_y_percent = 8.0f;
-      float tr_x_percent = 73.0f; float tr_y_percent = 5.0f;
-      float br_x_percent = 97.0f; float br_y_percent = 45.0f;
-      float bl_x_percent = 5.0f;  float bl_y_percent = 52.0f;
+  // Check if corners AND dimensions were loaded AND dimensions match
+  if (calib_data.corners_loaded && calib_data.dimensions_loaded &&
+      calib_data.image_width == current_width &&
+      calib_data.image_height == current_height) {
+    if (bDebug)
+      std::cout << "Debug (getBoardCorners): Using corners from config file "
+                   "(dimensions match)."
+                << std::endl;
+    board_corners_result = calib_data.corners; // Use the loaded corners
+    use_config_corners = true;
+  } else if (calib_data.corners_loaded && calib_data.dimensions_loaded) {
+    if (bDebug)
+      std::cerr << "Warning (getBoardCorners): Config dimensions ("
+                << calib_data.image_width << "x" << calib_data.image_height
+                << ") mismatch image (" << current_width << "x"
+                << current_height << "). Ignoring config corners." << std::endl;
+  } else if (bDebug && !calib_data.corners_loaded) {
+    // Message about config file not found or missing keys already printed by
+    // loadCalibrationData in debug mode
+  }
 
-      board_corners_result = { // Assign to the result vector
-          cv::Point2f(current_width * tl_x_percent / 100.0f, current_height * tl_y_percent / 100.0f),
-          cv::Point2f(current_width * tr_x_percent / 100.0f, current_height * tr_y_percent / 100.0f),
-          cv::Point2f(current_width * br_x_percent / 100.0f, current_height * br_y_percent / 100.0f),
-          cv::Point2f(current_width * bl_x_percent / 100.0f, current_height * bl_y_percent / 100.0f)
-      };
+  // Fallback to Hardcoded Percentages if config wasn't usable
+  if (!use_config_corners) {
+    if (bDebug) {
+      std::cout << "Debug (getBoardCorners): Falling back to hardcoded "
+                   "percentage values for corners."
+                << std::endl;
+    }
+    // Use the original hardcoded percentage logic
+    float tl_x_percent = 20.0f;
+    float tl_y_percent = 8.0f;
+    float tr_x_percent = 73.0f;
+    float tr_y_percent = 5.0f;
+    float br_x_percent = 97.0f;
+    float br_y_percent = 45.0f;
+    float bl_x_percent = 5.0f;
+    float bl_y_percent = 52.0f;
+
+    board_corners_result = {
+        cv::Point2f(current_width * tl_x_percent / 100.0f,
+                    current_height * tl_y_percent / 100.0f),
+        cv::Point2f(current_width * tr_x_percent / 100.0f,
+                    current_height * tr_y_percent / 100.0f),
+        cv::Point2f(current_width * br_x_percent / 100.0f,
+                    current_height * br_y_percent / 100.0f),
+        cv::Point2f(current_width * bl_x_percent / 100.0f,
+                    current_height * bl_y_percent / 100.0f)};
+  }
+  // NOTE: getBoardCorners still returns corners in TL, TR, BR, BL order because
+  // the hardcoded fallback assumes that, and loadCalibrationData now returns
+  // them in that order too. However, the original hardcoded ones might have
+  // been visually different. Let's ensure the hardcoded ones are also returned
+  // TL, TR, BR, BL
+  if (!use_config_corners) {
+    board_corners_result = {
+        // Reorder fallback to TL, TR, BR, BL
+        cv::Point2f(current_width * 20.0f / 100.0f,
+                    current_height * 8.0f / 100.0f), // TL
+        cv::Point2f(current_width * 73.0f / 100.0f,
+                    current_height * 5.0f / 100.0f), // TR
+        cv::Point2f(current_width * 97.0f / 100.0f,
+                    current_height * 45.0f / 100.0f), // BR
+        cv::Point2f(current_width * 5.0f / 100.0f,
+                    current_height * 52.0f / 100.0f) // BL
+    };
   }
   return board_corners_result;
 }
@@ -1402,6 +1551,10 @@ Vec3f getAverageLab(const Mat &image_lab, Point2f center, int radius) {
 void processGoBoard(const Mat &image_bgr_in, Mat &board_state,
                     Mat &board_with_stones,
                     vector<Point2f> &intersection_points) {
+
+  // --- Load Calibration Data at the beginning ---
+  CalibrationData calib_data = loadCalibrationData(CALIB_CONFIG_PATH);
+
   Mat image_bgr = correctPerspective(image_bgr_in);
 
   if (bDebug) {
