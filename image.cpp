@@ -1578,110 +1578,152 @@ static void performDirectClassification(
 }
 
 // Function to process the Go board image and determine the board state
-void processGoBoard(const cv::Mat &image_bgr_in, cv::Mat &board_state_out, // Renamed for clarity
-  cv::Mat &board_with_stones_out,    // Renamed for clarity
-  std::vector<cv::Point2f> &intersection_points_out) // Renamed for clarity
+void processGoBoard(
+    const cv::Mat &image_bgr_in,
+    cv::Mat &board_state_out,                          // Renamed for clarity
+    cv::Mat &board_with_stones_out,                    // Renamed for clarity
+    std::vector<cv::Point2f> &intersection_points_out) // Renamed for clarity
 {
-if (bDebug) std::cout << "Debug (processGoBoard): Starting board processing." << std::endl;
+  if (bDebug)
+    std::cout << "Debug (processGoBoard): Starting board processing."
+              << std::endl;
 
-// 1. Load Calibration Data
-CalibrationData calib_data = loadCalibrationData(CALIB_CONFIG_PATH);
-if (!calib_data.corners_loaded || !calib_data.colors_loaded || !calib_data.board_color_loaded || !calib_data.dimensions_loaded) {
-std::string err_msg = "ProcessGoBoard Error: Incomplete calibration data. ";
-if (!calib_data.corners_loaded) err_msg += "Corners missing. ";
-if (!calib_data.colors_loaded) err_msg += "Stone colors missing. ";
-if (!calib_data.board_color_loaded) err_msg += "Board color missing. ";
-if (!calib_data.dimensions_loaded) err_msg += "Dimensions missing. ";
-err_msg += "Please run calibration (-b) ensuring stones and empty board are correctly placed.";
-THROWGEMERROR(err_msg);
-}
-if (bDebug) std::cout << "  Debug: Full calibration data loaded." << std::endl;
+  // 1. Load Calibration Data
+  CalibrationData calib_data = loadCalibrationData(CALIB_CONFIG_PATH);
+  if (!calib_data.corners_loaded || !calib_data.colors_loaded ||
+      !calib_data.board_color_loaded || !calib_data.dimensions_loaded) {
+    std::string err_msg = "ProcessGoBoard Error: Incomplete calibration data. ";
+    if (!calib_data.corners_loaded)
+      err_msg += "Corners missing. ";
+    if (!calib_data.colors_loaded)
+      err_msg += "Stone colors missing. ";
+    if (!calib_data.board_color_loaded)
+      err_msg += "Board color missing. ";
+    if (!calib_data.dimensions_loaded)
+      err_msg += "Dimensions missing. ";
+    err_msg += "Please run calibration (-b) ensuring stones and empty board "
+               "are correctly placed.";
+    THROWGEMERROR(err_msg);
+  }
+  if (bDebug)
+    std::cout << "  Debug: Full calibration data loaded." << std::endl;
 
-// 2. Perspective Correction
-cv::Mat image_bgr_corrected = correctPerspective(image_bgr_in);
-if (image_bgr_corrected.empty()) { THROWGEMERROR("Corrected perspective image is empty."); }
-if (bDebug) { imshow("Corrected Perspective", image_bgr_corrected); cv::waitKey(1); }
+  // 2. Perspective Correction
+  cv::Mat image_bgr_corrected = correctPerspective(image_bgr_in);
+  if (image_bgr_corrected.empty()) {
+    THROWGEMERROR("Corrected perspective image is empty.");
+  }
+  if (bDebug) {
+    imshow("Corrected Perspective", image_bgr_corrected);
+    cv::waitKey(1);
+  }
 
-// 3. Convert to Lab and Detect Grid
-cv::Mat image_lab;
-cv::cvtColor(image_bgr_corrected, image_lab, cv::COLOR_BGR2Lab);
-if (image_lab.empty()) { THROWGEMERROR("Lab converted image is empty."); }
-if (bDebug) { imshow("Lab Image", image_lab); cv::waitKey(1); }
+  // 3. Convert to Lab and Detect Grid
+  cv::Mat image_lab;
+  cv::cvtColor(image_bgr_corrected, image_lab, cv::COLOR_BGR2Lab);
+  if (image_lab.empty()) {
+    THROWGEMERROR("Lab converted image is empty.");
+  }
+  if (bDebug) {
+    imshow("Lab Image", image_lab);
+    cv::waitKey(1);
+  }
 
-std::pair<std::vector<double>, std::vector<double>> grid_lines = detectUniformGrid(image_bgr_corrected);
-std::vector<double> horizontal_lines = grid_lines.first;
-std::vector<double> vertical_lines = grid_lines.second;
+  std::pair<std::vector<double>, std::vector<double>> grid_lines =
+      detectUniformGrid(image_bgr_corrected);
+  std::vector<double> horizontal_lines = grid_lines.first;
+  std::vector<double> vertical_lines = grid_lines.second;
 
-intersection_points_out = findIntersections(horizontal_lines, vertical_lines);
-int num_intersections = intersection_points_out.size();
-if (num_intersections != 361 && image_bgr_corrected.cols > 0 && image_bgr_corrected.rows > 0) {
-std::cerr << "Warning (processGoBoard): Expected 361 intersections, found " << num_intersections << "." << std::endl;
-if (num_intersections == 0) THROWGEMERROR("No intersection points found.");
-} else if (num_intersections == 0) { 
-THROWGEMERROR("No intersection points found (image might be invalid).");
-}
-if (bDebug) std::cout << "  Debug: Found " << num_intersections << " intersection points." << std::endl;
+  intersection_points_out = findIntersections(horizontal_lines, vertical_lines);
+  int num_intersections = intersection_points_out.size();
+  if (num_intersections != 361 && image_bgr_corrected.cols > 0 &&
+      image_bgr_corrected.rows > 0) {
+    std::cerr << "Warning (processGoBoard): Expected 361 intersections, found "
+              << num_intersections << "." << std::endl;
+    if (num_intersections == 0)
+      THROWGEMERROR("No intersection points found.");
+  } else if (num_intersections == 0) {
+    THROWGEMERROR("No intersection points found (image might be invalid).");
+  }
+  if (bDebug)
+    std::cout << "  Debug: Found " << num_intersections
+              << " intersection points." << std::endl;
 
-// 4. Sample Lab Color at Each Intersection
-int sample_radius = getSampleRadiusSize(horizontal_lines, vertical_lines);
-std::vector<cv::Vec3f> average_lab_values(num_intersections);
-for (int i = 0; i < num_intersections; ++i) {
-average_lab_values[i] = getAverageLab(image_lab, intersection_points_out[i], sample_radius);
-}
-if (bDebug) std::cout << "  Debug: Sampled Lab colors for all intersections." << std::endl;
+  // 4. Sample Lab Color at Each Intersection
+  int sample_radius = getSampleRadiusSize(horizontal_lines, vertical_lines);
+  std::vector<cv::Vec3f> average_lab_values(num_intersections);
+  for (int i = 0; i < num_intersections; ++i) {
+    average_lab_values[i] =
+        getAverageLab(image_lab, intersection_points_out[i], sample_radius);
+  }
+  if (bDebug)
+    std::cout << "  Debug: Sampled Lab colors for all intersections."
+              << std::endl;
 
-// --- 5. Call the new helper function for Direct Classification ---
-performDirectClassification(
-average_lab_values,
-calib_data,
-intersection_points_out,
-num_intersections,
-image_bgr_corrected, // Pass the corrected BGR image for drawing
-board_state_out,     // Output: board_state
-board_with_stones_out // Output: board_with_stones
-);
-// The imshow for "Direct Classification Result" is now inside performDirectClassification if bDebug
+  // --- 5. Call the new helper function for Direct Classification ---
+  performDirectClassification(
+      average_lab_values, calib_data, intersection_points_out,
+      num_intersections,
+      image_bgr_corrected,  // Pass the corrected BGR image for drawing
+      board_state_out,      // Output: board_state
+      board_with_stones_out // Output: board_with_stones
+  );
+  // The imshow for "Direct Classification Result" is now inside
+  // performDirectClassification if bDebug
 
-// --- 6. Post-Processing Filter ---
-if (bDebug) std::cout << "  Debug: Applying post-processing filter." << std::endl;
-if (num_intersections == 361) { // Ensure we have the expected number of points for 19x19 indexing
-cv::Mat temp_board_state = board_state_out.clone();
-for (int r = 0; r < 19; ++r) {
-for (int c = 0; c < 19; ++c) {
-if (temp_board_state.at<uchar>(r, c) == 2) { // If white
-  bool has_stone_neighbor = false;
-  for (int dr = -1; dr <= 1; ++dr) {
-      for (int dc = -1; dc <= 1; ++dc) {
-          if (dr == 0 && dc == 0) continue;
-          int nr = r + dr; int nc = c + dc;
-          if (nr >= 0 && nr < 19 && nc >= 0 && nc < 19) {
-              if (temp_board_state.at<uchar>(nr, nc) == 1 || temp_board_state.at<uchar>(nr, nc) == 2) {
-                  has_stone_neighbor = true; break;
+  // --- 6. Post-Processing Filter ---
+  if (bDebug)
+    std::cout << "  Debug: Applying post-processing filter." << std::endl;
+  // Ensure we have the expected number of points for 19x19 indexing
+  if (num_intersections == 361) {
+    cv::Mat temp_board_state = board_state_out.clone();
+    for (int r = 0; r < 19; ++r) {
+      for (int c = 0; c < 19; ++c) {
+        if (temp_board_state.at<uchar>(r, c) == 2) { // If white
+          bool has_stone_neighbor = false;
+          for (int dr = -1; dr <= 1; ++dr) {
+            for (int dc = -1; dc <= 1; ++dc) {
+              if (dr == 0 && dc == 0)
+                continue;
+              int nr = r + dr;
+              int nc = c + dc;
+              if (nr >= 0 && nr < 19 && nc >= 0 && nc < 19) {
+                if (temp_board_state.at<uchar>(nr, nc) == 1 ||
+                    temp_board_state.at<uchar>(nr, nc) == 2) {
+                  has_stone_neighbor = true;
+                  break;
+                }
               }
+            }
+            if (has_stone_neighbor)
+              break;
           }
+          if (!has_stone_neighbor) {
+            board_state_out.at<uchar>(r, c) = 0;
+            // Ensure index is valid before drawing
+            int intersection_idx = r * 19 + c;
+            if (intersection_idx < intersection_points_out.size()) {
+              cv::circle(board_with_stones_out,
+                         intersection_points_out[intersection_idx], 8,
+                         cv::Scalar(0, 255, 0), 2);
+            }
+          }
+        }
       }
-      if (has_stone_neighbor) break;
+    }
+  } else if (bDebug) {
+    std::cout << "  Debug: Skipping post-processing filter due to non-standard "
+                 "number of intersections ("
+              << num_intersections << ")." << std::endl;
   }
-  if (!has_stone_neighbor) {
-      board_state_out.at<uchar>(r, c) = 0;
-      // Ensure index is valid before drawing
-      int intersection_idx = r * 19 + c;
-      if (intersection_idx < intersection_points_out.size()) {
-         cv::circle(board_with_stones_out, intersection_points_out[intersection_idx], 8, cv::Scalar(0, 255, 0), 2);
-      }
-  }
-}
-}
-}
-} else if (bDebug) {
-std::cout << "  Debug: Skipping post-processing filter due to non-standard number of intersections (" << num_intersections <<")." << std::endl;
-}
 
-if (bDebug) {
-imshow("Filtered Stones (Final)", board_with_stones_out);
-cv::waitKey(0);
-}
-if (bDebug) std::cout << "Debug (processGoBoard): Board processing finished." << std::endl;
+  if (bDebug) {
+    imshow("Filtered Stones (Final)", board_with_stones_out);
+    cv::waitKey(0);
+  }
+  if (bDebug)
+    std::cout << "Debug (processGoBoard): Board processing finished."
+              << std::endl;
 }
 
 std::vector<cv::Point2f>
