@@ -142,4 +142,8 @@ bool trySetCameraResolution(
 std::vector<cv::Point2f>
 loadCornersFromConfigFile(const std::string &config_path);
 
+// Declare utility function (defined in image.cpp)
+cv::Vec3f getAverageLab(const cv::Mat &image_lab, cv::Point2f center, int radius);
+
+
 #endif // UTILITY_H

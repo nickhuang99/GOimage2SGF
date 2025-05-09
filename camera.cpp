@@ -4,6 +4,7 @@
 #include <iomanip>
 #include <iostream>
 #include <opencv2/opencv.hpp>
+#include <opencv2/imgproc.hpp> // For cvtColor
 #include <sstream>
 #include <string>
 #include <vector>
@@ -333,18 +334,24 @@ void drawCalibrationOSD(
 // --- NEW Function to Save Corner Configuration (Unchanged) ---
 bool saveCornerConfig(const std::string &filename, const cv::Point2f &tl,
                       const cv::Point2f &tr, const cv::Point2f &bl,
-                      const cv::Point2f &br, int frame_width,
-                      int frame_height) {
-  // ... (code from previous response to save key=value) ...
+                      const cv::Point2f &br, int frame_width, int frame_height,
+                      const cv::Vec3f &lab_tl, const cv::Vec3f &lab_tr, // NEW
+                      const cv::Vec3f &lab_bl, const cv::Vec3f &lab_br) // NEW
+{
   std::ofstream outFile(filename);
-  if (!outFile.is_open()) { /* ... error handling ... */
+  if (!outFile.is_open()) {
+    std::cerr << "Error: Could not open config file for writing: " << filename
+              << std::endl;
     return false;
   }
-  outFile << "# Go Board Corner Configuration..." << std::endl;
+  outFile << "# Go Board Corner Configuration" << std::endl;
+  outFile << "# Generated on: " << /* Optional: Add timestamp */ std::endl;
+  outFile << "# Frame Dimensions (at time of save)" << std::endl;
   outFile << "ImageWidth=" << frame_width << std::endl;
   outFile << "ImageHeight=" << frame_height << std::endl;
-  outFile << std::fixed << std::setprecision(1);
-  outFile << "\n# Pixel Coordinates" << std::endl;
+  outFile << std::fixed << std::setprecision(1); // Precision for floats
+
+  outFile << "\n# Corner Pixel Coordinates (TL, TR, BL, BR)" << std::endl;
   outFile << "TL_X_PX=" << tl.x << std::endl;
   outFile << "TL_Y_PX=" << tl.y << std::endl;
   outFile << "TR_X_PX=" << tr.x << std::endl;
@@ -353,8 +360,27 @@ bool saveCornerConfig(const std::string &filename, const cv::Point2f &tl,
   outFile << "BL_Y_PX=" << bl.y << std::endl;
   outFile << "BR_X_PX=" << br.x << std::endl;
   outFile << "BR_Y_PX=" << br.y << std::endl;
+
+  // --- NEW: Save Sampled Lab Colors ---
+  outFile << "\n# Sampled Corner Lab Colors (L: 0-255, a/b: 0-255 approx)"
+          << std::endl;
+  outFile << "TL_L=" << lab_tl[0] << std::endl;
+  outFile << "TL_A=" << lab_tl[1] << std::endl;
+  outFile << "TL_B=" << lab_tl[2] << std::endl;
+  outFile << "TR_L=" << lab_tr[0] << std::endl;
+  outFile << "TR_A=" << lab_tr[1] << std::endl;
+  outFile << "TR_B=" << lab_tr[2] << std::endl;
+  outFile << "BL_L=" << lab_bl[0] << std::endl;
+  outFile << "BL_A=" << lab_bl[1] << std::endl;
+  outFile << "BL_B=" << lab_bl[2] << std::endl;
+  outFile << "BR_L=" << lab_br[0] << std::endl;
+  outFile << "BR_A=" << lab_br[1] << std::endl;
+  outFile << "BR_B=" << lab_br[2] << std::endl;
+  // --- End New Section ---
+
+  // Save Percentage Coordinates (optional but useful)
   if (frame_width > 0 && frame_height > 0) {
-    outFile << "\n# Percentage Coordinates (%)" << std::endl;
+    outFile << "\n# Corner Percentage Coordinates (%)" << std::endl;
     outFile << "TL_X_PC=" << (tl.x / frame_width * 100.0f) << std::endl;
     outFile << "TL_Y_PC=" << (tl.y / frame_height * 100.0f) << std::endl;
     outFile << "TR_X_PC=" << (tr.x / frame_width * 100.0f) << std::endl;
@@ -364,8 +390,15 @@ bool saveCornerConfig(const std::string &filename, const cv::Point2f &tl,
     outFile << "BR_X_PC=" << (br.x / frame_width * 100.0f) << std::endl;
     outFile << "BR_Y_PC=" << (br.y / frame_height * 100.0f) << std::endl;
   }
+
   outFile.close();
-  std::cout << "Corner configuration saved to " << filename << std::endl;
+  if (!outFile) { // Check if close failed (e.g., disk full)
+    std::cerr << "Error: Failed to write data correctly to config file: "
+              << filename << std::endl;
+    return false;
+  }
+  std::cout << "Corner configuration (including colors) saved to " << filename
+            << std::endl;
   return true;
 }
 
@@ -532,19 +565,18 @@ void runInteractiveCalibration(int camera_index) {
   ActiveCorner currentActiveCorner =
       ActiveCorner::TOP_LEFT; // Default active corner
 
-  std::cout << "Initial Corners Set. Use Keys to Adjust:" << std::endl;
-  std::cout << "  SELECT CORNER: 1 (Top-Left), 2 (Top-Right), 3 (Bottom-Left), "
-               "4 (Bottom-Right)"
-            << std::endl;
-  std::cout << "  MOVE ACTIVE CORNER:" << std::endl;
-  std::cout << "    i: move UP" << std::endl;
-  std::cout << "    k: move DOWN" << std::endl;
-  std::cout << "    j: move LEFT" << std::endl;
-  std::cout << "    l: move RIGHT" << std::endl;
-  std::cout << "------------------------------------" << std::endl;
-  std::cout << "  s: save current snapshot and config to ./share/" << std::endl;
-  std::cout << "  esc: exit" << std::endl;
-  std::cout << "Currently Active Corner: TL (Top-Left)" << std::endl;
+    // --- UPDATE Console Help Text ---
+    std::cout << "\n--- Interactive Calibration ---" << std::endl;
+    std::cout << "INSTRUCTIONS: Place BLACK stones near TL(1) & BL(3) markers." << std::endl;
+    std::cout << "              Place WHITE stones near TR(2) & BR(4) markers." << std::endl;
+    std::cout << "ADJUSTMENT KEYS:" << std::endl;
+    std::cout << "  SELECT CORNER: 1(TL), 2(TR), 3(BL), 4(BR)" << std::endl;
+    std::cout << "  MOVE ACTIVE:   i(up), k(down), j(left), l(right)" << std::endl;
+    std::cout << "ACTIONS:" << std::endl;
+    std::cout << "  s: Save config & snapshot (with stones placed!)" << std::endl;
+    std::cout << "  esc: Exit without saving" << std::endl;
+    std::cout << "------------------------------------" << std::endl;
+    std::cout << "Currently Active Corner: TL (Top-Left)" << std::endl;
 
   while (true) {
     bool success = cap.read(frame);
@@ -571,8 +603,44 @@ void runInteractiveCalibration(int camera_index) {
     else if (key_result == 's') { // 's' pressed     
       std::cout << "Saving snapshot and config..." << std::endl;
 
-      bool saved_image = false;   
+      // --- Sample Colors ---
+      std::cout << "  Sampling colors at corners..." << std::endl;
+      cv::Mat frame_lab;
+      cv::cvtColor(clean_frame_to_save, frame_lab, cv::COLOR_BGR2Lab); // Convert clean frame to Lab
 
+      // Define sampling radius (adjust as needed)
+      int sample_radius = 3; // e.g., 3 pixels
+
+      // Sample Lab color at each corner
+      cv::Vec3f lab_tl = getAverageLab(frame_lab, topLeft, sample_radius);
+      cv::Vec3f lab_tr = getAverageLab(frame_lab, topRight, sample_radius);
+      cv::Vec3f lab_bl = getAverageLab(frame_lab, bottomLeft, sample_radius);
+      cv::Vec3f lab_br = getAverageLab(frame_lab, bottomRight, sample_radius);
+
+      if (bDebug) {
+        std::cout << std::fixed << std::setprecision(1);
+        std::cout << "  Debug: Sampled TL Lab: [" << lab_tl[0] << ","
+                  << lab_tl[1] << "," << lab_tl[2] << "]" << std::endl;
+        std::cout << "  Debug: Sampled TR Lab: [" << lab_tr[0] << ","
+                  << lab_tr[1] << "," << lab_tr[2] << "]" << std::endl;
+        std::cout << "  Debug: Sampled BL Lab: [" << lab_bl[0] << ","
+                  << lab_bl[1] << "," << lab_bl[2] << "]" << std::endl;
+        std::cout << "  Debug: Sampled BR Lab: [" << lab_br[0] << ","
+                  << lab_br[1] << "," << lab_br[2] << "]" << std::endl;
+      }
+
+      // Basic sanity check on sampled colors (optional)
+      if (lab_tl[0] < 0 || lab_tr[0] < 0 || lab_bl[0] < 0 || lab_br[0] < 0) {
+        std::cerr << "Warning: One or more sampled Lab colors seem invalid (L "
+                     "component < 0)."
+                  << std::endl;
+        // Decide whether to proceed or warn user more strongly
+      }
+
+      // --- Save Snapshot ---
+      std::cout << "  Saving snapshot..." << std::endl;
+      bool saved_image = false;
+     
       if (bDebug) {        
         saved_image = cv::imwrite(CALIB_SNAPSHOT_DEBUG_PATH, display_frame);
       } else {        
@@ -581,18 +649,18 @@ void runInteractiveCalibration(int camera_index) {
       if (!saved_image)
         std::cerr << "Error: Failed to save snapshot!" << std::endl;
 
+      // --- Save Config (including colors) ---
+      std::cout << "  Saving config file..." << std::endl;
       if (!saveCornerConfig(CALIB_CONFIG_PATH, topLeft, topRight, bottomLeft,
-                            bottomRight, frame_width, frame_height)) {
-        std::cerr << "Error: Failed to save config!" << std::endl;
+                            bottomRight, frame_width, frame_height, lab_tl,
+                            lab_tr, lab_bl, lab_br)) {
+        std::cerr << "Error: Failed to save config to " << CALIB_CONFIG_PATH
+                  << std::endl;
       }
+
       std::cout << "Save complete." << std::endl;
-    }
-    // --- REMOVED the explicit getWindowProperty check ---
+    }   
   }
-
-  // --- Output Final Coordinates/Percentages (Same as before) ---
-  // ...
-
   cap.release();
   cv::destroyAllWindows();
   std::cout << "Calibration window closed." << std::endl;
