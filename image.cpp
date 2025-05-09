@@ -1396,8 +1396,6 @@ Vec3f getAverageLab(const Mat &image_lab, Point2f center, int radius) {
     // Return default Lab (e.g., mid-gray) if no valid pixels found
     return Vec3f(128.0f, 128.0f, 128.0f);
   }
-  return Vec3f(sum[0] / count, sum[1] / count,
-               sum[2] / count); // <-- Still Mean!
 }
 
 // Function to process the Go board image and determine the board state
