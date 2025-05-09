@@ -16,6 +16,15 @@
 
 using namespace std;
 using namespace cv;
+
+
+const float MAX_DIST_STONE_CALIB_PHASE3 =
+    35.0f; // Max Lab distance for a sample to be considered a stone matching
+           // its calibrated color
+const float MAX_DIST_BOARD_CALIB_PHASE3 =
+    45.0f; // Max Lab distance for a sample to be considered board matching its
+           // calibrated color
+
 struct Line {
   double value; // y for horizontal, x for vertical
   double angle;
@@ -43,8 +52,153 @@ struct LineMatch {
   }
 };
 
-
 bool compareLines(const Line &a, const Line &b) { return a.value < b.value; }
+
+// Forward declarations for static helper functions if defined later
+
+static int classifySingleIntersectionByDistance(
+    const cv::Vec3f &intersection_lab_color, const cv::Vec3f &avg_black_calib,
+    const cv::Vec3f &avg_white_calib, const cv::Vec3f &board_calib_lab);
+
+static void performDirectClassification(
+    const std::vector<cv::Vec3f> &average_lab_values,
+    const CalibrationData &calib_data,
+    const std::vector<cv::Point2f> &intersection_points, int num_intersections,
+    const cv::Mat &original_bgr_image_for_drawing, cv::Mat &board_state_output,
+    cv::Mat &board_with_stones_output);
+
+
+//====================================================================//
+
+// Function to sample a region around a point and get the average Lab
+// NOTE: Assumes input image is already in Lab format (CV_8UC3)
+Vec3f getAverageLab(const Mat &image_lab, Point2f center, int radius) {
+  Vec3d sum(0.0, 0.0, 0.0);
+  std::vector<uchar> l_values;
+  std::vector<uchar> a_values;
+  std::vector<uchar> b_values;
+
+  // Define the square boundary for sampling
+  int x_min = max(0, static_cast<int>(center.x - radius));
+  int x_max = min(image_lab.cols - 1, static_cast<int>(center.x + radius));
+  int y_min = max(0, static_cast<int>(center.y - radius));
+  int y_max = min(image_lab.rows - 1, static_cast<int>(center.y + radius));
+
+  for (int y = y_min; y <= y_max; ++y) {
+    for (int x = x_min; x <= x_max; ++x) {
+      // Optional: Check if the pixel is within the circular radius
+      if (std::pow(x - center.x, 2) + std::pow(y - center.y, 2) <=
+          std::pow(radius, 2)) {
+        Vec3b lab = image_lab.at<Vec3b>(y, x);
+        l_values.push_back(lab[0]); // L
+        a_values.push_back(lab[1]); // a
+        b_values.push_back(lab[2]); // b
+      }
+    }
+  }
+
+  size_t count = l_values.size(); // Number of pixels sampled
+
+  if (count > 0) {
+    // Sort each channel's values independently
+    std::sort(l_values.begin(), l_values.end());
+    std::sort(a_values.begin(), a_values.end());
+    std::sort(b_values.begin(), b_values.end());
+
+    // Find the median index
+    size_t mid_index = count / 2;
+
+    // Extract the median value for each channel
+    // (Using the middle element - simple approach for even/odd counts)
+    float median_l = static_cast<float>(l_values[mid_index]);
+    float median_a = static_cast<float>(a_values[mid_index]);
+    float median_b = static_cast<float>(b_values[mid_index]);
+
+    return Vec3f(median_l, median_a, median_b);
+  } else {
+    // Return default Lab (e.g., mid-gray) if no valid pixels found
+    return Vec3f(128.0f, 128.0f, 128.0f);
+  }
+}
+
+
+std::vector<cv::Point2f>
+loadCornersFromConfigFile(const std::string &config_path) {
+  std::vector<cv::Point2f> corners;
+  std::ifstream configFile(config_path);
+  if (!configFile.is_open()) {
+    if (bDebug)
+      std::cout << "Debug (loadCornersFromConfigFile): Config file '"
+                << config_path << "' not found." << std::endl;
+    return corners; // Return empty vector
+  }
+
+  if (bDebug)
+    std::cout << "Debug (loadCornersFromConfigFile): Found config file: "
+              << config_path << ". Attempting to parse corners." << std::endl;
+  std::map<std::string, std::string> config_data;
+  std::string line;
+  try {
+    while (getline(configFile, line)) {
+      line.erase(0, line.find_first_not_of(" \t\n\r\f\v"));
+      line.erase(line.find_last_not_of(" \t\n\r\f\v") + 1);
+      if (line.empty() || line[0] == '#')
+        continue;
+
+      size_t equals_pos = line.find('=');
+      if (equals_pos != std::string::npos) {
+        std::string key = line.substr(0, equals_pos);
+        std::string value = line.substr(equals_pos + 1);
+        key.erase(0, key.find_first_not_of(" \t"));
+        key.erase(key.find_last_not_of(" \t") + 1);
+        value.erase(0, value.find_first_not_of(" \t"));
+        value.erase(value.find_last_not_of(" \t") + 1);
+        config_data[key] = value;
+      }
+    }
+    configFile.close();
+
+    // Check if all required pixel coordinate keys exist
+    if (config_data.count("TL_X_PX") && config_data.count("TL_Y_PX") &&
+        config_data.count("TR_X_PX") && config_data.count("TR_Y_PX") &&
+        config_data.count("BL_X_PX") && config_data.count("BL_Y_PX") &&
+        config_data.count("BR_X_PX") && config_data.count("BR_Y_PX")) {
+      cv::Point2f tl(std::stof(config_data["TL_X_PX"]),
+                     std::stof(config_data["TL_Y_PX"]));
+      cv::Point2f tr(std::stof(config_data["TR_X_PX"]),
+                     std::stof(config_data["TR_Y_PX"]));
+      // IMPORTANT: Config file saves BL before BR based on previous logic, but
+      // perspective expects TL, TR, BR, BL Let's load them based on key names
+      // and return in the standard order.
+      cv::Point2f bl(std::stof(config_data["BL_X_PX"]),
+                     std::stof(config_data["BL_Y_PX"]));
+      cv::Point2f br(std::stof(config_data["BR_X_PX"]),
+                     std::stof(config_data["BR_Y_PX"]));
+
+      corners = {tl, tr, br, bl}; // Standard order: TL, TR, BR, BL
+      if (bDebug)
+        std::cout << "Debug (loadCornersFromConfigFile): Successfully loaded "
+                     "corners from config file."
+                  << std::endl;
+
+    } else {
+      if (bDebug)
+        std::cerr << "Warning (loadCornersFromConfigFile): Config file missing "
+                     "one or more pixel coordinate keys (_PX)."
+                  << std::endl;
+    }
+
+  } catch (const std::exception &e) {
+    if (bDebug)
+      std::cerr
+          << "Warning (loadCornersFromConfigFile): Error parsing config file '"
+          << config_path << "': " << e.what() << std::endl;
+    if (configFile.is_open())
+      configFile.close();
+    corners.clear(); // Ensure empty vector on error
+  }
+  return corners;
+}
 
 static int classifyIntersectionByCalibration(
     const cv::Vec3f &intersection_lab_color,
@@ -407,6 +561,7 @@ vector<Point2f> getBoardCornersCorrected(const Mat &image) {
               height * (100 - dest_percent) / 100.0f)};
   return output_corners;
 }
+
 Mat correctPerspective(const Mat &image) {
   int width = image.cols;
   int height = image.rows;
@@ -1018,63 +1173,6 @@ int calculateAdaptiveSampleRadius(float board_pixel_width,
   return radius;
 }
 
-// Function to sample a region around a point and get the average Lab
-// NOTE: Assumes input image is already in Lab format (CV_8UC3)
-Vec3f getAverageLab(const Mat &image_lab, Point2f center, int radius) {
-  Vec3d sum(0.0, 0.0, 0.0);
-  std::vector<uchar> l_values;
-  std::vector<uchar> a_values;
-  std::vector<uchar> b_values;
-
-  // Define the square boundary for sampling
-  int x_min = max(0, static_cast<int>(center.x - radius));
-  int x_max = min(image_lab.cols - 1, static_cast<int>(center.x + radius));
-  int y_min = max(0, static_cast<int>(center.y - radius));
-  int y_max = min(image_lab.rows - 1, static_cast<int>(center.y + radius));
-
-  for (int y = y_min; y <= y_max; ++y) {
-    for (int x = x_min; x <= x_max; ++x) {
-      // Optional: Check if the pixel is within the circular radius
-      if (std::pow(x - center.x, 2) + std::pow(y - center.y, 2) <=
-          std::pow(radius, 2)) {
-        Vec3b lab = image_lab.at<Vec3b>(y, x);
-        l_values.push_back(lab[0]); // L
-        a_values.push_back(lab[1]); // a
-        b_values.push_back(lab[2]); // b
-      }
-    }
-  }
-
-  size_t count = l_values.size(); // Number of pixels sampled
-
-  if (count > 0) {
-    // Sort each channel's values independently
-    std::sort(l_values.begin(), l_values.end());
-    std::sort(a_values.begin(), a_values.end());
-    std::sort(b_values.begin(), b_values.end());
-
-    // Find the median index
-    size_t mid_index = count / 2;
-
-    // Extract the median value for each channel
-    // (Using the middle element - simple approach for even/odd counts)
-    float median_l = static_cast<float>(l_values[mid_index]);
-    float median_a = static_cast<float>(a_values[mid_index]);
-    float median_b = static_cast<float>(b_values[mid_index]);
-
-    return Vec3f(median_l, median_a, median_b);
-  } else {
-    // Return default Lab (e.g., mid-gray) if no valid pixels found
-    return Vec3f(128.0f, 128.0f, 128.0f);
-  }
-}
-
-const float MAX_DIST_STONE_CALIB_PHASE3 =
-    35.0f; // Max Lab distance for a sample to be considered a stone matching
-           // its calibrated color
-const float MAX_DIST_BOARD_CALIB_PHASE3 =
-    45.0f; // Max Lab distance for a sample to be considered board matching its
-           // calibrated color
 
 // --- NEW HELPER: Classify a single intersection's Lab color using calibration
 // data --- This was the smaller helper from the previous step, still useful.
@@ -1082,8 +1180,9 @@ static int classifySingleIntersectionByDistance(
     const cv::Vec3f &intersection_lab_color, const cv::Vec3f &avg_black_calib,
     const cv::Vec3f &avg_white_calib, const cv::Vec3f &board_calib_lab) {
   if (intersection_lab_color[0] <
-      0) {    // Check for invalid sample from getAverageLab
-    return 0; // Default to empty
+      0) { // Check for invalid sample from getAverageLab
+    THROWGEMERROR(std::string("color cannot be negative ") +
+                  Num2Str(intersection_lab_color[0]).str());
   }
 
   float dist_b = cv::norm(intersection_lab_color, avg_black_calib, cv::NORM_L2);
@@ -1378,80 +1477,3 @@ void processGoBoard(
               << std::endl;
 }
 
-std::vector<cv::Point2f>
-loadCornersFromConfigFile(const std::string &config_path) {
-  std::vector<cv::Point2f> corners;
-  std::ifstream configFile(config_path);
-  if (!configFile.is_open()) {
-    if (bDebug)
-      std::cout << "Debug (loadCornersFromConfigFile): Config file '"
-                << config_path << "' not found." << std::endl;
-    return corners; // Return empty vector
-  }
-
-  if (bDebug)
-    std::cout << "Debug (loadCornersFromConfigFile): Found config file: "
-              << config_path << ". Attempting to parse corners." << std::endl;
-  std::map<std::string, std::string> config_data;
-  std::string line;
-  try {
-    while (getline(configFile, line)) {
-      line.erase(0, line.find_first_not_of(" \t\n\r\f\v"));
-      line.erase(line.find_last_not_of(" \t\n\r\f\v") + 1);
-      if (line.empty() || line[0] == '#')
-        continue;
-
-      size_t equals_pos = line.find('=');
-      if (equals_pos != std::string::npos) {
-        std::string key = line.substr(0, equals_pos);
-        std::string value = line.substr(equals_pos + 1);
-        key.erase(0, key.find_first_not_of(" \t"));
-        key.erase(key.find_last_not_of(" \t") + 1);
-        value.erase(0, value.find_first_not_of(" \t"));
-        value.erase(value.find_last_not_of(" \t") + 1);
-        config_data[key] = value;
-      }
-    }
-    configFile.close();
-
-    // Check if all required pixel coordinate keys exist
-    if (config_data.count("TL_X_PX") && config_data.count("TL_Y_PX") &&
-        config_data.count("TR_X_PX") && config_data.count("TR_Y_PX") &&
-        config_data.count("BL_X_PX") && config_data.count("BL_Y_PX") &&
-        config_data.count("BR_X_PX") && config_data.count("BR_Y_PX")) {
-      cv::Point2f tl(std::stof(config_data["TL_X_PX"]),
-                     std::stof(config_data["TL_Y_PX"]));
-      cv::Point2f tr(std::stof(config_data["TR_X_PX"]),
-                     std::stof(config_data["TR_Y_PX"]));
-      // IMPORTANT: Config file saves BL before BR based on previous logic, but
-      // perspective expects TL, TR, BR, BL Let's load them based on key names
-      // and return in the standard order.
-      cv::Point2f bl(std::stof(config_data["BL_X_PX"]),
-                     std::stof(config_data["BL_Y_PX"]));
-      cv::Point2f br(std::stof(config_data["BR_X_PX"]),
-                     std::stof(config_data["BR_Y_PX"]));
-
-      corners = {tl, tr, br, bl}; // Standard order: TL, TR, BR, BL
-      if (bDebug)
-        std::cout << "Debug (loadCornersFromConfigFile): Successfully loaded "
-                     "corners from config file."
-                  << std::endl;
-
-    } else {
-      if (bDebug)
-        std::cerr << "Warning (loadCornersFromConfigFile): Config file missing "
-                     "one or more pixel coordinate keys (_PX)."
-                  << std::endl;
-    }
-
-  } catch (const std::exception &e) {
-    if (bDebug)
-      std::cerr
-          << "Warning (loadCornersFromConfigFile): Error parsing config file '"
-          << config_path << "': " << e.what() << std::endl;
-    if (configFile.is_open())
-      configFile.close();
-    corners.clear(); // Ensure empty vector on error
-  }
-  return corners;
-}
