@@ -620,9 +620,7 @@ void runInteractiveCalibration(int camera_index) {
           (quad_height_left + quad_height_right) * 0.5f;
 
       int adaptive_sample_radius = calculateAdaptiveSampleRadius(
-          board_pixel_width_approx, board_pixel_height_approx,
-          0.25f); // Use factor 0.25 (1/4 grid)
-
+          board_pixel_width_approx, board_pixel_height_approx);
       // Sample corner colors
       std::cout << "  Sampling corner stone colors..." << std::endl;
       cv::Vec3f lab_tl = getAverageLab(frame_lab, topLeft, adaptive_sample_radius);
