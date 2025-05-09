@@ -83,6 +83,24 @@ struct VideoDeviceInfo {
       supported_format_details; // NEW: Will store "FORMAT (WxH, WxH...)"
 };
 
+struct CalibrationData {
+  // Corners in TL, TR, BR, BL order (expected by getPerspectiveTransform)
+  std::vector<cv::Point2f> corners;
+  // Sampled Lab colors at corners
+  cv::Vec3f lab_tl = {-1.0f, -1.0f, -1.0f}; // Use -1.0f to indicate not loaded
+  cv::Vec3f lab_tr = {-1.0f, -1.0f, -1.0f};
+  cv::Vec3f lab_bl = {-1.0f, -1.0f, -1.0f};
+  cv::Vec3f lab_br = {-1.0f, -1.0f, -1.0f};
+  // Dimensions from config (optional, but can be useful)
+  int image_width = 0;
+  int image_height = 0;
+  // Flags
+  bool corners_loaded = false;
+  bool colors_loaded = false;
+  bool dimensions_loaded = false;
+};
+
+
 // Structure to represent a single move, including captured stones
 struct Move {
   int player; // 1 for Black, 2 for White, 0 for remove
@@ -143,7 +161,8 @@ std::vector<cv::Point2f>
 loadCornersFromConfigFile(const std::string &config_path);
 
 // Declare utility function (defined in image.cpp)
-cv::Vec3f getAverageLab(const cv::Mat &image_lab, cv::Point2f center, int radius);
-
+cv::Vec3f getAverageLab(const cv::Mat &image_lab, cv::Point2f center,
+                        int radius);
+CalibrationData loadCalibrationData(const std::string &config_path);
 
 #endif // UTILITY_H

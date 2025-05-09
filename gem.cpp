@@ -365,71 +365,104 @@ void calibrationWorkflow(const std::string &device_path) {
 void testCalibrationConfigWorkflow() {
   std::cout << "Testing Calibration Config..." << std::endl;
 
-  // 1. Determine snapshot file path
+  // 1. Load calibration data (corners and colors)
+  std::cout << "  Loading config file: " << CALIB_CONFIG_PATH << std::endl;
+  CalibrationData data =
+      loadCalibrationData(CALIB_CONFIG_PATH); // Uses new function
+
+  // Check if essential data was loaded
+  if (!data.corners_loaded) {
+    THROWGEMERROR("Failed to load corner data from config file: " +
+                  CALIB_CONFIG_PATH);
+  }
+  if (!data.colors_loaded) {
+    // Don't throw error here, maybe calibration was done before color sampling
+    // was added
+    std::cout << "  Warning: Color calibration data not found or incomplete in "
+                 "config file."
+              << std::endl;
+    // Allow test to proceed showing only corners
+  }
+  if (!data.dimensions_loaded) {
+    std::cout << "  Warning: Image dimensions not found in config file."
+              << std::endl;
+  }
+
+  // Print loaded data
+  std::cout << "  --- Loaded Calibration Data ---" << std::endl;
+  if (data.dimensions_loaded) {
+    std::cout << "  Dimensions: " << data.image_width << "x"
+              << data.image_height << std::endl;
+  }
+  std::cout << "  Corners Loaded: " << (data.corners_loaded ? "Yes" : "No")
+            << std::endl;
+  if (data.corners_loaded) {
+    std::cout << "    TL: " << data.corners[0] << std::endl;
+    std::cout << "    TR: " << data.corners[1] << std::endl;
+    std::cout << "    BR: " << data.corners[2] << std::endl;
+    std::cout << "    BL: " << data.corners[3] << std::endl;
+  }
+  std::cout << "  Colors Loaded: " << (data.colors_loaded ? "Yes" : "No")
+            << std::endl;
+  if (data.colors_loaded) {
+    std::cout << std::fixed << std::setprecision(1);
+    std::cout << "    TL Lab: [" << data.lab_tl[0] << "," << data.lab_tl[1]
+              << "," << data.lab_tl[2] << "]" << std::endl;
+    std::cout << "    TR Lab: [" << data.lab_tr[0] << "," << data.lab_tr[1]
+              << "," << data.lab_tr[2] << "]" << std::endl;
+    std::cout << "    BL Lab: [" << data.lab_bl[0] << "," << data.lab_bl[1]
+              << "," << data.lab_bl[2] << "]" << std::endl;
+    std::cout << "    BR Lab: [" << data.lab_br[0] << "," << data.lab_br[1]
+              << "," << data.lab_br[2] << "]" << std::endl;
+  }
+  std::cout << "  -------------------------------" << std::endl;
+
+  // 2. Determine snapshot file path and load image
   std::string snapshot_path =
       bDebug ? CALIB_SNAPSHOT_DEBUG_PATH : CALIB_SNAPSHOT_PATH;
   std::cout << "  Loading snapshot image: " << snapshot_path << std::endl;
-
-  // 2. Load the snapshot image
   cv::Mat image = cv::imread(snapshot_path);
   if (image.empty()) {
     THROWGEMERROR("Failed to load calibration snapshot image: " +
                   snapshot_path);
   }
 
-  // 3. Load corner coordinates from config file
-  std::cout << "  Loading config file: " << CALIB_CONFIG_PATH << std::endl;
-  std::vector<cv::Point2f> corners =
-      loadCornersFromConfigFile(CALIB_CONFIG_PATH); // Uses new function
-
-  if (corners.size() != 4) {
-    THROWGEMERROR("Failed to load valid corner data (expected 4 points) from "
-                  "config file: " +
-                  CALIB_CONFIG_PATH);
-  } else {
-    if (bDebug) {
-      std::cout << "  Debug: Loaded Corners (TL, TR, BR, BL): " << corners[0]
-                << ", " << corners[1] << ", " << corners[2] << ", "
-                << corners[3] << std::endl;
-    }
-  }
-
-  // 4. Choose marker color and draw markers
-  // Calibration OSD uses: Red TL, Blue TR, Yellow BR, Magenta BL
-  // Let's use different colors for verification:
+  // 3. Draw markers on image using loaded corners
+  std::cout << "  Drawing markers on snapshot..." << std::endl;
+  // Colors for markers (same as before)
   cv::Scalar marker_color_tl =
-      bDebug ? cv::Scalar(0, 255, 0)
-             : cv::Scalar(0, 0, 255); // Debug: Green, Normal: Red
+      bDebug ? cv::Scalar(0, 255, 0) : cv::Scalar(0, 0, 255);
   cv::Scalar marker_color_tr =
-      bDebug ? cv::Scalar(255, 255, 0)
-             : cv::Scalar(255, 0, 0); // Debug: Cyan, Normal: Blue
+      bDebug ? cv::Scalar(255, 255, 0) : cv::Scalar(255, 0, 0);
   cv::Scalar marker_color_br =
-      bDebug ? cv::Scalar(0, 165, 255)
-             : cv::Scalar(0, 255, 255); // Debug: Orange, Normal: Yellow
+      bDebug ? cv::Scalar(0, 165, 255) : cv::Scalar(0, 255, 255);
   cv::Scalar marker_color_bl =
-      bDebug ? cv::Scalar(255, 0, 128)
-             : cv::Scalar(255, 0, 255); // Debug: Pink, Normal: Magenta
-
+      bDebug ? cv::Scalar(255, 0, 128) : cv::Scalar(255, 0, 255);
   int marker_size = 20;
   int marker_thickness = 2;
 
-  // Draw crosses at the corners
-  // Note: corners vector order is TL, TR, BR, BL from loadCornersFromConfigFile
-  cv::drawMarker(image, corners[0], marker_color_tl, cv::MARKER_CROSS,
-                 marker_size, marker_thickness); // TL
-  cv::drawMarker(image, corners[1], marker_color_tr, cv::MARKER_CROSS,
-                 marker_size, marker_thickness); // TR
-  cv::drawMarker(image, corners[2], marker_color_br, cv::MARKER_CROSS,
-                 marker_size, marker_thickness); // BR
-  cv::drawMarker(image, corners[3], marker_color_bl, cv::MARKER_CROSS,
-                 marker_size, marker_thickness); // BL
+  if (data.corners_loaded) {
+    cv::drawMarker(image, data.corners[0], marker_color_tl, cv::MARKER_CROSS,
+                   marker_size, marker_thickness); // TL
+    cv::drawMarker(image, data.corners[1], marker_color_tr, cv::MARKER_CROSS,
+                   marker_size, marker_thickness); // TR
+    cv::drawMarker(image, data.corners[2], marker_color_br, cv::MARKER_CROSS,
+                   marker_size, marker_thickness); // BR
+    cv::drawMarker(image, data.corners[3], marker_color_bl, cv::MARKER_CROSS,
+                   marker_size, marker_thickness); // BL
+  } else {
+    std::cout << "  Warning: Cannot draw markers as corners were not loaded."
+              << std::endl;
+  }
 
-  // 5. Display the image
+  // 4. Display the image
   std::string window_title = "Calibration Test Verification";
   cv::imshow(window_title, image);
-  std::cout << "  Displaying image with marked corners. Press any key to close."
+  std::cout << "  Displaying image. Press any key or close window to exit."
             << std::endl;
   cv::waitKey(0);
+  cv::destroyAllWindows();
+
   std::cout << "Calibration Test Finished." << std::endl;
 }
 
