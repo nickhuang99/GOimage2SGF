@@ -24,19 +24,19 @@ struct Line {
 bool compareLines(const Line &a, const Line &b) { return a.value < b.value; }
 
 // Helper structure for Lab classification
-struct ClusterInfoLab {
-  int index;
-  float l, a, b; // Lab components
-  float black_score;
-  float white_score;
-  float board_score;
+// struct ClusterInfoLab {
+//   int index;
+//   float l, a, b; // Lab components
+//   float black_score;
+//   float white_score;
+//   float board_score;
 
-  ClusterInfoLab(int idx, float l_val, float a_val, float b_val)
-      : index(idx), l(l_val), a(a_val), b(b_val),
-        black_score(std::numeric_limits<float>::max()),
-        white_score(std::numeric_limits<float>::max()),
-        board_score(std::numeric_limits<float>::max()) {}
-};
+//   ClusterInfoLab(int idx, float l_val, float a_val, float b_val)
+//       : index(idx), l(l_val), a(a_val), b(b_val),
+//         black_score(std::numeric_limits<float>::max()),
+//         white_score(std::numeric_limits<float>::max()),
+//         board_score(std::numeric_limits<float>::max()) {}
+// };
 
 // --- Existing static helper (slightly modified) ---
 // Tries to load corners and checks dimensions. Returns true on success, false
@@ -126,185 +126,52 @@ static bool loadCornersAndCheckDims(
   return false; // Should not be reached
 }
 
-// Function to classify clusters based on Lab centers
-// NOTE: This requires tuning thresholds based on typical Lab values from your
-// images!
-void classifyClustersLab(const Mat &centers, int &label_black, int &label_white,
-                         int &label_board) {
+static int classifyIntersectionByCalibration(
+    const cv::Vec3f &intersection_lab_color,
+    const cv::Vec3f &avg_black_calib, // Pre-calculated average black from calib
+    const cv::Vec3f &avg_white_calib, // Pre-calculated average white from calib
+    const cv::Vec3f &board_calib_lab) // Direct board color from calib
+{
+  const float MAX_DIST_STONE_CALIB =
+      35.0f; // Max Lab distance for a sample to be considered a stone matching
+             // its calibrated color
+  const float MAX_DIST_BOARD_CALIB =
+      45.0f; // Max Lab distance for a sample to be considered board matching
+             // its calibrated color
 
-  if (centers.rows != 3) {
-    std::cerr << "Error: Expected 3 cluster centers, but found " << centers.rows
-              << std::endl;
-    label_black = -1;
-    label_white = -1;
-    label_board = -1;
-    THROWGEMERROR(std::string("Expected 3 cluster centers, found ") +
-                  Num2Str(centers.rows).str());
-    return;
-  }
+  float dist_b = cv::norm(intersection_lab_color, avg_black_calib, cv::NORM_L2);
+  float dist_w = cv::norm(intersection_lab_color, avg_white_calib, cv::NORM_L2);
+  float dist_empty =
+      cv::norm(intersection_lab_color, board_calib_lab, cv::NORM_L2);
 
-  std::vector<ClusterInfoLab> cluster_data;
-  for (int i = 0; i < centers.rows; ++i) {
-    cluster_data.emplace_back(i, centers.at<float>(i, 0),
-                              centers.at<float>(i, 1), centers.at<float>(i, 2));
-  }
+  float min_dist = std::min({dist_b, dist_w, dist_empty});
+  int classification = 0; // Default to empty (board)
 
-  // --- Scoring Parameters for Lab (NEEDS TUNING) ---
-  const float black_l_thresh = 90.0f;  // Increased from 70
-  const float white_l_thresh = 210.0f; // INCREASED SIGNIFICANTLY from 190
-  const float stone_ab_thresh = 15.0f; // DECREASED from 30
-  const float board_ab_thresh = 35.0f; // Keep for now
-  if (bDebug) {
-    cout << "black_l_thresh:" << black_l_thresh << endl
-         << "white_l_thresh:" << white_l_thresh << endl
-         << "stone_ab_thresh:" << stone_ab_thresh << endl
-         << "board_ab_thresh:" << board_ab_thresh << endl;
-  }
-  // --- Calculate Scores for each cluster ---
-  for (auto &cluster : cluster_data) {
-    float da = std::abs(cluster.a - 128.0f); // Distance from neutral 'a'
-    float db = std::abs(cluster.b - 128.0f); // Distance from neutral 'b'
-    float chromatic_dist =
-        std::sqrt(da * da + db * db); // How "colorful" is it?
-
-    // Score for Black: Low L*, Low a*/b* (close to 128)
-    // Penalize high L* and high chromatic distance
-    cluster.black_score =
-        (cluster.l / 255.0f) + (chromatic_dist / 180.0f); // Normalize roughly
-    if (cluster.l > black_l_thresh)
-      cluster.black_score += 0.5f; // Penalty if too bright
-    if (chromatic_dist > stone_ab_thresh)
-      cluster.black_score += 0.5f; // Penalty if too colorful
-
-    // Score for White: High L*, Low a*/b* (close to 128)
-    // Penalize low L* and high chromatic distance
-    cluster.white_score = ((255.0f - cluster.l) / 255.0f) +
-                          (chromatic_dist / 180.0f); // Normalize roughly
-    if (cluster.l < white_l_thresh)
-      cluster.white_score += 0.5f; // Penalty if too dark
-    if (chromatic_dist > stone_ab_thresh)
-      cluster.white_score += 0.5f; // Penalty if too colorful
-
-    // Score for Board: Mid L*, Higher a*/b* (away from 128)
-    // Penalize very low/high L* and low chromatic distance
-    float l_mid_penalty =
-        std::abs(cluster.l - 128.0f) / 128.0f; // Penalize distance from mid-L*
-    float chromatic_low_penalty =
-        (chromatic_dist < board_ab_thresh)
-            ? (board_ab_thresh - chromatic_dist) / board_ab_thresh
-            : 0.0f; // Penalize low color
-    cluster.board_score = l_mid_penalty + chromatic_low_penalty *
-                                              1.5f; // Weight low color penalty
-  }
-
-  // --- Assign Labels based on lowest scores (same logic as before) ---
-  std::sort(cluster_data.begin(), cluster_data.end(),
-            [](const ClusterInfoLab &a, const ClusterInfoLab &b) {
-              return a.black_score < b.black_score;
-            });
-  label_black = cluster_data[0].index;
-
-  std::sort(cluster_data.begin(), cluster_data.end(),
-            [&](const ClusterInfoLab &a, const ClusterInfoLab &b) {
-              if (a.index == label_black)
-                return false;
-              if (b.index == label_black)
-                return true;
-              return a.white_score < b.white_score;
-            });
-  label_white = (cluster_data[0].index != label_black) ? cluster_data[0].index
-                                                       : cluster_data[1].index;
-
-  // Find best candidate for Board (excluding Black and White) - simplified
-  // fallback assignment
-  label_board = -1; // Initialize
-  for (const auto &cluster : cluster_data) {
-    if (cluster.index != label_black && cluster.index != label_white) {
-      label_board = cluster.index;
-      break;
-    }
-  }
-  // Add a check if board label wasn't found (should not happen with 3 clusters)
-  if (label_board == -1) {
-    std::cerr << "Warning: Could not assign a unique board label!" << std::endl;
-    // Handle error case appropriately, maybe assign the last remaining index if
-    // needed
-    if (cluster_data.size() == 3) { // Basic fallback for 3 clusters
-      for (int i = 0; i < 3; ++i)
-        if (i != label_black && i != label_white)
-          label_board = i;
+  if (min_dist == dist_b && dist_b < MAX_DIST_STONE_CALIB) {
+    classification = 1; // Black
+  } else if (min_dist == dist_w && dist_w < MAX_DIST_STONE_CALIB) {
+    classification = 2; // White
+  } else if (min_dist == dist_empty && dist_empty < MAX_DIST_BOARD_CALIB) {
+    classification = 0; // Empty
+  } else {
+    // Uncertain or too far from all references, classify as empty
+    classification = 0;
+    if (bDebug) {
+      // This case might be interesting to log if min_dist wasn't one of the
+      // three, or if it matched but exceeded its threshold. For now, just
+      // default to empty.
     }
   }
 
-  // --- Debug Output (Optional) ---
-  if (bDebug) {
-    std::cout << "\n--- Cluster Classification Scores (Lab) ---\n";
-    std::cout << std::fixed << std::setprecision(3);
-    for (const auto &cluster : cluster_data) {
-      std::cout << "Cluster " << cluster.index << ": Lab(" << cluster.l << ", "
-                << cluster.a << ", " << cluster.b << ")"
-                << " Scores[Blk:" << cluster.black_score
-                << ", Wht:" << cluster.white_score
-                << ", Brd:" << cluster.board_score << "]\n";
-    }
-    // ...(label assignment debug output)...
-    // Sanity check: ensure labels are unique and valid
-    if (label_black == label_white || label_black == label_board ||
-        label_white == label_board || label_black == -1 || label_white == -1 ||
-        label_board == -1) {
-      std::cerr << "Warning: Label assignment resulted in duplicate or invalid "
-                   "labels!\n";
-    }
+  if (bDebug && false) { // Set to true for very verbose per-intersection
+                         // classification details
+    std::cout << "    Sample Lab: " << intersection_lab_color
+              << " D(B):" << std::setw(5) << dist_b << " D(W):" << std::setw(5)
+              << dist_w << " D(E):" << std::setw(5) << dist_empty
+              << " -> Class: " << classification << std::endl;
   }
-}
 
-// Function to find the closest cluster center in Lab space using weighted
-// Euclidean distance
-int findClosestCenterLab(const Vec3f &lab_sample, const Mat &centers) {
-  const int num_clusters = centers.rows;
-  if (num_clusters == 0)
-    return -1;
-
-  // --- Weights for Lab components (TUNABLE PARAMETERS) ---
-  // Since Lab is more perceptually uniform, equal weights might work well.
-  // Or slightly emphasize L* for black/white separation.
-  const float weight_l = 3.0f;
-  const float weight_a = 1.0f;
-  const float weight_b = 1.0f;
-
-  // --- Normalization factors (Using 8-bit ranges) ---
-  // L: 0-255, a: 0-255, b: 0-255. Max difference is 255.
-  const float max_l_diff = 255.0f;
-  const float max_a_diff = 255.0f;
-  const float max_b_diff = 255.0f;
-
-  float min_distance_sq = std::numeric_limits<float>::max();
-  int closest_center_index = -1;
-
-  for (int i = 0; i < num_clusters; ++i) {
-    Vec3f cluster_center(centers.at<float>(i, 0), centers.at<float>(i, 1),
-                         centers.at<float>(i, 2));
-
-    // Calculate normalized differences for each component
-    // No special handling needed for a* and b* like Hue
-    float dl_normalized =
-        std::abs(lab_sample[0] - cluster_center[0]) / max_l_diff;
-    float da_normalized =
-        std::abs(lab_sample[1] - cluster_center[1]) / max_a_diff;
-    float db_normalized =
-        std::abs(lab_sample[2] - cluster_center[2]) / max_b_diff;
-
-    // Calculate weighted squared Euclidean distance
-    float distance_sq = weight_l * std::pow(dl_normalized, 2) +
-                        weight_a * std::pow(da_normalized, 2) +
-                        weight_b * std::pow(db_normalized, 2);
-
-    if (distance_sq < min_distance_sq) {
-      min_distance_sq = distance_sq;
-      closest_center_index = i;
-    }
-  }
-  return closest_center_index;
+  return classification;
 }
 
 // --- NEW HELPER FUNCTION to load corners from config ---
@@ -400,123 +267,178 @@ static bool loadCornersFromConfig(const std::string &config_path,
   return false; // Default return if conditions not met
 }
 
-CalibrationData loadCalibrationData(const std::string& config_path) {
-  CalibrationData data; // Initialize with default values (flags false)
+CalibrationData loadCalibrationData(const std::string &config_path) {
+  CalibrationData data;
   std::ifstream configFile(config_path);
   if (!configFile.is_open()) {
-      if (bDebug) std::cerr << "Debug (loadCalibrationData): Config file not found: " << config_path << std::endl;
-      return data; // Return default data
+    if (bDebug)
+      std::cerr << "Debug (loadCalibrationData): Config file not found: "
+                << config_path << std::endl;
+    return data;
   }
 
-  if (bDebug) std::cout << "Debug (loadCalibrationData): Parsing config file: " << config_path << std::endl;
-
+  if (bDebug)
+    std::cout << "Debug (loadCalibrationData): Parsing config file: "
+              << config_path << std::endl;
   std::map<std::string, std::string> config_map;
   std::string line;
   int line_num = 0;
-
-  // --- Read file into map ---
   while (getline(configFile, line)) {
-      line_num++;
-      line.erase(0, line.find_first_not_of(" \t\n\r\f\v"));
-      line.erase(line.find_last_not_of(" \t\n\r\f\v") + 1);
-      if (line.empty() || line[0] == '#') continue;
-
-      size_t equals_pos = line.find('=');
-      if (equals_pos != std::string::npos) {
-          std::string key = line.substr(0, equals_pos);
-          std::string value = line.substr(equals_pos + 1);
-          // Basic trim
-          key.erase(0, key.find_first_not_of(" \t")); key.erase(key.find_last_not_of(" \t") + 1);
-          value.erase(0, value.find_first_not_of(" \t")); value.erase(value.find_last_not_of(" \t") + 1);
-          config_map[key] = value;
-      } else {
-           if (bDebug) std::cerr << "Warning (loadCalibrationData): Invalid line format (no '=') at line " << line_num << ": " << line << std::endl;
-      }
+    line_num++;
+    line.erase(0, line.find_first_not_of(" \t\n\r\f\v"));
+    line.erase(line.find_last_not_of(" \t\n\r\f\v") + 1);
+    if (line.empty() || line[0] == '#')
+      continue;
+    size_t equals_pos = line.find('=');
+    if (equals_pos != std::string::npos) {
+      std::string key = line.substr(0, equals_pos);
+      std::string value = line.substr(equals_pos + 1);
+      key.erase(0, key.find_first_not_of(" \t"));
+      key.erase(key.find_last_not_of(" \t") + 1);
+      value.erase(0, value.find_first_not_of(" \t"));
+      value.erase(value.find_last_not_of(" \t") + 1);
+      config_map[key] = value;
+    } else {
+      if (bDebug)
+        std::cerr << "Warning (loadCalibrationData): Invalid line format (no "
+                     "'=') at line "
+                  << line_num << ": " << line << std::endl;
+    }
   }
   configFile.close();
 
-  // --- Parse data from map ---
   try {
-      // Parse Dimensions
-      if (config_map.count("ImageWidth") && config_map.count("ImageHeight")) {
-          data.image_width = std::stoi(config_map["ImageWidth"]);
-          data.image_height = std::stoi(config_map["ImageHeight"]);
-          data.dimensions_loaded = true;
-           if (bDebug) std::cout << "  Debug: Loaded Dimensions: " << data.image_width << "x" << data.image_height << std::endl;
-      } else {
-           if (bDebug) std::cerr << "  Warning: ImageWidth or ImageHeight missing from config." << std::endl;
-      }
+    // Parse Dimensions (as in your file)
+    if (config_map.count("ImageWidth") && config_map.count("ImageHeight")) {
+      data.image_width = std::stoi(config_map["ImageWidth"]);
+      data.image_height = std::stoi(config_map["ImageHeight"]);
+      data.dimensions_loaded = true;
+      if (bDebug)
+        std::cout << "  Debug: Loaded Dimensions: " << data.image_width << "x"
+                  << data.image_height << std::endl;
+    } else {
+      if (bDebug)
+        std::cerr << "  Warning: ImageWidth or ImageHeight missing from config."
+                  << std::endl;
+    }
 
-      // Parse Corners (_PX)
-      if (config_map.count("TL_X_PX") && config_map.count("TL_Y_PX") &&
-          config_map.count("TR_X_PX") && config_map.count("TR_Y_PX") &&
-          config_map.count("BL_X_PX") && config_map.count("BL_Y_PX") &&
-          config_map.count("BR_X_PX") && config_map.count("BR_Y_PX"))
-      {
-          cv::Point2f tl(std::stof(config_map["TL_X_PX"]), std::stof(config_map["TL_Y_PX"]));
-          cv::Point2f tr(std::stof(config_map["TR_X_PX"]), std::stof(config_map["TR_Y_PX"]));
-          cv::Point2f bl(std::stof(config_map["BL_X_PX"]), std::stof(config_map["BL_Y_PX"]));
-          cv::Point2f br(std::stof(config_map["BR_X_PX"]), std::stof(config_map["BR_Y_PX"]));
-          data.corners = {tl, tr, br, bl}; // Standard order TL, TR, BR, BL
-          data.corners_loaded = true;
-          if (bDebug) std::cout << "  Debug: Loaded Corners (TL, TR, BR, BL): " << tl << ", " << tr << ", " << br << ", " << bl << std::endl;
-      } else {
-          if (bDebug) std::cerr << "  Warning: One or more corner pixel keys (_PX) missing." << std::endl;
-      }
+    // Parse Corners (_PX) (as in your file)
+    if (config_map.count("TL_X_PX") &&
+        config_map.count("TL_Y_PX") && /* ... all 8 corner keys ... */
+        config_map.count("TR_X_PX") && config_map.count("TR_Y_PX") &&
+        config_map.count("BL_X_PX") && config_map.count("BL_Y_PX") &&
+        config_map.count("BR_X_PX") && config_map.count("BR_Y_PX")) {
+      cv::Point2f tl(std::stof(config_map["TL_X_PX"]),
+                     std::stof(config_map["TL_Y_PX"]));
+      cv::Point2f tr(std::stof(config_map["TR_X_PX"]),
+                     std::stof(config_map["TR_Y_PX"]));
+      cv::Point2f bl(std::stof(config_map["BL_X_PX"]),
+                     std::stof(config_map["BL_Y_PX"]));
+      cv::Point2f br(std::stof(config_map["BR_X_PX"]),
+                     std::stof(config_map["BR_Y_PX"]));
+      data.corners = {tl, tr, br, bl};
+      data.corners_loaded = true;
+      if (bDebug)
+        std::cout << "  Debug: Loaded Corners (TL, TR, BR, BL): " << tl << ", "
+                  << tr << ", " << br << ", " << bl << std::endl;
+    } else {
+      if (bDebug)
+        std::cerr << "  Warning: One or more corner pixel keys (_PX) missing."
+                  << std::endl;
+    }
 
-      // Parse Colors (L, A, B)
-      if (config_map.count("TL_L") && config_map.count("TL_A") && config_map.count("TL_B") &&
-          config_map.count("TR_L") && config_map.count("TR_A") && config_map.count("TR_B") &&
-          config_map.count("BL_L") && config_map.count("BL_A") && config_map.count("BL_B") &&
-          config_map.count("BR_L") && config_map.count("BR_A") && config_map.count("BR_B"))
-      {
-          data.lab_tl[0] = std::stof(config_map["TL_L"]); data.lab_tl[1] = std::stof(config_map["TL_A"]); data.lab_tl[2] = std::stof(config_map["TL_B"]);
-          data.lab_tr[0] = std::stof(config_map["TR_L"]); data.lab_tr[1] = std::stof(config_map["TR_A"]); data.lab_tr[2] = std::stof(config_map["TR_B"]);
-          data.lab_bl[0] = std::stof(config_map["BL_L"]); data.lab_bl[1] = std::stof(config_map["BL_A"]); data.lab_bl[2] = std::stof(config_map["BL_B"]);
-          data.lab_br[0] = std::stof(config_map["BR_L"]); data.lab_br[1] = std::stof(config_map["BR_A"]); data.lab_br[2] = std::stof(config_map["BR_B"]);
-          data.colors_loaded = true;
-           if (bDebug) {
-              std::cout << std::fixed << std::setprecision(1);
-              std::cout << "  Debug: Loaded TL Lab: [" << data.lab_tl[0] << "," << data.lab_tl[1] << "," << data.lab_tl[2] << "]" << std::endl;
-              std::cout << "  Debug: Loaded TR Lab: [" << data.lab_tr[0] << "," << data.lab_tr[1] << "," << data.lab_tr[2] << "]" << std::endl;
-              std::cout << "  Debug: Loaded BL Lab: [" << data.lab_bl[0] << "," << data.lab_bl[1] << "," << data.lab_bl[2] << "]" << std::endl;
-              std::cout << "  Debug: Loaded BR Lab: [" << data.lab_br[0] << "," << data.lab_br[1] << "," << data.lab_br[2] << "]" << std::endl;
-           }
-      } else {
-          if (bDebug) std::cerr << "  Warning: One or more corner Lab color keys (L/A/B) missing." << std::endl;
+    // Parse Corner Colors (L, A, B) (as in your file)
+    if (config_map.count("TL_L") && config_map.count("TL_A") &&
+        config_map.count("TL_B") &&
+        /* ... all 12 corner color keys ... */
+        config_map.count("TR_L") && config_map.count("TR_A") &&
+        config_map.count("TR_B") && config_map.count("BL_L") &&
+        config_map.count("BL_A") && config_map.count("BL_B") &&
+        config_map.count("BR_L") && config_map.count("BR_A") &&
+        config_map.count("BR_B")) {
+      data.lab_tl[0] = std::stof(config_map["TL_L"]);
+      data.lab_tl[1] = std::stof(config_map["TL_A"]);
+      data.lab_tl[2] = std::stof(config_map["TL_B"]);
+      data.lab_tr[0] = std::stof(config_map["TR_L"]);
+      data.lab_tr[1] = std::stof(config_map["TR_A"]);
+      data.lab_tr[2] = std::stof(config_map["TR_B"]);
+      data.lab_bl[0] = std::stof(config_map["BL_L"]);
+      data.lab_bl[1] = std::stof(config_map["BL_A"]);
+      data.lab_bl[2] = std::stof(config_map["BL_B"]);
+      data.lab_br[0] = std::stof(config_map["BR_L"]);
+      data.lab_br[1] = std::stof(config_map["BR_A"]);
+      data.lab_br[2] = std::stof(config_map["BR_B"]);
+      data.colors_loaded = true; // For corner stone colors
+      if (bDebug) {              /* ... debug print for corner colors ... */
       }
+    } else {
+      if (bDebug)
+        std::cerr
+            << "  Warning: One or more corner Lab color keys (L/A/B) missing."
+            << std::endl;
+    }
 
-  } catch (const std::invalid_argument& ia) {
-      std::cerr << "Error (loadCalibrationData): Invalid number format in config file '" << config_path << "'. " << ia.what() << std::endl;
-      // Reset flags potentially affected by partial success before error
-      data.corners_loaded = false; data.colors_loaded = false; data.dimensions_loaded = false;
-  } catch (const std::out_of_range& oor) {
-      std::cerr << "Error (loadCalibrationData): Number out of range in config file '" << config_path << "'. " << oor.what() << std::endl;
-      data.corners_loaded = false; data.colors_loaded = false; data.dimensions_loaded = false;
-  } catch (const std::exception& e) { // Catch other potential errors
-       std::cerr << "Error (loadCalibrationData): Generic error parsing config file '" << config_path << "': " << e.what() << std::endl;
-       data.corners_loaded = false; data.colors_loaded = false; data.dimensions_loaded = false;
+    // --- NEW: Parse Average Board Color ---
+    if (config_map.count("BOARD_L_AVG") && config_map.count("BOARD_A_AVG") &&
+        config_map.count("BOARD_B_AVG")) {
+      data.lab_board_avg[0] = std::stof(config_map["BOARD_L_AVG"]);
+      data.lab_board_avg[1] = std::stof(config_map["BOARD_A_AVG"]);
+      data.lab_board_avg[2] = std::stof(config_map["BOARD_B_AVG"]);
+      data.board_color_loaded = true;
+      if (bDebug) {
+        std::cout << std::fixed << std::setprecision(1);
+        std::cout << "  Debug: Loaded Average Board Lab: ["
+                  << data.lab_board_avg[0] << "," << data.lab_board_avg[1]
+                  << "," << data.lab_board_avg[2] << "]" << std::endl;
+      }
+    } else {
+      if (bDebug)
+        std::cerr << "  Warning: Average Board Lab color keys "
+                     "(BOARD_L/A/B_AVG) missing."
+                  << std::endl;
+    }
+    // --- End NEW ---
+
+  } catch (const std::invalid_argument &ia) {
+    std::cerr
+        << "Error (loadCalibrationData): Invalid number format in config file '"
+        << config_path << "'. " << ia.what() << std::endl;
+    data.corners_loaded = false;
+    data.colors_loaded = false;
+    data.dimensions_loaded = false;
+    data.board_color_loaded = false;
+  } catch (const std::out_of_range &oor) {
+    std::cerr
+        << "Error (loadCalibrationData): Number out of range in config file '"
+        << config_path << "'. " << oor.what() << std::endl;
+    data.corners_loaded = false;
+    data.colors_loaded = false;
+    data.dimensions_loaded = false;
+    data.board_color_loaded = false;
+  } catch (const std::exception &e) {
+    std::cerr
+        << "Error (loadCalibrationData): Generic error parsing config file '"
+        << config_path << "': " << e.what() << std::endl;
+    data.corners_loaded = false;
+    data.colors_loaded = false;
+    data.dimensions_loaded = false;
+    data.board_color_loaded = false;
   }
-
   return data;
 }
 
 // Function to find the corners of the Go board.
 // Attempts to load from config file first, otherwise uses hardcoded
 // percentages.
-// --- getBoardCorners uses the static helper ---
 std::vector<cv::Point2f> getBoardCorners(const cv::Mat &inputImage) {
-  // const string config_path = "./share/config.txt"; // Defined globally now
   std::vector<cv::Point2f> board_corners_result;
   bool use_config_corners = false;
 
   int current_width = inputImage.cols;
   int current_height = inputImage.rows;
+  CalibrationData calib_data = loadCalibrationData(
+      CALIB_CONFIG_PATH); // CALIB_CONFIG_PATH defined in camera.cpp
 
-  // Load all data, including potential colors
-  CalibrationData calib_data = loadCalibrationData(CALIB_CONFIG_PATH);
-
-  // Check if corners AND dimensions were loaded AND dimensions match
   if (calib_data.corners_loaded && calib_data.dimensions_loaded &&
       calib_data.image_width == current_width &&
       calib_data.image_height == current_height) {
@@ -524,7 +446,7 @@ std::vector<cv::Point2f> getBoardCorners(const cv::Mat &inputImage) {
       std::cout << "Debug (getBoardCorners): Using corners from config file "
                    "(dimensions match)."
                 << std::endl;
-    board_corners_result = calib_data.corners; // Use the loaded corners
+    board_corners_result = calib_data.corners;
     use_config_corners = true;
   } else if (calib_data.corners_loaded && calib_data.dimensions_loaded) {
     if (bDebug)
@@ -532,55 +454,21 @@ std::vector<cv::Point2f> getBoardCorners(const cv::Mat &inputImage) {
                 << calib_data.image_width << "x" << calib_data.image_height
                 << ") mismatch image (" << current_width << "x"
                 << current_height << "). Ignoring config corners." << std::endl;
-  } else if (bDebug && !calib_data.corners_loaded) {
-    // Message about config file not found or missing keys already printed by
-    // loadCalibrationData in debug mode
   }
-
-  // Fallback to Hardcoded Percentages if config wasn't usable
   if (!use_config_corners) {
     if (bDebug) {
       std::cout << "Debug (getBoardCorners): Falling back to hardcoded "
                    "percentage values for corners."
                 << std::endl;
     }
-    // Use the original hardcoded percentage logic
-    float tl_x_percent = 20.0f;
-    float tl_y_percent = 8.0f;
-    float tr_x_percent = 73.0f;
-    float tr_y_percent = 5.0f;
-    float br_x_percent = 97.0f;
-    float br_y_percent = 45.0f;
-    float bl_x_percent = 5.0f;
-    float bl_y_percent = 52.0f;
-
-    board_corners_result = {
-        cv::Point2f(current_width * tl_x_percent / 100.0f,
-                    current_height * tl_y_percent / 100.0f),
-        cv::Point2f(current_width * tr_x_percent / 100.0f,
-                    current_height * tr_y_percent / 100.0f),
-        cv::Point2f(current_width * br_x_percent / 100.0f,
-                    current_height * br_y_percent / 100.0f),
-        cv::Point2f(current_width * bl_x_percent / 100.0f,
-                    current_height * bl_y_percent / 100.0f)};
-  }
-  // NOTE: getBoardCorners still returns corners in TL, TR, BR, BL order because
-  // the hardcoded fallback assumes that, and loadCalibrationData now returns
-  // them in that order too. However, the original hardcoded ones might have
-  // been visually different. Let's ensure the hardcoded ones are also returned
-  // TL, TR, BR, BL
-  if (!use_config_corners) {
-    board_corners_result = {
-        // Reorder fallback to TL, TR, BR, BL
-        cv::Point2f(current_width * 20.0f / 100.0f,
-                    current_height * 8.0f / 100.0f), // TL
-        cv::Point2f(current_width * 73.0f / 100.0f,
-                    current_height * 5.0f / 100.0f), // TR
-        cv::Point2f(current_width * 97.0f / 100.0f,
-                    current_height * 45.0f / 100.0f), // BR
-        cv::Point2f(current_width * 5.0f / 100.0f,
-                    current_height * 52.0f / 100.0f) // BL
-    };
+    board_corners_result = {cv::Point2f(current_width * 20.0f / 100.0f,
+                                        current_height * 8.0f / 100.0f),
+                            cv::Point2f(current_width * 73.0f / 100.0f,
+                                        current_height * 5.0f / 100.0f),
+                            cv::Point2f(current_width * 97.0f / 100.0f,
+                                        current_height * 45.0f / 100.0f),
+                            cv::Point2f(current_width * 5.0f / 100.0f,
+                                        current_height * 52.0f / 100.0f)};
   }
   return board_corners_result;
 }
@@ -1547,267 +1435,329 @@ Vec3f getAverageLab(const Mat &image_lab, Point2f center, int radius) {
   }
 }
 
-// Function to process the Go board image and determine the board state
-void processGoBoard(const Mat &image_bgr_in, Mat &board_state,
-                    Mat &board_with_stones,
-                    vector<Point2f> &intersection_points) {
+const float MAX_DIST_STONE_CALIB_PHASE3 =
+    35.0f; // Max Lab distance for a sample to be considered a stone matching
+           // its calibrated color
+const float MAX_DIST_BOARD_CALIB_PHASE3 =
+    45.0f; // Max Lab distance for a sample to be considered board matching its
+           // calibrated color
 
-  // --- Load Calibration Data at the beginning ---
-  CalibrationData calib_data = loadCalibrationData(CALIB_CONFIG_PATH);
+// --- NEW HELPER: Classify a single intersection's Lab color using calibration
+// data --- This was the smaller helper from the previous step, still useful.
+static int classifySingleIntersectionByDistance(
+    const cv::Vec3f &intersection_lab_color, const cv::Vec3f &avg_black_calib,
+    const cv::Vec3f &avg_white_calib, const cv::Vec3f &board_calib_lab) {
+  if (intersection_lab_color[0] <
+      0) {    // Check for invalid sample from getAverageLab
+    return 0; // Default to empty
+  }
 
-  Mat image_bgr = correctPerspective(image_bgr_in);
+  float dist_b = cv::norm(intersection_lab_color, avg_black_calib, cv::NORM_L2);
+  float dist_w = cv::norm(intersection_lab_color, avg_white_calib, cv::NORM_L2);
+  float dist_empty =
+      cv::norm(intersection_lab_color, board_calib_lab, cv::NORM_L2);
+
+  float min_dist = std::min({dist_b, dist_w, dist_empty});
+  int classification = 0;
+
+  if (min_dist == dist_b && dist_b < MAX_DIST_STONE_CALIB_PHASE3) {
+    classification = 1; // Black
+  } else if (min_dist == dist_w && dist_w < MAX_DIST_STONE_CALIB_PHASE3) {
+    classification = 2; // White
+  } else if (min_dist == dist_empty &&
+             dist_empty < MAX_DIST_BOARD_CALIB_PHASE3) {
+    classification = 0; // Empty
+  } else {
+    classification = 0; // Uncertain -> Empty
+  }
+  return classification;
+}
+
+// --- NEW HELPER: Perform direct classification for all intersections ---
+static void performDirectClassification(
+    const std::vector<cv::Vec3f>
+        &average_lab_values,           // Lab samples for all intersections
+    const CalibrationData &calib_data, // Loaded calibration data
+    const std::vector<cv::Point2f>
+        &intersection_points, // Coordinates for drawing
+    int num_intersections,    // Typically 361
+    const cv::Mat
+        &original_bgr_image_for_drawing, // To clone for board_with_stones
+    cv::Mat &board_state_output,         // Out: 19x19 matrix with 0,1,2
+    cv::Mat &board_with_stones_output)   // Out: Image with stones drawn
+{
+  if (bDebug)
+    std::cout << "  Debug (performDirectClassification): Starting..."
+              << std::endl;
+
+  cv::Vec3f avg_black_calib = (calib_data.lab_tl + calib_data.lab_bl) * 0.5f;
+  cv::Vec3f avg_white_calib = (calib_data.lab_tr + calib_data.lab_br) * 0.5f;
+  // calib_data.lab_board_avg is already the averaged board color
+
+  board_state_output = cv::Mat(19, 19, CV_8U, cv::Scalar(0)); // Initialize
+  board_with_stones_output = original_bgr_image_for_drawing.clone();
 
   if (bDebug) {
-    // imshow("image int", image_bgr_in);
-    // waitKey(0);
-    imshow("image correct perspective", image_bgr);
-    waitKey(0);
+    std::cout << std::fixed << std::setprecision(1);
+    std::cout << "    Using Ref Black Lab: " << avg_black_calib << std::endl;
+    std::cout << "    Using Ref White Lab: " << avg_white_calib << std::endl;
+    std::cout << "    Using Ref Board Lab: " << calib_data.lab_board_avg
+              << std::endl;
+    std::cout << "    Using Thresholds: Stone=" << MAX_DIST_STONE_CALIB_PHASE3
+              << ", Board=" << MAX_DIST_BOARD_CALIB_PHASE3 << std::endl;
   }
-
-  Mat image_lab;                                 // Use Lab instead of HSV
-  cvtColor(image_bgr, image_lab, COLOR_BGR2Lab); // Convert BGR to Lab
-  if (bDebug) {
-    imshow("lab Image", image_bgr);
-    waitKey(0);
-  }
-  pair<vector<double>, vector<double>> grid_lines =
-      detectUniformGrid(image_bgr);
-  vector<double> horizontal_lines = grid_lines.first;
-  vector<double> vertical_lines = grid_lines.second;
-  if (bDebug) {
-    Mat debug_lines = image_bgr.clone(); // Create a copy for drawing lines
-    // Draw Horizontal Lines
-    for (double y : horizontal_lines) {
-      line(debug_lines, Point(0, y), Point(image_bgr.cols - 1, y),
-           Scalar(0, 0, 255), 2); // Red lines
-    }
-
-    // Draw Vertical Lines
-    for (double x : vertical_lines) {
-      line(debug_lines, Point(x, 0), Point(x, image_bgr.rows - 1),
-           Scalar(0, 255, 0), 2); // Green lines
-    }
-    imshow("Detected Grid Lines", debug_lines);
-    waitKey(0);
-  }
-  intersection_points = findIntersections(horizontal_lines, vertical_lines);
-  int num_intersections = intersection_points.size();
-  int sample_radius = getSampleRadiusSize(horizontal_lines, vertical_lines);
-  if (bDebug) {
-    cout << "sample_radius:" << sample_radius << endl;
-    Mat debug_radius = image_bgr.clone();
-    for (auto const &pt : intersection_points) {
-      circle(debug_radius, pt, sample_radius, Scalar(0, 0, 255),
-             -1); // Red circles
-    }
-    imshow("debug sample radius", debug_radius);
-    waitKey(0);
-  }
-  // --- Sampling using Lab ---
-  Mat samples(num_intersections, 3, CV_32F);
-  vector<Vec3f> average_lab_values(num_intersections); // Store Lab values
-
-  for (int i = 0; i < num_intersections; ++i) {
-    // Use a new function to get average Lab
-    Vec3f avg_lab =
-        getAverageLab(image_lab, intersection_points[i], sample_radius);
-    // Store L*, a*, b* (Note: OpenCV 8-bit Lab range needs care)
-    // Assuming getAverageLab returns values in the typical 8-bit range:
-    // L: 0-255, a: 0-255, b: 0-255 (where 128 is ~zero for a/b)
-    samples.at<float>(i, 0) = avg_lab[0]; // L*
-    samples.at<float>(i, 1) = avg_lab[1]; // a*
-    samples.at<float>(i, 2) = avg_lab[2]; // b*
-    average_lab_values[i] = avg_lab;
-  }
-  int num_clusters = 3;
-  Mat labels;
-  Mat centers;
-  kmeans(samples, num_clusters, labels,
-         TermCriteria(TermCriteria::EPS + TermCriteria::MAX_ITER, 100, 1.0), 3,
-         KMEANS_PP_CENTERS, centers);
-  if (bDebug) {
-    cout << "\n--- K-Means Cluster Centers (HSV) ---\n" << centers << endl;
-    cout << "\n--- Raw K-Means Labels (first 20) ---\n";
-    for (int i = 0; i < min(20, num_intersections); ++i) {
-      cout << labels.at<int>(i, 0) << " ";
-    }
-    cout << "...\n";
-  }
-  int label_black = -1, label_white = -1, label_board = -1;
-  classifyClustersLab(centers, label_black, label_white, label_board);
-  if (bDebug) {
-    cout << "\n--- Assigned Labels (Direct Value Based) ---\n";
-    cout << "Black Cluster ID: " << label_black << endl;
-    cout << "White Cluster ID: " << label_white << endl;
-    cout << "Board Cluster ID: " << label_board << endl;
-  }
-
-  board_state = Mat(19, 19, CV_8U, Scalar(0));
-  board_with_stones = image_bgr.clone();
-  if (bDebug) {
-    cout << "\n--- Intersection HSV and Assigned Cluster (Weighted Distance)"
-         << "-- -" << endl;
-  }
-
-  cout << fixed << setprecision(2);
 
   for (int i = 0; i < num_intersections; ++i) {
     int row = i / 19;
     int col = i % 19;
-    Vec3f lab_sample =
-        average_lab_values[i]; // Get the average Lab for this point
+    if (row >= 19 || col >= 19)
+      continue;
 
-    int closest_cluster = findClosestCenterLab(lab_sample, centers);
-    if (bDebug) {
-      cout << "[" << row << "," << col << "] Lab: [" << lab_sample[0] << ", "
-           << lab_sample[1] << ", " << lab_sample[2]
-           << "] Cluster (Lab): " << closest_cluster
-           << std::endl; // Updated label
-    }
+    cv::Vec3f current_intersection_lab = average_lab_values[i];
+    int classification;
 
-    if (closest_cluster == label_black) {
-      board_state.at<uchar>(row, col) = 1; // Black
-      circle(board_with_stones, intersection_points[i], 8, Scalar(0, 0, 0), -1);
-      // cout << " (Black)" << endl;
-    } else if (closest_cluster == label_white) {
-      board_state.at<uchar>(row, col) = 2; // White
-      circle(board_with_stones, intersection_points[i], 8,
-             Scalar(255, 255, 255), -1);
-      // cout << " (White)" << endl;
-    } else if (closest_cluster == label_board) {
-      board_state.at<uchar>(row, col) = 0; // Empty
-      circle(board_with_stones, intersection_points[i], 8, Scalar(0, 255, 0),
-             2);
-      // cout << " (Board)" << endl;
+    if (current_intersection_lab[0] < 0) { // Check if getAverageLab failed
+      if (bDebug)
+        std::cout << "    Intersection [" << row << "," << col
+                  << "] - Invalid Lab sample (-1). Classifying as Empty."
+                  << std::endl;
+      classification = 0;
+      cv::circle(board_with_stones_output, intersection_points[i], 8,
+                 cv::Scalar(0, 128, 255), 2); // Orange for bad sample
     } else {
-      circle(board_with_stones, intersection_points[i], 8, Scalar(255, 0, 255),
-             2); // Magenta for unclassified
-                 // cout << " (Unclassified - Error?)" << endl;
+      classification = classifySingleIntersectionByDistance(
+          current_intersection_lab, avg_black_calib, avg_white_calib,
+          calib_data.lab_board_avg);
     }
-  }
-  if (bDebug) {
-    imshow("processGoBoard", board_with_stones);
-    waitKey(0);
-  }
-  // --- POST-PROCESSING FILTER for isolated white stones ---
-  Mat temp_board_state = board_state.clone(); // Work on a copy
-  for (int r = 0; r < 19; ++r) {
-    for (int c = 0; c < 19; ++c) {
-      // If the current point is classified as White (2)
-      if (temp_board_state.at<uchar>(r, c) == 2) {
-        bool has_stone_neighbor = false;
-        // Check 8 neighbors (adjust bounds checks if necessary)
-        for (int dr = -1; dr <= 1; ++dr) {
-          for (int dc = -1; dc <= 1; ++dc) {
-            if (dr == 0 && dc == 0)
-              continue; // Skip self
-            int nr = r + dr;
-            int nc = c + dc;
-            // Check bounds
-            if (nr >= 0 && nr < 19 && nc >= 0 && nc < 19) {
-              // If neighbor is Black (1) or White (2)
-              if (temp_board_state.at<uchar>(nr, nc) == 1 ||
-                  temp_board_state.at<uchar>(nr, nc) == 2) {
-                has_stone_neighbor = true;
-                break; // Found a stone neighbor, no need to check further
-              }
-            }
-          }
-          if (has_stone_neighbor)
-            break;
-        }
 
-        // If this white stone has NO stone neighbors, assume it's a false
-        // positive
-        if (!has_stone_neighbor) {
-          board_state.at<uchar>(r, c) = 0; // Reclassify as Empty (Board)
-          // Optional: Update the visual debug image too
-          circle(board_with_stones, intersection_points[r * 19 + c], 8,
-                 Scalar(0, 255, 0), 2); // Draw green circle over it
-        }
+    board_state_output.at<uchar>(row, col) = classification;
+
+    if (bDebug) { // More detailed per-intersection logging
+      float dist_b =
+          cv::norm(current_intersection_lab, avg_black_calib, cv::NORM_L2);
+      float dist_w =
+          cv::norm(current_intersection_lab, avg_white_calib, cv::NORM_L2);
+      float dist_empty = cv::norm(current_intersection_lab,
+                                  calib_data.lab_board_avg, cv::NORM_L2);
+      std::string stone_type =
+          (classification == 1)
+              ? "Black"
+              : (classification == 2 ? "White" : "Empty/Board");
+      if (current_intersection_lab[0] >=
+          0) { // Only print distances if sample was valid
+        std::cout << "    Int [" << row << "," << col
+                  << "] Lab: " << current_intersection_lab
+                  << " D(B):" << std::setw(5) << dist_b
+                  << " D(W):" << std::setw(5) << dist_w
+                  << " D(E):" << std::setw(5) << dist_empty
+                  << " -> Class: " << stone_type << " (" << classification
+                  << ")" << std::endl;
       }
     }
-  }
-  // Optional: Display the board after filtering
-  if (bDebug) {
-    imshow("Filtered Stones", board_with_stones);
-    waitKey(0);
-  }
-  if (bDebug && false) {
-    Mat debug_lines = image_bgr.clone();
-    for (double y : vertical_lines) {
-      line(debug_lines, Point(0, y), Point(debug_lines.cols - 1, y),
-           Scalar(255, 0, 0), 2); // Red for horizontal
-    }
-    for (double x : horizontal_lines) {
-      line(debug_lines, Point(x, 0), Point(x, debug_lines.rows - 1),
-           Scalar(0, 0, 255), 2); // Blue for vertical
-    }
-    imshow("Detected Grid Lines", debug_lines);
 
-    Mat debug_intersections = image_bgr.clone();
-    for (const auto &p : intersection_points) {
-      circle(debug_intersections, p, 10, Scalar(0, 255, 0),
-             2); // Green for detected intersections
+    if (classification == 1) {
+      cv::circle(board_with_stones_output, intersection_points[i], 8,
+                 cv::Scalar(0, 0, 0), -1);
+    } else if (classification == 2) {
+      cv::circle(board_with_stones_output, intersection_points[i], 8,
+                 cv::Scalar(255, 255, 255), -1);
+    } else if (current_intersection_lab[0] >=
+               0) { // Only draw green if it wasn't an invalid sample initially
+      cv::circle(board_with_stones_output, intersection_points[i], 8,
+                 cv::Scalar(0, 255, 0), 2);
     }
-    imshow("Detected Intersections (Raw)", debug_intersections);
   }
+
+  if (bDebug) {
+    imshow("Direct Classification Result (Helper)", board_with_stones_output);
+    cv::waitKey(1); // Give GUI time to refresh
+  }
+  if (bDebug)
+    std::cout << "  Debug (performDirectClassification): Finished."
+              << std::endl;
 }
 
-std::vector<cv::Point2f> loadCornersFromConfigFile(const std::string& config_path) {
+// Function to process the Go board image and determine the board state
+void processGoBoard(const cv::Mat &image_bgr_in, cv::Mat &board_state_out, // Renamed for clarity
+  cv::Mat &board_with_stones_out,    // Renamed for clarity
+  std::vector<cv::Point2f> &intersection_points_out) // Renamed for clarity
+{
+if (bDebug) std::cout << "Debug (processGoBoard): Starting board processing." << std::endl;
+
+// 1. Load Calibration Data
+CalibrationData calib_data = loadCalibrationData(CALIB_CONFIG_PATH);
+if (!calib_data.corners_loaded || !calib_data.colors_loaded || !calib_data.board_color_loaded || !calib_data.dimensions_loaded) {
+std::string err_msg = "ProcessGoBoard Error: Incomplete calibration data. ";
+if (!calib_data.corners_loaded) err_msg += "Corners missing. ";
+if (!calib_data.colors_loaded) err_msg += "Stone colors missing. ";
+if (!calib_data.board_color_loaded) err_msg += "Board color missing. ";
+if (!calib_data.dimensions_loaded) err_msg += "Dimensions missing. ";
+err_msg += "Please run calibration (-b) ensuring stones and empty board are correctly placed.";
+THROWGEMERROR(err_msg);
+}
+if (bDebug) std::cout << "  Debug: Full calibration data loaded." << std::endl;
+
+// 2. Perspective Correction
+cv::Mat image_bgr_corrected = correctPerspective(image_bgr_in);
+if (image_bgr_corrected.empty()) { THROWGEMERROR("Corrected perspective image is empty."); }
+if (bDebug) { imshow("Corrected Perspective", image_bgr_corrected); cv::waitKey(1); }
+
+// 3. Convert to Lab and Detect Grid
+cv::Mat image_lab;
+cv::cvtColor(image_bgr_corrected, image_lab, cv::COLOR_BGR2Lab);
+if (image_lab.empty()) { THROWGEMERROR("Lab converted image is empty."); }
+if (bDebug) { imshow("Lab Image", image_lab); cv::waitKey(1); }
+
+std::pair<std::vector<double>, std::vector<double>> grid_lines = detectUniformGrid(image_bgr_corrected);
+std::vector<double> horizontal_lines = grid_lines.first;
+std::vector<double> vertical_lines = grid_lines.second;
+
+intersection_points_out = findIntersections(horizontal_lines, vertical_lines);
+int num_intersections = intersection_points_out.size();
+if (num_intersections != 361 && image_bgr_corrected.cols > 0 && image_bgr_corrected.rows > 0) {
+std::cerr << "Warning (processGoBoard): Expected 361 intersections, found " << num_intersections << "." << std::endl;
+if (num_intersections == 0) THROWGEMERROR("No intersection points found.");
+} else if (num_intersections == 0) { 
+THROWGEMERROR("No intersection points found (image might be invalid).");
+}
+if (bDebug) std::cout << "  Debug: Found " << num_intersections << " intersection points." << std::endl;
+
+// 4. Sample Lab Color at Each Intersection
+int sample_radius = getSampleRadiusSize(horizontal_lines, vertical_lines);
+std::vector<cv::Vec3f> average_lab_values(num_intersections);
+for (int i = 0; i < num_intersections; ++i) {
+average_lab_values[i] = getAverageLab(image_lab, intersection_points_out[i], sample_radius);
+}
+if (bDebug) std::cout << "  Debug: Sampled Lab colors for all intersections." << std::endl;
+
+// --- 5. Call the new helper function for Direct Classification ---
+performDirectClassification(
+average_lab_values,
+calib_data,
+intersection_points_out,
+num_intersections,
+image_bgr_corrected, // Pass the corrected BGR image for drawing
+board_state_out,     // Output: board_state
+board_with_stones_out // Output: board_with_stones
+);
+// The imshow for "Direct Classification Result" is now inside performDirectClassification if bDebug
+
+// --- 6. Post-Processing Filter ---
+if (bDebug) std::cout << "  Debug: Applying post-processing filter." << std::endl;
+if (num_intersections == 361) { // Ensure we have the expected number of points for 19x19 indexing
+cv::Mat temp_board_state = board_state_out.clone();
+for (int r = 0; r < 19; ++r) {
+for (int c = 0; c < 19; ++c) {
+if (temp_board_state.at<uchar>(r, c) == 2) { // If white
+  bool has_stone_neighbor = false;
+  for (int dr = -1; dr <= 1; ++dr) {
+      for (int dc = -1; dc <= 1; ++dc) {
+          if (dr == 0 && dc == 0) continue;
+          int nr = r + dr; int nc = c + dc;
+          if (nr >= 0 && nr < 19 && nc >= 0 && nc < 19) {
+              if (temp_board_state.at<uchar>(nr, nc) == 1 || temp_board_state.at<uchar>(nr, nc) == 2) {
+                  has_stone_neighbor = true; break;
+              }
+          }
+      }
+      if (has_stone_neighbor) break;
+  }
+  if (!has_stone_neighbor) {
+      board_state_out.at<uchar>(r, c) = 0;
+      // Ensure index is valid before drawing
+      int intersection_idx = r * 19 + c;
+      if (intersection_idx < intersection_points_out.size()) {
+         cv::circle(board_with_stones_out, intersection_points_out[intersection_idx], 8, cv::Scalar(0, 255, 0), 2);
+      }
+  }
+}
+}
+}
+} else if (bDebug) {
+std::cout << "  Debug: Skipping post-processing filter due to non-standard number of intersections (" << num_intersections <<")." << std::endl;
+}
+
+if (bDebug) {
+imshow("Filtered Stones (Final)", board_with_stones_out);
+cv::waitKey(0);
+}
+if (bDebug) std::cout << "Debug (processGoBoard): Board processing finished." << std::endl;
+}
+
+std::vector<cv::Point2f>
+loadCornersFromConfigFile(const std::string &config_path) {
   std::vector<cv::Point2f> corners;
   std::ifstream configFile(config_path);
   if (!configFile.is_open()) {
-      if (bDebug) std::cout << "Debug (loadCornersFromConfigFile): Config file '" << config_path << "' not found." << std::endl;
-      return corners; // Return empty vector
+    if (bDebug)
+      std::cout << "Debug (loadCornersFromConfigFile): Config file '"
+                << config_path << "' not found." << std::endl;
+    return corners; // Return empty vector
   }
 
-  if (bDebug) std::cout << "Debug (loadCornersFromConfigFile): Found config file: " << config_path << ". Attempting to parse corners." << std::endl;
+  if (bDebug)
+    std::cout << "Debug (loadCornersFromConfigFile): Found config file: "
+              << config_path << ". Attempting to parse corners." << std::endl;
   std::map<std::string, std::string> config_data;
   std::string line;
   try {
-      while (getline(configFile, line)) {
-          line.erase(0, line.find_first_not_of(" \t\n\r\f\v"));
-          line.erase(line.find_last_not_of(" \t\n\r\f\v") + 1);
-          if (line.empty() || line[0] == '#') continue;
+    while (getline(configFile, line)) {
+      line.erase(0, line.find_first_not_of(" \t\n\r\f\v"));
+      line.erase(line.find_last_not_of(" \t\n\r\f\v") + 1);
+      if (line.empty() || line[0] == '#')
+        continue;
 
-          size_t equals_pos = line.find('=');
-          if (equals_pos != std::string::npos) {
-              std::string key = line.substr(0, equals_pos);
-              std::string value = line.substr(equals_pos + 1);
-              key.erase(0, key.find_first_not_of(" \t"));
-              key.erase(key.find_last_not_of(" \t") + 1);
-              value.erase(0, value.find_first_not_of(" \t"));
-              value.erase(value.find_last_not_of(" \t") + 1);
-              config_data[key] = value;
-          }
+      size_t equals_pos = line.find('=');
+      if (equals_pos != std::string::npos) {
+        std::string key = line.substr(0, equals_pos);
+        std::string value = line.substr(equals_pos + 1);
+        key.erase(0, key.find_first_not_of(" \t"));
+        key.erase(key.find_last_not_of(" \t") + 1);
+        value.erase(0, value.find_first_not_of(" \t"));
+        value.erase(value.find_last_not_of(" \t") + 1);
+        config_data[key] = value;
       }
+    }
+    configFile.close();
+
+    // Check if all required pixel coordinate keys exist
+    if (config_data.count("TL_X_PX") && config_data.count("TL_Y_PX") &&
+        config_data.count("TR_X_PX") && config_data.count("TR_Y_PX") &&
+        config_data.count("BL_X_PX") && config_data.count("BL_Y_PX") &&
+        config_data.count("BR_X_PX") && config_data.count("BR_Y_PX")) {
+      cv::Point2f tl(std::stof(config_data["TL_X_PX"]),
+                     std::stof(config_data["TL_Y_PX"]));
+      cv::Point2f tr(std::stof(config_data["TR_X_PX"]),
+                     std::stof(config_data["TR_Y_PX"]));
+      // IMPORTANT: Config file saves BL before BR based on previous logic, but
+      // perspective expects TL, TR, BR, BL Let's load them based on key names
+      // and return in the standard order.
+      cv::Point2f bl(std::stof(config_data["BL_X_PX"]),
+                     std::stof(config_data["BL_Y_PX"]));
+      cv::Point2f br(std::stof(config_data["BR_X_PX"]),
+                     std::stof(config_data["BR_Y_PX"]));
+
+      corners = {tl, tr, br, bl}; // Standard order: TL, TR, BR, BL
+      if (bDebug)
+        std::cout << "Debug (loadCornersFromConfigFile): Successfully loaded "
+                     "corners from config file."
+                  << std::endl;
+
+    } else {
+      if (bDebug)
+        std::cerr << "Warning (loadCornersFromConfigFile): Config file missing "
+                     "one or more pixel coordinate keys (_PX)."
+                  << std::endl;
+    }
+
+  } catch (const std::exception &e) {
+    if (bDebug)
+      std::cerr
+          << "Warning (loadCornersFromConfigFile): Error parsing config file '"
+          << config_path << "': " << e.what() << std::endl;
+    if (configFile.is_open())
       configFile.close();
-
-      // Check if all required pixel coordinate keys exist
-      if (config_data.count("TL_X_PX") && config_data.count("TL_Y_PX") &&
-          config_data.count("TR_X_PX") && config_data.count("TR_Y_PX") &&
-          config_data.count("BL_X_PX") && config_data.count("BL_Y_PX") &&
-          config_data.count("BR_X_PX") && config_data.count("BR_Y_PX"))
-      {
-          cv::Point2f tl(std::stof(config_data["TL_X_PX"]), std::stof(config_data["TL_Y_PX"]));
-          cv::Point2f tr(std::stof(config_data["TR_X_PX"]), std::stof(config_data["TR_Y_PX"]));
-          // IMPORTANT: Config file saves BL before BR based on previous logic, but perspective expects TL, TR, BR, BL
-          // Let's load them based on key names and return in the standard order.
-          cv::Point2f bl(std::stof(config_data["BL_X_PX"]), std::stof(config_data["BL_Y_PX"]));
-          cv::Point2f br(std::stof(config_data["BR_X_PX"]), std::stof(config_data["BR_Y_PX"]));
-
-          corners = {tl, tr, br, bl}; // Standard order: TL, TR, BR, BL
-          if (bDebug) std::cout << "Debug (loadCornersFromConfigFile): Successfully loaded corners from config file." << std::endl;
-
-      } else {
-          if (bDebug) std::cerr << "Warning (loadCornersFromConfigFile): Config file missing one or more pixel coordinate keys (_PX)." << std::endl;
-      }
-
-  } catch (const std::exception& e) {
-      if (bDebug) std::cerr << "Warning (loadCornersFromConfigFile): Error parsing config file '" << config_path << "': " << e.what() << std::endl;
-      if(configFile.is_open()) configFile.close();
-      corners.clear(); // Ensure empty vector on error
+    corners.clear(); // Ensure empty vector on error
   }
   return corners;
 }
