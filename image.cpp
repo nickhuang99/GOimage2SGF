@@ -22,7 +22,7 @@ const float MAX_DIST_STONE_CALIB_PHASE3 =
     20.0f; // Max Lab distance for a sample to be considered a stone matching
            // its calibrated color
 const float MAX_DIST_BOARD_CALIB_PHASE3 =
-    45.0f; // Max Lab distance for a sample to be considered board matching its
+    40.0f; // Max Lab distance for a sample to be considered board matching its
            // calibrated color
 
 struct Line {
@@ -1182,20 +1182,30 @@ static int classifySingleIntersectionByDistance(
   float dist_empty =
       cv::norm(intersection_lab_color, board_calib_lab, cv::NORM_L2);
 
-  float min_dist = std::min({dist_b, dist_w, dist_empty});
-  int classification = 0;
+  float min_dist = std::min({dist_b, dist_w, dist_empty});  
 
-  if (min_dist == dist_b && dist_b < MAX_DIST_STONE_CALIB_PHASE3) {
-    classification = 1; // Black
-  } else if (min_dist == dist_w && dist_w < MAX_DIST_STONE_CALIB_PHASE3) {
-    classification = 2; // White
-  } else if (min_dist == dist_empty &&
-             dist_empty < MAX_DIST_BOARD_CALIB_PHASE3) {
-    classification = 0; // Empty
-  } else {
-    classification = 0; // Uncertain -> Empty
+  // Is it a black stone? (Closest to black AND within black threshold AND
+  // significantly far from others)
+  if (dist_b < MAX_DIST_STONE_CALIB_PHASE3 && dist_b <= dist_w &&
+      dist_b <= dist_empty) {
+    // Optional: add a further check if it's too close to board e.g. dist_b <
+    // dist_empty * 0.7
+    return 1; // Black
   }
-  return classification;
+  // Is it a white stone? (Closest to white AND within white threshold AND
+  // significantly far from others)
+  if (dist_w < MAX_DIST_STONE_CALIB_PHASE3 && dist_w <= dist_b &&
+      dist_w <= dist_empty) {
+    // Optional: add a further check if it's too close to board e.g. dist_w <
+    // dist_empty * 0.7
+    return 2; // White
+  }
+  // Is it an empty board point? (Closest to board AND within board threshold)
+  if (dist_empty < MAX_DIST_BOARD_CALIB_PHASE3 && dist_empty <= dist_b &&
+      dist_empty <= dist_w) {
+    return 0; // Empty
+  }
+  return 0;
 }
 
 // --- NEW HELPER: Perform direct classification for all intersections (was performDirectClassification) ---
