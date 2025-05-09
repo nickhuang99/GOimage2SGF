@@ -3,8 +3,8 @@
 
 #include <linux/videodev2.h>
 #include <map>
-#include <opencv2/opencv.hpp>
 #include <opencv2/core/types.hpp> // For cv::Point2f
+#include <opencv2/opencv.hpp>
 #include <set>
 #include <sstream>
 #include <stdexcept>
@@ -83,23 +83,25 @@ struct VideoDeviceInfo {
       supported_format_details; // NEW: Will store "FORMAT (WxH, WxH...)"
 };
 
+// --- Struct to hold all calibration data ---
 struct CalibrationData {
-  // Corners in TL, TR, BR, BL order (expected by getPerspectiveTransform)
-  std::vector<cv::Point2f> corners;
-  // Sampled Lab colors at corners
-  cv::Vec3f lab_tl = {-1.0f, -1.0f, -1.0f}; // Use -1.0f to indicate not loaded
+  std::vector<cv::Point2f> corners; // TL, TR, BR, BL order
+  cv::Vec3f lab_tl = {-1.0f, -1.0f, -1.0f};
   cv::Vec3f lab_tr = {-1.0f, -1.0f, -1.0f};
   cv::Vec3f lab_bl = {-1.0f, -1.0f, -1.0f};
   cv::Vec3f lab_br = {-1.0f, -1.0f, -1.0f};
-  // Dimensions from config (optional, but can be useful)
+  // --- NEW: Add board color fields ---
+  cv::Vec3f lab_board_avg = {-1.0f, -1.0f,
+                             -1.0f}; // For the averaged board color
+
   int image_width = 0;
   int image_height = 0;
-  // Flags
-  bool corners_loaded = false;
-  bool colors_loaded = false;
-  bool dimensions_loaded = false;
-};
 
+  bool corners_loaded = false;
+  bool colors_loaded = false; // For corner stone colors
+  bool dimensions_loaded = false;
+  bool board_color_loaded = false; // NEW flag for average board color
+};
 
 // Structure to represent a single move, including captured stones
 struct Move {
