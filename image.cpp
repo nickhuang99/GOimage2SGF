@@ -1137,7 +1137,7 @@ vector<Point2f> findIntersections(const vector<double> &horizontal_lines,
 
 int calculateAdaptiveSampleRadius(float board_pixel_width,
                                   float board_pixel_height) {
-  const float factor = 0.5f;
+  const float factor = 0.3f;
   if (board_pixel_width <= 0 || board_pixel_height <= 0) {
     if (bDebug)
       std::cerr << "Warning (calculateAdaptiveSampleRadius): Invalid board "
