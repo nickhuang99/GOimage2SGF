@@ -608,14 +608,27 @@ void runInteractiveCalibration(int camera_index) {
 
       cv::Mat frame_lab;
       cv::cvtColor(clean_frame_to_save, frame_lab, cv::COLOR_BGR2Lab);
-      int sample_radius = 3;
+
+      float quad_width_top = topRight.x - topLeft.x;
+      float quad_width_bottom = bottomRight.x - bottomLeft.x;
+      float board_pixel_width_approx =
+          (quad_width_top + quad_width_bottom) * 0.5f;
+
+      float quad_height_left = bottomLeft.y - topLeft.y;
+      float quad_height_right = bottomRight.y - topRight.y;
+      float board_pixel_height_approx =
+          (quad_height_left + quad_height_right) * 0.5f;
+
+      int adaptive_sample_radius = calculateAdaptiveSampleRadius(
+          board_pixel_width_approx, board_pixel_height_approx,
+          0.25f); // Use factor 0.25 (1/4 grid)
 
       // Sample corner colors
       std::cout << "  Sampling corner stone colors..." << std::endl;
-      cv::Vec3f lab_tl = getAverageLab(frame_lab, topLeft, sample_radius);
-      cv::Vec3f lab_tr = getAverageLab(frame_lab, topRight, sample_radius);
-      cv::Vec3f lab_bl = getAverageLab(frame_lab, bottomLeft, sample_radius);
-      cv::Vec3f lab_br = getAverageLab(frame_lab, bottomRight, sample_radius);
+      cv::Vec3f lab_tl = getAverageLab(frame_lab, topLeft, adaptive_sample_radius);
+      cv::Vec3f lab_tr = getAverageLab(frame_lab, topRight, adaptive_sample_radius);
+      cv::Vec3f lab_bl = getAverageLab(frame_lab, bottomLeft, adaptive_sample_radius);
+      cv::Vec3f lab_br = getAverageLab(frame_lab, bottomRight, adaptive_sample_radius);
 
       // --- NEW: Sample Board Color at Multiple Points and Average ---
       std::cout << "  Sampling empty board colors..." << std::endl;
@@ -634,7 +647,7 @@ void runInteractiveCalibration(int camera_index) {
       for (const auto &pt : board_sample_points) {
         if (pt.x >= 0 && pt.x < frame_width && pt.y >= 0 &&
             pt.y < frame_height) {
-          cv::Vec3f sample = getAverageLab(frame_lab, pt, sample_radius);
+          cv::Vec3f sample = getAverageLab(frame_lab, pt, adaptive_sample_radius);
           // Optional: Add a check here to discard sample if it's too close to
           // known stone colors, in case a stone was accidentally left at a
           // sample point. For now, we assume user followed instructions for
