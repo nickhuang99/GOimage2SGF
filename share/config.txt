@@ -3,41 +3,41 @@ ImageWidth=800
 ImageHeight=600
 
 # Corner Pixel Coordinates (TL, TR, BL, BR)
-TL_X_PX=195.0
+TL_X_PX=200.0
 TL_Y_PX=195.0
 TR_X_PX=615.0
 TR_Y_PX=185.0
 BL_X_PX=65.0
-BL_Y_PX=550.0
-BR_X_PX=745.0
+BL_Y_PX=555.0
+BR_X_PX=740.0
 BR_Y_PX=550.0
 
 # Sampled Corner Lab Colors (L: 0-255, a/b: 0-255 approx)
 # Black stones expected at TL, BL. White stones at TR, BR.
-TL_L=68.0
-TL_A=121.0
-TL_B=118.0
-TR_L=221.0
-TR_A=116.0
-TR_B=116.0
-BL_L=60.0
-BL_A=125.0
+TL_L=65.0
+TL_A=123.0
+TL_B=120.0
+TR_L=215.0
+TR_A=118.0
+TR_B=117.0
+BL_L=73.0
+BL_A=120.0
 BL_B=118.0
-BR_L=206.0
-BR_A=117.0
-BR_B=120.0
+BR_L=202.0
+BR_A=118.0
+BR_B=119.0
 
 # Sampled Average Empty Board Lab Color
-BOARD_L_AVG=147.4
-BOARD_A_AVG=124.2
-BOARD_B_AVG=136.0
+BOARD_L_AVG=141.2
+BOARD_A_AVG=123.2
+BOARD_B_AVG=137.0
 
 # Corner Percentage Coordinates (%)
-TL_X_PC=24.4
+TL_X_PC=25.0
 TL_Y_PC=32.5
 TR_X_PC=76.9
 TR_Y_PC=30.8
 BL_X_PC=8.1
-BL_Y_PC=91.7
-BR_X_PC=93.1
+BL_Y_PC=92.5
+BR_X_PC=92.5
 BR_Y_PC=91.7
