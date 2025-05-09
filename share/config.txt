@@ -1,43 +1,43 @@
 # Go Board Calibration Configuration
-ImageWidth=800
-ImageHeight=600
+ImageWidth=640
+ImageHeight=480
 
 # Corner Pixel Coordinates (TL, TR, BL, BR)
-TL_X_PX=200.0
-TL_Y_PX=195.0
-TR_X_PX=615.0
-TR_Y_PX=185.0
-BL_X_PX=65.0
-BL_Y_PX=555.0
-BR_X_PX=740.0
-BR_Y_PX=550.0
+TL_X_PX=156.0
+TL_Y_PX=157.0
+TR_X_PX=494.0
+TR_Y_PX=152.0
+BL_X_PX=56.0
+BL_Y_PX=443.0
+BR_X_PX=594.0
+BR_Y_PX=438.0
 
 # Sampled Corner Lab Colors (L: 0-255, a/b: 0-255 approx)
 # Black stones expected at TL, BL. White stones at TR, BR.
-TL_L=65.0
+TL_L=80.0
 TL_A=123.0
-TL_B=120.0
-TR_L=215.0
+TL_B=132.0
+TR_L=219.0
 TR_A=118.0
-TR_B=117.0
-BL_L=73.0
-BL_A=120.0
-BL_B=118.0
-BR_L=202.0
-BR_A=118.0
-BR_B=119.0
+TR_B=120.0
+BL_L=81.0
+BL_A=119.0
+BL_B=123.0
+BR_L=198.0
+BR_A=119.0
+BR_B=125.0
 
 # Sampled Average Empty Board Lab Color
-BOARD_L_AVG=141.2
-BOARD_A_AVG=123.2
-BOARD_B_AVG=137.0
+BOARD_L_AVG=151.8
+BOARD_A_AVG=123.4
+BOARD_B_AVG=141.4
 
 # Corner Percentage Coordinates (%)
-TL_X_PC=25.0
-TL_Y_PC=32.5
-TR_X_PC=76.9
-TR_Y_PC=30.8
-BL_X_PC=8.1
-BL_Y_PC=92.5
-BR_X_PC=92.5
-BR_Y_PC=91.7
+TL_X_PC=24.4
+TL_Y_PC=32.7
+TR_X_PC=77.2
+TR_Y_PC=31.7
+BL_X_PC=8.8
+BL_Y_PC=92.3
+BR_X_PC=92.8
+BR_Y_PC=91.2
