@@ -19,7 +19,7 @@ using namespace cv;
 
 
 const float MAX_DIST_STONE_CALIB_PHASE3 =
-    35.0f; // Max Lab distance for a sample to be considered a stone matching
+    20.0f; // Max Lab distance for a sample to be considered a stone matching
            // its calibrated color
 const float MAX_DIST_BOARD_CALIB_PHASE3 =
     45.0f; // Max Lab distance for a sample to be considered board matching its
@@ -59,14 +59,6 @@ bool compareLines(const Line &a, const Line &b) { return a.value < b.value; }
 static int classifySingleIntersectionByDistance(
     const cv::Vec3f &intersection_lab_color, const cv::Vec3f &avg_black_calib,
     const cv::Vec3f &avg_white_calib, const cv::Vec3f &board_calib_lab);
-
-static void performDirectClassification(
-    const std::vector<cv::Vec3f> &average_lab_values,
-    const CalibrationData &calib_data,
-    const std::vector<cv::Point2f> &intersection_points, int num_intersections,
-    const cv::Mat &original_bgr_image_for_drawing, cv::Mat &board_state_output,
-    cv::Mat &board_with_stones_output);
-
 
 //====================================================================//
 
@@ -1206,109 +1198,94 @@ static int classifySingleIntersectionByDistance(
   return classification;
 }
 
-// --- NEW HELPER: Perform direct classification for all intersections ---
-static void performDirectClassification(
-    const std::vector<cv::Vec3f>
-        &average_lab_values,           // Lab samples for all intersections
-    const CalibrationData &calib_data, // Loaded calibration data
-    const std::vector<cv::Point2f>
-        &intersection_points, // Coordinates for drawing
-    int num_intersections,    // Typically 361
-    const cv::Mat
-        &original_bgr_image_for_drawing, // To clone for board_with_stones
-    cv::Mat &board_state_output,         // Out: 19x19 matrix with 0,1,2
-    cv::Mat &board_with_stones_output)   // Out: Image with stones drawn
+// --- NEW HELPER: Perform direct classification for all intersections (was performDirectClassification) ---
+static void classifyIntersectionsByCalibration( // Renamed as per your request
+  const std::vector<cv::Vec3f>& average_lab_values,
+  const CalibrationData& calib_data,
+  const std::vector<cv::Point2f>& intersection_points,
+  int num_intersections,
+  const cv::Mat& corrected_bgr_image,  // Changed from original_bgr_image_for_drawing
+  cv::Mat& board_state_output,
+  cv::Mat& board_with_stones_output)
 {
   if (bDebug)
-    std::cout << "  Debug (performDirectClassification): Starting..."
-              << std::endl;
+      std::cout << "  Debug (classifyIntersectionsByCalibration): Starting..." << std::endl;
 
   cv::Vec3f avg_black_calib = (calib_data.lab_tl + calib_data.lab_bl) * 0.5f;
   cv::Vec3f avg_white_calib = (calib_data.lab_tr + calib_data.lab_br) * 0.5f;
   // calib_data.lab_board_avg is already the averaged board color
 
-  board_state_output = cv::Mat(19, 19, CV_8U, cv::Scalar(0)); // Initialize
-  board_with_stones_output = original_bgr_image_for_drawing.clone();
+  board_state_output = cv::Mat(19, 19, CV_8U, cv::Scalar(0)); 
+  board_with_stones_output = corrected_bgr_image.clone(); // Use the corrected image as base
 
   if (bDebug) {
-    std::cout << std::fixed << std::setprecision(1);
-    std::cout << "    Using Ref Black Lab: " << avg_black_calib << std::endl;
-    std::cout << "    Using Ref White Lab: " << avg_white_calib << std::endl;
-    std::cout << "    Using Ref Board Lab: " << calib_data.lab_board_avg
-              << std::endl;
-    std::cout << "    Using Thresholds: Stone=" << MAX_DIST_STONE_CALIB_PHASE3
-              << ", Board=" << MAX_DIST_BOARD_CALIB_PHASE3 << std::endl;
+      std::cout << std::fixed << std::setprecision(1);
+      std::cout << "    Using Ref Black Lab: " << avg_black_calib << std::endl;
+      std::cout << "    Using Ref White Lab: " << avg_white_calib << std::endl;
+      std::cout << "    Using Ref Board Lab: " << calib_data.lab_board_avg << std::endl;
+      std::cout << "    Using Thresholds: Stone=" << MAX_DIST_STONE_CALIB_PHASE3
+                << ", Board=" << MAX_DIST_BOARD_CALIB_PHASE3 << std::endl;
   }
 
   for (int i = 0; i < num_intersections; ++i) {
-    int row = i / 19;
-    int col = i % 19;
-    if (row >= 19 || col >= 19)
-      continue;
+      int row = i / 19;
+      int col = i % 19;
+      if (row >= 19 || col >= 19) continue;
 
-    cv::Vec3f current_intersection_lab = average_lab_values[i];
-    int classification;
+      cv::Vec3f current_intersection_lab = average_lab_values[i];
+      int classification;
 
-    if (current_intersection_lab[0] < 0) { // Check if getAverageLab failed
-      if (bDebug)
-        std::cout << "    Intersection [" << row << "," << col
-                  << "] - Invalid Lab sample (-1). Classifying as Empty."
-                  << std::endl;
-      classification = 0;
-      cv::circle(board_with_stones_output, intersection_points[i], 8,
-                 cv::Scalar(0, 128, 255), 2); // Orange for bad sample
-    } else {
-      classification = classifySingleIntersectionByDistance(
-          current_intersection_lab, avg_black_calib, avg_white_calib,
-          calib_data.lab_board_avg);
-    }
-
-    board_state_output.at<uchar>(row, col) = classification;
-
-    if (bDebug) { // More detailed per-intersection logging
-      float dist_b =
-          cv::norm(current_intersection_lab, avg_black_calib, cv::NORM_L2);
-      float dist_w =
-          cv::norm(current_intersection_lab, avg_white_calib, cv::NORM_L2);
-      float dist_empty = cv::norm(current_intersection_lab,
-                                  calib_data.lab_board_avg, cv::NORM_L2);
-      std::string stone_type =
-          (classification == 1)
-              ? "Black"
-              : (classification == 2 ? "White" : "Empty/Board");
-      if (current_intersection_lab[0] >=
-          0) { // Only print distances if sample was valid
-        std::cout << "    Int [" << row << "," << col
-                  << "] Lab: " << current_intersection_lab
-                  << " D(B):" << std::setw(5) << dist_b
-                  << " D(W):" << std::setw(5) << dist_w
-                  << " D(E):" << std::setw(5) << dist_empty
-                  << " -> Class: " << stone_type << " (" << classification
-                  << ")" << std::endl;
+      if (current_intersection_lab[0] < 0) { 
+          if (bDebug) std::cout << "    Intersection ["<< std::setw(2) << row << "," << std::setw(2) << col << "] - Invalid Lab sample (-1). Classifying as Empty." << std::endl;
+          classification = 0; 
+          if (!intersection_points.empty() && static_cast<size_t>(i) < intersection_points.size()) {
+               cv::circle(board_with_stones_output, intersection_points[i], 8, cv::Scalar(0, 128, 255), 2); 
+          }
+      } else {
+          classification = classifySingleIntersectionByDistance(
+              current_intersection_lab,
+              avg_black_calib,
+              avg_white_calib,
+              calib_data.lab_board_avg
+          );
       }
-    }
+      
+      board_state_output.at<uchar>(row, col) = classification;
 
-    if (classification == 1) {
-      cv::circle(board_with_stones_output, intersection_points[i], 8,
-                 cv::Scalar(0, 0, 0), -1);
-    } else if (classification == 2) {
-      cv::circle(board_with_stones_output, intersection_points[i], 8,
-                 cv::Scalar(255, 255, 255), -1);
-    } else if (current_intersection_lab[0] >=
-               0) { // Only draw green if it wasn't an invalid sample initially
-      cv::circle(board_with_stones_output, intersection_points[i], 8,
-                 cv::Scalar(0, 255, 0), 2);
-    }
+      if (bDebug && current_intersection_lab[0] >= 0) {
+          float dist_b = cv::norm(current_intersection_lab, avg_black_calib, cv::NORM_L2);
+          float dist_w = cv::norm(current_intersection_lab, avg_white_calib, cv::NORM_L2);
+          float dist_empty = cv::norm(current_intersection_lab, calib_data.lab_board_avg, cv::NORM_L2);
+          std::string stone_type_str = (classification == 1) ? "Black" : (classification == 2 ? "White" : "Empty/Board");
+          
+          std::cout << "    Int [" << std::setw(2) << row << "," << std::setw(2) << col
+                    << "] Lab: [" << std::setw(5) << std::fixed << std::setprecision(1) << current_intersection_lab[0] 
+                    << "," << std::setw(5) << current_intersection_lab[1] 
+                    << "," << std::setw(5) << current_intersection_lab[2] << "]"
+                    << " D(B):" << std::setw(5) << std::setprecision(1) << dist_b  // Added precision for distances
+                    << " D(W):" << std::setw(5) << std::setprecision(1) << dist_w 
+                    << " D(E):" << std::setw(5) << std::setprecision(1) << dist_empty
+                    << " -> Class: " << stone_type_str << " (" << classification << ")" << std::endl;
+      }
+
+      if (static_cast<size_t>(i) < intersection_points.size()) { 
+          if (classification == 1) {
+              cv::circle(board_with_stones_output, intersection_points[i], 8, cv::Scalar(0, 0, 0), -1);
+          } else if (classification == 2) {
+              cv::circle(board_with_stones_output, intersection_points[i], 8, cv::Scalar(255, 255, 255), -1);
+          } else if (current_intersection_lab[0] >= 0) { 
+              cv::circle(board_with_stones_output, intersection_points[i], 8, cv::Scalar(0, 255, 0), 2);
+          }
+      }
   }
 
   if (bDebug) {
-    imshow("Direct Classification Result (Helper)", board_with_stones_output);
-    cv::waitKey(1); // Give GUI time to refresh
+      imshow("Direct Classification Result (Helper)", board_with_stones_output);
+      cv::waitKey(1); 
   }
-  if (bDebug)
-    std::cout << "  Debug (performDirectClassification): Finished."
-              << std::endl;
+  if (bDebug) std::cout << "  Debug (classifyIntersectionsByCalibration): Finished." << std::endl;
 }
+
 
 // Function to process the Go board image and determine the board state
 void processGoBoard(
@@ -1383,7 +1360,6 @@ void processGoBoard(
               << " intersection points." << std::endl;
 
   // 4. Sample Lab Color at Each Intersection
-
   float board_pixel_width_corrected = 0;
   if (!vertical_lines.empty()) {
     board_pixel_width_corrected =
@@ -1412,7 +1388,7 @@ void processGoBoard(
               << std::endl;
 
   // --- 5. Call the new helper function for Direct Classification ---
-  performDirectClassification(
+  classifyIntersectionsByCalibration(
       average_lab_values, calib_data, intersection_points_out,
       num_intersections,
       image_bgr_corrected,  // Pass the corrected BGR image for drawing
