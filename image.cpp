@@ -1137,7 +1137,7 @@ vector<Point2f> findIntersections(const vector<double> &horizontal_lines,
 
 int calculateAdaptiveSampleRadius(float board_pixel_width,
                                   float board_pixel_height) {
-  const float factor = 0.3f;
+  const float factor = 0.45f;
   if (board_pixel_width <= 0 || board_pixel_height <= 0) {
     if (bDebug)
       std::cerr << "Warning (calculateAdaptiveSampleRadius): Invalid board "
@@ -1187,20 +1187,29 @@ static int classifySingleIntersectionByDistance(
 
   // Is it a black stone? (Closest to black AND within black threshold AND
   // significantly far from others)
-  if (dist_b <= dist_w && dist_b <= dist_empty) {
+  if (dist_b < MAX_DIST_STONE_CALIB_PHASE3 && dist_b <= dist_w &&
+      dist_b <= dist_empty) {
     // Optional: add a further check if it's too close to board e.g. dist_b <
     // dist_empty * 0.7
     return 1; // Black
   }
   // Is it a white stone? (Closest to white AND within white threshold AND
   // significantly far from others)
-  if (dist_w <= dist_b && dist_w <= dist_empty) {
+  if (dist_w < MAX_DIST_STONE_CALIB_PHASE3 && dist_w <= dist_b &&
+      dist_w <= dist_empty) {
     // Optional: add a further check if it's too close to board e.g. dist_w <
     // dist_empty * 0.7
     return 2; // White
   }
   // Is it an empty board point? (Closest to board AND within board threshold)
-  return 0;
+  if (dist_empty < MAX_DIST_BOARD_CALIB_PHASE3 && dist_empty <= dist_b &&
+      dist_empty <= dist_w) {
+    return 0; // Empty
+  }
+
+  // Default/Uncertain case: if not clearly any of the above, or too far from
+  // all.
+  return 0; // Empty
 }
 
 // --- NEW HELPER: Perform direct classification for all intersections (was performDirectClassification) ---
@@ -1208,8 +1217,9 @@ static void classifyIntersectionsByCalibration( // Renamed as per your request
   const std::vector<cv::Vec3f>& average_lab_values,
   const CalibrationData& calib_data,
   const std::vector<cv::Point2f>& intersection_points,
-  int num_intersections,
+  int num_intersections,  
   const cv::Mat& corrected_bgr_image,  // Changed from original_bgr_image_for_drawing
+  int adaptive_sample_radius,
   cv::Mat& board_state_output,
   cv::Mat& board_with_stones_output)
 {
@@ -1288,14 +1298,14 @@ static void classifyIntersectionsByCalibration( // Renamed as per your request
 
     if (static_cast<size_t>(i) < intersection_points.size()) {
       if (classification == 1) {
-        cv::circle(board_with_stones_output, intersection_points[i], 8,
-                   cv::Scalar(0, 0, 0), -1);
+        cv::circle(board_with_stones_output, intersection_points[i],
+                   adaptive_sample_radius, cv::Scalar(0, 0, 0), -1);
       } else if (classification == 2) {
-        cv::circle(board_with_stones_output, intersection_points[i], 8,
-                   cv::Scalar(255, 255, 255), -1);
+        cv::circle(board_with_stones_output, intersection_points[i],
+                   adaptive_sample_radius, cv::Scalar(255, 255, 255), -1);
       } else if (current_intersection_lab[0] >= 0) {
-        cv::circle(board_with_stones_output, intersection_points[i], 8,
-                   cv::Scalar(127, 127, 127), 2);
+        cv::circle(board_with_stones_output, intersection_points[i],
+                   adaptive_sample_radius, cv::Scalar(127, 127, 127), 2);
       }
     }
   }
@@ -1414,6 +1424,7 @@ void processGoBoard(
       average_lab_values, calib_data, intersection_points_out,
       num_intersections,
       image_bgr_corrected,  // Pass the corrected BGR image for drawing
+      adaptive_sample_radius,
       board_state_out,      // Output: board_state
       board_with_stones_out // Output: board_with_stones
   );
@@ -1453,7 +1464,7 @@ void processGoBoard(
             int intersection_idx = r * 19 + c;
             if (intersection_idx < intersection_points_out.size()) {
               cv::circle(board_with_stones_out,
-                         intersection_points_out[intersection_idx], 8,
+                         intersection_points_out[intersection_idx], adaptive_sample_radius,
                          cv::Scalar(0, 255, 0), 2);
             }
           }
