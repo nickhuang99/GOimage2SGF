@@ -170,4 +170,6 @@ CalibrationData loadCalibrationData(const std::string &config_path);
 int calculateAdaptiveSampleRadius(float board_pixel_width,
                                   float board_pixel_height);
 
+std::vector<cv::Point2f> getBoardCornersCorrected(int width, int height);
+
 #endif // UTILITY_H

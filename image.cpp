@@ -530,9 +530,7 @@ std::vector<cv::Point2f> getBoardCorners(const cv::Mat &inputImage) {
   return board_corners_result;
 }
 
-vector<Point2f> getBoardCornersCorrected(const Mat &image) {
-  int width = image.cols;
-  int height = image.rows;
+vector<Point2f> getBoardCornersCorrected(int width, int height) {
   int dest_percent = 15; // Start with 15 and adjust if needed
   vector<Point2f> output_corners = {
       Point2f(width * dest_percent / 100.0f, height * dest_percent / 100.0f),
@@ -551,7 +549,7 @@ Mat correctPerspective(const Mat &image) {
 
   vector<Point2f> input_corners = getBoardCorners(image);
 
-  vector<Point2f> output_corners = getBoardCornersCorrected(image);
+  vector<Point2f> output_corners = getBoardCornersCorrected(width, height);
   Mat perspective_matrix =
       getPerspectiveTransform(input_corners, output_corners);
   Mat corrected_image;
@@ -614,7 +612,7 @@ vector<Vec4i> detectLineSegments(const Mat &edges, bool bDebug) {
   // 1. Get Board Corners (You'll need to implement this correctly)
   // Use getBoardCornersCorrected to define the region of interest for
   // HoughLinesP
-  vector<Point2f> board_corners = getBoardCornersCorrected(edges);
+  vector<Point2f> board_corners = getBoardCornersCorrected(width, height);
   float board_height = board_corners[2].y - board_corners[0].y;
   float board_width = board_corners[1].x - board_corners[0].x;
 
@@ -1184,9 +1182,9 @@ static int classifySingleIntersectionByDistance(
   const float L_HEURISTIC_WHITE_OFFSET =
       20.0f; // If L is this much higher than avg_white_calib[0]
 
-  if (intersection_lab_color[0] < 0) { // Invalid sample   
-      THROWGEMERROR(
-          "Error: Invalid Lab sample in classifySingleIntersectionByDistance.")
+  if (intersection_lab_color[0] < 0) { // Invalid sample
+    THROWGEMERROR(
+        "Error: Invalid Lab sample in classifySingleIntersectionByDistance.")
   }
 
   // --- Heuristic 1: Absolute L* checks (your suggestion) ---

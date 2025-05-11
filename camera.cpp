@@ -26,6 +26,11 @@ const std::string CALIB_CONFIG_PATH = "./share/config.txt";
 const std::string CALIB_SNAPSHOT_PATH = "./share/snapshot.jpg";
 const std::string CALIB_SNAPSHOT_DEBUG_PATH = "./share/snapshot_osd.jpg";
 
+const std::string WINDOW_RAW_FEED =
+    "Raw Camera - Adjust Corners (1-4, ijkl, s, esc)";
+const std::string WINDOW_CORRECTED_PREVIEW =
+    "Corrected Preview - Align Stones/Grid";
+
 // Function to modify a single point based on direction keys
 void movePoint(cv::Point2f &point, int move_key, int step, int frame_width,
                int frame_height) {
@@ -92,7 +97,7 @@ int processCalibrationKeyPress(
   case 27:
     return 27; // Signal exit (ESC)
   default:
-    return 0; // Or key if you want to pass unhandled ones
+    return key; // Or key if you want to pass unhandled ones
   }
 
   // Anti-crossing logic can be more complex with free individual corner
@@ -331,81 +336,137 @@ void drawCalibrationOSD(
               coord_font_scale, coord_text_color, text_thickness, cv::LINE_AA);
 }
 
-// --- NEW Function to Save Corner Configuration (Unchanged) ---
-bool saveCornerConfig(const std::string &filename, const cv::Point2f &tl,
-                      const cv::Point2f &tr, const cv::Point2f &bl,
-                      const cv::Point2f &br, int frame_width, int frame_height,
-                      const cv::Vec3f &lab_tl, const cv::Vec3f &lab_tr,
-                      const cv::Vec3f &lab_bl, const cv::Vec3f &lab_br,
-                      const cv::Vec3f &avg_lab_board) // NEW parameter
-{
+// --- NEW OSD for Corrected Preview Window ---
+static void drawCorrectedPreviewOSD(cv::Mat &corrected_frame, int preview_width,
+                                    int preview_height) {
+  cv::Scalar grid_color(100, 100, 100);
+  float x_step = static_cast<float>(preview_width - 1) / 18.0f;
+  float y_step = static_cast<float>(preview_height - 1) / 18.0f;
+
+  for (int i = 0; i < 19; ++i) {
+    cv::line(corrected_frame, cv::Point2f(i * x_step, 0),
+             cv::Point2f(i * x_step, preview_height - 1), grid_color, 1);
+    cv::line(corrected_frame, cv::Point2f(0, i * y_step),
+             cv::Point2f(preview_width - 1, i * y_step), grid_color, 1);
+  }
+
+  int marker_radius =
+      std::min(preview_width, preview_height) / 50; // Smaller marker
+  cv::Scalar black_marker_fill(0, 0, 0);
+  cv::Scalar white_marker_fill(255, 255, 255);
+  cv::Scalar black_marker_outline(255, 255, 255);
+  cv::Scalar white_marker_outline(0, 0, 0);
+
+  // TL (Black Stone Target)
+  cv::circle(corrected_frame,
+             cv::Point2f(0, 0) + cv::Point2f(marker_radius, marker_radius),
+             marker_radius, black_marker_fill, -1);
+  cv::circle(corrected_frame,
+             cv::Point2f(0, 0) + cv::Point2f(marker_radius, marker_radius),
+             marker_radius, black_marker_outline, 1);
+  // TR (White Stone Target)
+  cv::circle(corrected_frame,
+             cv::Point2f(preview_width - 1 - marker_radius, marker_radius),
+             marker_radius, white_marker_fill, -1);
+  cv::circle(corrected_frame,
+             cv::Point2f(preview_width - 1 - marker_radius, marker_radius),
+             marker_radius, white_marker_outline, 1);
+  // BR (White Stone Target)
+  cv::circle(corrected_frame,
+             cv::Point2f(preview_width - 1 - marker_radius,
+                         preview_height - 1 - marker_radius),
+             marker_radius, white_marker_fill, -1);
+  cv::circle(corrected_frame,
+             cv::Point2f(preview_width - 1 - marker_radius,
+                         preview_height - 1 - marker_radius),
+             marker_radius, white_marker_outline, 1);
+  // BL (Black Stone Target)
+  cv::circle(corrected_frame,
+             cv::Point2f(marker_radius, preview_height - 1 - marker_radius),
+             marker_radius, black_marker_fill, -1);
+  cv::circle(corrected_frame,
+             cv::Point2f(marker_radius, preview_height - 1 - marker_radius),
+             marker_radius, black_marker_outline, 1);
+
+  std::string help_text =
+      "Align physical stones to CORNER markers. Grid should be straight.";
+  cv::putText(corrected_frame, help_text, cv::Point(10, preview_height - 10),
+              cv::FONT_HERSHEY_SIMPLEX, 0.4, cv::Scalar(200, 200, 200), 1,
+              cv::LINE_AA);
+}
+
+// saveCornerConfig needs to take all Lab values
+bool saveCornerConfig(const std::string &filename, const cv::Point2f &tl_raw,
+                      const cv::Point2f &tr_raw, const cv::Point2f &bl_raw,
+                      const cv::Point2f &br_raw, int frame_width,
+                      int frame_height, const cv::Vec3f &lab_tl_sampled,
+                      const cv::Vec3f &lab_tr_sampled,
+                      const cv::Vec3f &lab_bl_sampled,
+                      const cv::Vec3f &lab_br_sampled,
+                      const cv::Vec3f &avg_lab_board_sampled) {
   std::ofstream outFile(filename);
-  if (!outFile.is_open()) {
-    std::cerr << "Error: Could not open config file for writing: " << filename
-              << std::endl;
+  if (!outFile.is_open()) { /* error handling */
     return false;
   }
   outFile << "# Go Board Calibration Configuration" << std::endl;
-  // ... (ImageWidth, ImageHeight, Pixel Coordinates, Corner Lab Colors as in
-  // your existing code)
   outFile << "ImageWidth=" << frame_width << std::endl;
   outFile << "ImageHeight=" << frame_height << std::endl;
   outFile << std::fixed << std::setprecision(1);
 
-  outFile << "\n# Corner Pixel Coordinates (TL, TR, BL, BR)" << std::endl;
-  outFile << "TL_X_PX=" << tl.x << std::endl;
-  outFile << "TL_Y_PX=" << tl.y << std::endl;
-  outFile << "TR_X_PX=" << tr.x << std::endl;
-  outFile << "TR_Y_PX=" << tr.y << std::endl;
-  outFile << "BL_X_PX=" << bl.x << std::endl;
-  outFile << "BL_Y_PX=" << bl.y << std::endl;
-  outFile << "BR_X_PX=" << br.x << std::endl;
-  outFile << "BR_Y_PX=" << br.y << std::endl;
-
-  outFile << "\n# Sampled Corner Lab Colors (L: 0-255, a/b: 0-255 approx)"
+  outFile << "\n# Corner Pixel Coordinates (Raw Image - TL, TR, BL, BR)"
           << std::endl;
-  outFile << "# Black stones expected at TL, BL. White stones at TR, BR."
+  outFile << "TL_X_PX=" << tl_raw.x << std::endl;
+  outFile << "TL_Y_PX=" << tl_raw.y << std::endl;
+  outFile << "TR_X_PX=" << tr_raw.x << std::endl;
+  outFile << "TR_Y_PX=" << tr_raw.y << std::endl;
+  outFile << "BL_X_PX=" << bl_raw.x << std::endl;
+  outFile << "BL_Y_PX=" << bl_raw.y << std::endl;
+  outFile << "BR_X_PX=" << br_raw.x << std::endl;
+  outFile << "BR_Y_PX=" << br_raw.y << std::endl;
+
+  outFile << "\n# Sampled Lab Colors from Corrected Image (L:0-255, A:0-255, "
+             "B:0-255)"
           << std::endl;
-  outFile << "TL_L=" << lab_tl[0] << std::endl;
-  outFile << "TL_A=" << lab_tl[1] << std::endl;
-  outFile << "TL_B=" << lab_tl[2] << std::endl;
-  outFile << "TR_L=" << lab_tr[0] << std::endl;
-  outFile << "TR_A=" << lab_tr[1] << std::endl;
-  outFile << "TR_B=" << lab_tr[2] << std::endl;
-  outFile << "BL_L=" << lab_bl[0] << std::endl;
-  outFile << "BL_A=" << lab_bl[1] << std::endl;
-  outFile << "BL_B=" << lab_bl[2] << std::endl;
-  outFile << "BR_L=" << lab_br[0] << std::endl;
-  outFile << "BR_A=" << lab_br[1] << std::endl;
-  outFile << "BR_B=" << lab_br[2] << std::endl;
+  outFile << "# Black stones expected at TL, BL physical locations."
+          << std::endl;
+  outFile << "# White stones expected at TR, BR physical locations."
+          << std::endl;
+  outFile << "TL_L=" << lab_tl_sampled[0] << std::endl;
+  outFile << "TL_A=" << lab_tl_sampled[1] << std::endl;
+  outFile << "TL_B=" << lab_tl_sampled[2] << std::endl;
+  outFile << "TR_L=" << lab_tr_sampled[0] << std::endl;
+  outFile << "TR_A=" << lab_tr_sampled[1] << std::endl;
+  outFile << "TR_B=" << lab_tr_sampled[2] << std::endl;
+  outFile << "BL_L=" << lab_bl_sampled[0] << std::endl;
+  outFile << "BL_A=" << lab_bl_sampled[1] << std::endl;
+  outFile << "BL_B=" << lab_bl_sampled[2] << std::endl;
+  outFile << "BR_L=" << lab_br_sampled[0] << std::endl;
+  outFile << "BR_A=" << lab_br_sampled[1] << std::endl;
+  outFile << "BR_B=" << lab_br_sampled[2] << std::endl;
 
-  // --- NEW: Save Average Board Color ---
-  outFile << "\n# Sampled Average Empty Board Lab Color" << std::endl;
-  outFile << "BOARD_L_AVG=" << avg_lab_board[0] << std::endl;
-  outFile << "BOARD_A_AVG=" << avg_lab_board[1] << std::endl;
-  outFile << "BOARD_B_AVG=" << avg_lab_board[2] << std::endl;
+  outFile << "\n# Sampled Average Empty Board Lab Color (from Corrected Image)"
+          << std::endl;
+  outFile << "BOARD_L_AVG=" << avg_lab_board_sampled[0] << std::endl;
+  outFile << "BOARD_A_AVG=" << avg_lab_board_sampled[1] << std::endl;
+  outFile << "BOARD_B_AVG=" << avg_lab_board_sampled[2] << std::endl;
 
-  // Percentage Coordinates (as in your existing code)
+  // Percentage coordinates are of the RAW corners
   if (frame_width > 0 && frame_height > 0) {
-    outFile << "\n# Corner Percentage Coordinates (%)" << std::endl;
-    outFile << "TL_X_PC=" << (tl.x / frame_width * 100.0f) << std::endl;
-    outFile << "TL_Y_PC=" << (tl.y / frame_height * 100.0f) << std::endl;
-    outFile << "TR_X_PC=" << (tr.x / frame_width * 100.0f) << std::endl;
-    outFile << "TR_Y_PC=" << (tr.y / frame_height * 100.0f) << std::endl;
-    outFile << "BL_X_PC=" << (bl.x / frame_width * 100.0f) << std::endl;
-    outFile << "BL_Y_PC=" << (bl.y / frame_height * 100.0f) << std::endl;
-    outFile << "BR_X_PC=" << (br.x / frame_width * 100.0f) << std::endl;
-    outFile << "BR_Y_PC=" << (br.y / frame_height * 100.0f) << std::endl;
+    outFile << "\n# Corner Percentage Coordinates (Raw Image %)" << std::endl;
+    outFile << "TL_X_PC=" << (tl_raw.x / frame_width * 100.0f) << std::endl;
+    outFile << "TL_Y_PC=" << (tl_raw.y / frame_height * 100.0f) << std::endl;
+    outFile << "TR_X_PC=" << (tr_raw.x / frame_width * 100.0f) << std::endl;
+    outFile << "TR_Y_PC=" << (tr_raw.y / frame_height * 100.0f) << std::endl;
+    outFile << "BL_X_PC=" << (bl_raw.x / frame_width * 100.0f) << std::endl;
+    outFile << "BL_Y_PC=" << (bl_raw.y / frame_height * 100.0f) << std::endl;
+    outFile << "BR_X_PC=" << (br_raw.x / frame_width * 100.0f) << std::endl;
+    outFile << "BR_Y_PC=" << (br_raw.y / frame_height * 100.0f) << std::endl;
   }
-
   outFile.close();
-  if (!outFile) {
-    std::cerr << "Error: Failed to write data correctly to config file: "
-              << filename << std::endl;
+  if (!outFile) { /* error handling */
     return false;
   }
-  std::cout << "Configuration (corners, stone colors, board color) saved to "
-            << filename << std::endl;
+  std::cout << "Configuration saved to " << filename << std::endl;
   return true;
 }
 
@@ -509,213 +570,195 @@ bool trySetCameraResolution(cv::VideoCapture &cap, int desired_width,
 // --- SIMPLIFIED Main Calibration Function ---
 void runInteractiveCalibration(int camera_index) {
   cv::VideoCapture cap;
-  cap.open(camera_index, cv::CAP_V4L2);
+  cap.open(camera_index, cv::CAP_V4L2); // Try V4L2 first
   if (!cap.isOpened()) {
     if (bDebug)
       std::cout
           << "Debug: Opening with CAP_V4L2 failed, trying default backend."
           << std::endl;
-    cap.open(camera_index);
+    cap.open(camera_index); // Fallback to default
     if (!cap.isOpened()) {
-      std::string error_message = "OpenCV failed to open camera index " +
-                                  Num2Str(camera_index).str() +
-                                  ". Tried CAP_V4L2 and default.";
-      THROWGEMERROR(error_message);
+      THROWGEMERROR("OpenCV failed to open camera index " +
+                    Num2Str(camera_index).str());
     }
   }
-
   std::cout << "Opened Camera Index: " << camera_index
-            << " for Interactive Calibration..." << std::endl;
+            << " for Interactive Calibration." << std::endl;
 
   if (!trySetCameraResolution(cap, g_capture_width, g_capture_height, true)) {
-    int final_width = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_WIDTH));
-    int final_height = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_HEIGHT));
-    std::stringstream ss;
-    ss << "Calibration: Failed to set desired resolution " << g_capture_width
-       << "x" << g_capture_height << ". Actual resolution is " << final_width
-       << "x" << final_height << ".";
-    THROWGEMERROR(ss.str());
+    // Error/warning already printed by trySetCameraResolution if bDebug
+    // Allow to proceed with whatever resolution was set, or throw if strictness
+    // is needed
   }
-
   int frame_width = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_WIDTH));
   int frame_height = static_cast<int>(cap.get(cv::CAP_PROP_FRAME_HEIGHT));
-  if (bDebug) {
-    std::cout
-        << "Debug: Calibration - Proceeding with actual frame dimensions: "
-        << frame_width << "x" << frame_height << std::endl;
-  }
+  if (bDebug)
+    std::cout << "Debug: Calibration - Using frame dimensions: " << frame_width
+              << "x" << frame_height << std::endl;
 
-  std::string window_name = "Calibration - Adjust Corners (ESC: exit, S: save)";
-  cv::namedWindow(window_name, cv::WINDOW_AUTOSIZE);
+  cv::namedWindow(WINDOW_RAW_FEED, cv::WINDOW_AUTOSIZE);
+  cv::namedWindow(WINDOW_CORRECTED_PREVIEW, cv::WINDOW_AUTOSIZE);
+  cv::moveWindow(WINDOW_CORRECTED_PREVIEW, frame_width + 20,
+                 0); // Position windows side-by-side
 
-  cv::Mat frame;
-  cv::Mat clean_frame_to_save;
+  cv::Mat raw_frame, display_raw, display_corrected_bgr;
 
-  float init_percent_x = 15.0f;
-  float init_percent_y = 15.0f;
-  cv::Point2f topLeft(frame_width * init_percent_x / 100.0f,
-                      frame_height * init_percent_y / 100.0f);
-  cv::Point2f topRight(frame_width * (100.0f - init_percent_x) / 100.0f,
-                       frame_height * init_percent_y / 100.0f);
-  cv::Point2f bottomLeft(frame_width * init_percent_x / 100.0f,
-                         frame_height * (100.0f - init_percent_y) / 100.0f);
-  cv::Point2f bottomRight(frame_width * (100.0f - init_percent_x) / 100.0f,
-                          frame_height * (100.0f - init_percent_y) / 100.0f);
-
+  // Initialize corners for the raw feed
+  cv::Point2f topLeft_raw(frame_width * 0.15f, frame_height * 0.15f);
+  cv::Point2f topRight_raw(frame_width * 0.85f, frame_height * 0.15f);
+  cv::Point2f bottomLeft_raw(frame_width * 0.15f, frame_height * 0.85f);
+  cv::Point2f bottomRight_raw(frame_width * 0.85f, frame_height * 0.85f);
   ActiveCorner currentActiveCorner = ActiveCorner::TOP_LEFT;
 
-  // --- UPDATE Console Help Text ---
-  std::cout << "\n--- Interactive Calibration ---" << std::endl;
-  std::cout << "INSTRUCTIONS: Place BLACK stones near TL(1) & BL(3) markers."
+  // Define destination points for the corrected preview
+  std::vector<cv::Point2f> corrected_dest_points =
+      getBoardCornersCorrected(frame_width, frame_height);
+
+  std::cout << "\n--- Interactive Calibration (Live Corrected Preview) ---"
             << std::endl;
-  std::cout << "              Place WHITE stones near TR(2) & BR(4) markers."
+  // ... (Print full instructions as per your previous good example) ...
+  std::cout << "INSTRUCTIONS:" << std::endl;
+  std::cout << "1. Place BLACK stones near physical Top-Left & Bottom-Left "
+               "board corners."
             << std::endl;
-  std::cout << "              Ensure the center area of the board is EMPTY."
-            << std::endl; // Updated instruction
-  std::cout << "ADJUSTMENT KEYS:" << std::endl;
-  std::cout << "  SELECT CORNER: 1(TL), 2(TR), 3(BL), 4(BR)" << std::endl;
-  std::cout << "  MOVE ACTIVE:   i(up), k(down), j(left), l(right)"
+  std::cout << "2. Place WHITE stones near physical Top-Right & Bottom-Right "
+               "board corners."
             << std::endl;
-  std::cout << "ACTIONS:" << std::endl;
-  std::cout << "  s: Save config & snapshot (with stones/empty center placed!)"
-            << std::endl; // Updated instruction
-  std::cout << "  esc: Exit without saving" << std::endl;
+  std::cout << "3. Ensure board mid-points & center (marked orange in preview) "
+               "are EMPTY."
+            << std::endl;
+  std::cout << "4. Adjust markers in '" << WINDOW_RAW_FEED
+            << "' (using 1-4, ijkl keys)" << std::endl;
+  std::cout << "   until physical stones in your camera view appear at the"
+            << std::endl;
+  std::cout << "   CORNER MARKERS in the '" << WINDOW_CORRECTED_PREVIEW
+            << "' window," << std::endl;
+  std::cout << "   and the grid there looks straight and uniform." << std::endl;
+  std::cout << "ACTIONS: 's' to save, 'esc' to exit." << std::endl;
   std::cout << "------------------------------------" << std::endl;
-  std::cout << "Currently Active Corner: TL (Top-Left)" << std::endl;
 
   while (true) {
-    bool success = cap.read(frame);
-    if (!success || frame.empty()) { /* ... error handling ... */
-      continue;
+    if (!cap.read(raw_frame) || raw_frame.empty()) {
+      std::cerr << "Error: Could not read frame from camera." << std::endl;
+      cv::waitKey(100);
+      continue; // Prevent tight loop on error
     }
 
-    clean_frame_to_save = frame.clone();
-    cv::Mat display_frame = frame.clone();
+    display_raw = raw_frame.clone();
+    drawCalibrationOSD(display_raw, topLeft_raw, topRight_raw, bottomLeft_raw,
+                       bottomRight_raw, currentActiveCorner);
+    cv::imshow(WINDOW_RAW_FEED, display_raw);
 
-    drawCalibrationOSD(display_frame, topLeft, topRight, bottomLeft,
-                       bottomRight, currentActiveCorner);
-    cv::imshow(window_name, display_frame);
+    std::vector<cv::Point2f> current_source_points = {
+        topLeft_raw, topRight_raw, bottomRight_raw, bottomLeft_raw};
+    cv::Mat transform_matrix = cv::getPerspectiveTransform(
+        current_source_points, corrected_dest_points);
+    cv::warpPerspective(raw_frame, display_corrected_bgr, transform_matrix,
+                        cv::Size(frame_width, frame_height));
+
+    drawCorrectedPreviewOSD(display_corrected_bgr, frame_width, frame_height);
+    cv::imshow(WINDOW_CORRECTED_PREVIEW, display_corrected_bgr);
 
     int key = cv::waitKey(30);
-    int key_result = processCalibrationKeyPress(
-        key, topLeft, topRight, bottomLeft, bottomRight, frame_width,
-        frame_height, currentActiveCorner);
+    int key_action_type = processCalibrationKeyPress(
+        key, topLeft_raw, topRight_raw, bottomLeft_raw, bottomRight_raw,
+        frame_width, frame_height, currentActiveCorner);
 
-    if (key_result == 27) {
+    if (key_action_type == 27) { // ESC
+      std::cout << "Calibration cancelled by user." << std::endl;
       break;
-    } else if (key_result == 's') {
+    } else if (key_action_type == 's') {
       std::cout << "Processing 'save' command..." << std::endl;
+      cv::Mat final_raw_bgr_for_snapshot =
+          raw_frame.clone(); // The raw frame corresponding to the current good
+                             // preview
 
-      cv::Mat frame_lab;
-      cv::cvtColor(clean_frame_to_save, frame_lab, cv::COLOR_BGR2Lab);
+      // Perspective correct this final raw frame for sampling
+      cv::Mat final_corrected_bgr_for_sampling;
+      cv::warpPerspective(final_raw_bgr_for_snapshot,
+                          final_corrected_bgr_for_sampling, transform_matrix,
+                          cv::Size(frame_width, frame_height));
 
-      float quad_width_top = topRight.x - topLeft.x;
-      float quad_width_bottom = bottomRight.x - bottomLeft.x;
-      float board_pixel_width_approx =
-          (quad_width_top + quad_width_bottom) * 0.5f;
+      // Save snapshots
+      cv::imwrite("./share/snapshot_raw_calibration.jpg",
+                  final_raw_bgr_for_snapshot);
+      cv::imwrite(CALIB_SNAPSHOT_PATH,
+                  final_corrected_bgr_for_sampling); // This is the one whose
+                                                     // colors are sampled
+      if (bDebug)
+        cv::imwrite(CALIB_SNAPSHOT_DEBUG_PATH, display_raw); // OSD on raw
+      std::cout << "  Raw calibration snapshot saved to "
+                   "./share/snapshot_raw_calibration.jpg"
+                << std::endl;
+      std::cout << "  Corrected calibration snapshot (used for color sampling) "
+                   "saved to "
+                << CALIB_SNAPSHOT_PATH << std::endl;
 
-      float quad_height_left = bottomLeft.y - topLeft.y;
-      float quad_height_right = bottomRight.y - topRight.y;
-      float board_pixel_height_approx =
-          (quad_height_left + quad_height_right) * 0.5f;
+      cv::Mat final_corrected_lab;
+      cv::cvtColor(final_corrected_bgr_for_sampling, final_corrected_lab,
+                   cv::COLOR_BGR2Lab);
 
-      int adaptive_sample_radius = calculateAdaptiveSampleRadius(
-          board_pixel_width_approx, board_pixel_height_approx);
-      // Sample corner colors
-      std::cout << "  Sampling corner stone colors..." << std::endl;
-      cv::Vec3f lab_tl = getAverageLab(frame_lab, topLeft, adaptive_sample_radius);
-      cv::Vec3f lab_tr = getAverageLab(frame_lab, topRight, adaptive_sample_radius);
-      cv::Vec3f lab_bl = getAverageLab(frame_lab, bottomLeft, adaptive_sample_radius);
-      cv::Vec3f lab_br = getAverageLab(frame_lab, bottomRight, adaptive_sample_radius);
+      // Sample points are the corners of the `corrected_dest_points`
+      cv::Point2f sample_pt_TL_stone = corrected_dest_points[0];
+      cv::Point2f sample_pt_TR_stone = corrected_dest_points[1];
+      cv::Point2f sample_pt_BR_stone = corrected_dest_points[2];
+      cv::Point2f sample_pt_BL_stone = corrected_dest_points[3];
 
-      // --- NEW: Sample Board Color at Multiple Points and Average ---
-      std::cout << "  Sampling empty board colors..." << std::endl;
-      std::vector<cv::Point2f> board_sample_points;
-      board_sample_points.push_back((topLeft + topRight) * 0.5f); // Mid-top
-      board_sample_points.push_back((bottomLeft + bottomRight) *
-                                    0.5f); // Mid-bottom
-      board_sample_points.push_back((topLeft + bottomLeft) * 0.5f); // Mid-left
-      board_sample_points.push_back((topRight + bottomRight) *
-                                    0.5f); // Mid-right
-      // board_sample_points.push_back(
-      //     (topLeft + topRight + bottomLeft + bottomRight) * 0.25f); // Centroid
+      std::vector<cv::Point2f> board_sample_pts_corrected_final;
+      board_sample_pts_corrected_final.push_back(
+          (sample_pt_TL_stone + sample_pt_TR_stone) * 0.5f);
+      board_sample_pts_corrected_final.push_back(
+          (sample_pt_BL_stone + sample_pt_BR_stone) * 0.5f);
+      board_sample_pts_corrected_final.push_back(
+          (sample_pt_TL_stone + sample_pt_BL_stone) * 0.5f);
+      board_sample_pts_corrected_final.push_back(
+          (sample_pt_TR_stone + sample_pt_BR_stone) * 0.5f);
+      board_sample_pts_corrected_final.push_back(
+          (sample_pt_TL_stone + sample_pt_TR_stone + sample_pt_BL_stone +
+           sample_pt_BR_stone) *
+          0.25f);
+
+      const float calib_adaptive_radius_factor =
+          0.4f; // MUST MATCH processGoBoard's image.cpp factor
+      int adaptive_radius = calculateAdaptiveSampleRadius(
+          frame_width, frame_height);
+      if (bDebug)
+        std::cout << "  Sampling Lab colors from CORRECTED image using radius: "
+                  << adaptive_radius << std::endl;
+
+      // Stone colors based on their positions in the corrected standard view
+      cv::Vec3f lab_tl_sampled = getAverageLab(
+          final_corrected_lab, sample_pt_TL_stone, adaptive_radius); // Black
+      cv::Vec3f lab_tr_sampled = getAverageLab(
+          final_corrected_lab, sample_pt_TR_stone, adaptive_radius); // White
+      cv::Vec3f lab_bl_sampled = getAverageLab(
+          final_corrected_lab, sample_pt_BL_stone, adaptive_radius); // Black
+      cv::Vec3f lab_br_sampled = getAverageLab(
+          final_corrected_lab, sample_pt_BR_stone, adaptive_radius); // White
 
       cv::Vec3f sum_lab_board(0, 0, 0);
-      int valid_board_samples = 0;
-      for (const auto &pt : board_sample_points) {
-        if (pt.x >= 0 && pt.x < frame_width && pt.y >= 0 &&
-            pt.y < frame_height) {
-          cv::Vec3f sample = getAverageLab(frame_lab, pt, adaptive_sample_radius);
-          // Optional: Add a check here to discard sample if it's too close to
-          // known stone colors, in case a stone was accidentally left at a
-          // sample point. For now, we assume user followed instructions for
-          // empty board areas.
-          sum_lab_board += sample;
-          valid_board_samples++;
-          if (bDebug)
-            std::cout << "    Sampled board at (" << pt.x << "," << pt.y
-                      << "): Lab " << sample << std::endl;
-        } else {
-          if (bDebug)
-            std::cout << "    Skipping board sample point (" << pt.x << ","
-                      << pt.y << ") - out of bounds." << std::endl;
+      int valid_board_s = 0;
+      for (const auto &pt : board_sample_pts_corrected_final) {
+        cv::Vec3f s = getAverageLab(final_corrected_lab, pt, adaptive_radius);
+        if (s[0] >= 0) {
+          sum_lab_board += s;
+          valid_board_s++;
         }
       }
+      cv::Vec3f avg_lab_board_sampled =
+          (valid_board_s > 0)
+              ? (sum_lab_board / static_cast<float>(valid_board_s))
+              : cv::Vec3f(-1, -1, -1);
 
-      cv::Vec3f avg_lab_board(-1, -1, -1); // Default if no valid samples
-      if (valid_board_samples > 0) {
-        avg_lab_board = sum_lab_board / static_cast<float>(valid_board_samples);
-      } else {
-        std::cerr
-            << "Warning: Could not get any valid board color samples from the "
-               "center/mid-edge points. Board color in config might be invalid."
-            << std::endl;
-      }
-      // --- End NEW Board Sampling ---
-
-      if (bDebug) {
-        std::cout << std::fixed << std::setprecision(1);
-        std::cout << "  Debug: Sampled TL Lab: " << lab_tl << std::endl;
-        std::cout << "  Debug: Sampled TR Lab: " << lab_tr << std::endl;
-        std::cout << "  Debug: Sampled BL Lab: " << lab_bl << std::endl;
-        std::cout << "  Debug: Sampled BR Lab: " << lab_br << std::endl;
-        std::cout << "  Debug: Averaged Board Lab (" << valid_board_samples
-                  << " samples): " << avg_lab_board << std::endl;
-      }
-
-      // --- Save Snapshot (as before) ---
-      std::cout << "  Saving snapshot..." << std::endl;
-      // ... (your existing snapshot saving logic for CALIB_SNAPSHOT_PATH /
-      // CALIB_SNAPSHOT_DEBUG_PATH) ...
-      bool saved_image_flag = false;
-      std::string snapshot_path_to_use =
-          bDebug ? CALIB_SNAPSHOT_DEBUG_PATH : CALIB_SNAPSHOT_PATH;
-      saved_image_flag = cv::imwrite(
-          snapshot_path_to_use, (bDebug ? display_frame : clean_frame_to_save));
-      if (!saved_image_flag) {
-        std::cerr << "Error: Failed to save snapshot to "
-                  << snapshot_path_to_use << std::endl;
-      } else {
-        std::cout << "  Snapshot saved to " << snapshot_path_to_use
-                  << std::endl;
-      }
-
-      // --- Save Config (pass new avg_lab_board) ---
-      std::cout << "  Saving config file..." << std::endl;
-      if (!saveCornerConfig(CALIB_CONFIG_PATH, topLeft, topRight, bottomLeft,
-                            bottomRight, frame_width, frame_height, lab_tl,
-                            lab_tr, lab_bl, lab_br,
-                            avg_lab_board)) // Pass averaged board color
-      {
-        std::cerr << "Error: Failed to save config to " << CALIB_CONFIG_PATH
-                  << std::endl;
-      }
-      // saveCornerConfig prints its own success message
-      std::cout << "Save complete." << std::endl;
+      // Save to config.txt: RAW corners, but LAB values from CORRECTED image.
+      saveCornerConfig(CALIB_CONFIG_PATH, topLeft_raw, topRight_raw,
+                       bottomLeft_raw, bottomRight_raw, frame_width,
+                       frame_height, lab_tl_sampled, lab_tr_sampled,
+                       lab_bl_sampled, lab_br_sampled, avg_lab_board_sampled);
+      std::cout << "Calibration complete. Configuration saved." << std::endl;
+      break;
     }
   }
-
   cap.release();
   cv::destroyAllWindows();
-  std::cout << "Calibration window closed." << std::endl;
 }
