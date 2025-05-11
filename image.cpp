@@ -1502,9 +1502,9 @@ void processGoBoard(
             // Ensure index is valid before drawing
             int intersection_idx = r * 19 + c;
             if (intersection_idx < intersection_points_out.size()) {
-              cv::circle(board_with_stones_out,
-                         intersection_points_out[intersection_idx],
-                         adaptive_sample_radius, cv::Scalar(0, 255, 0), 2);
+              // cv::circle(board_with_stones_out,
+              //            intersection_points_out[intersection_idx],
+              //            adaptive_sample_radius, cv::Scalar(0, 255, 0), 2);
             }
           }
         }
