@@ -337,56 +337,52 @@ void drawCalibrationOSD(
 }
 
 // --- NEW OSD for Corrected Preview Window ---
-static void drawCorrectedPreviewOSD(cv::Mat &corrected_frame, int preview_width,
-                                    int preview_height) {
+static void
+drawCorrectedPreviewOSD(cv::Mat &corrected_frame, int preview_width,
+                        int preview_height,
+                        const std::vector<cv::Point2f> &corrected_dest_points,
+                        int adaptive_radius) {
+  cv::Point2f sample_pt_TL_stone = corrected_dest_points[0];
+  cv::Point2f sample_pt_TR_stone = corrected_dest_points[1];
+  cv::Point2f sample_pt_BR_stone = corrected_dest_points[2];
+  cv::Point2f sample_pt_BL_stone = corrected_dest_points[3];
+
+  int board_width = sample_pt_TR_stone.x - sample_pt_TL_stone.x;
+  int board_height = sample_pt_BL_stone.y - sample_pt_TL_stone.y;
   cv::Scalar grid_color(100, 100, 100);
-  float x_step = static_cast<float>(preview_width - 1) / 18.0f;
-  float y_step = static_cast<float>(preview_height - 1) / 18.0f;
+  float x_step = static_cast<float>(board_width - 1) / 18.0f;
+  float y_step = static_cast<float>(board_height - 1) / 18.0f;
+  float x_start = static_cast<float>(sample_pt_TL_stone.x);
+  float y_start = static_cast<float>(sample_pt_TL_stone.y);    
+  float x_end = static_cast<float>(sample_pt_BR_stone.x);
+  float y_end = static_cast<float>(sample_pt_BR_stone.y);
 
   for (int i = 0; i < 19; ++i) {
-    cv::line(corrected_frame, cv::Point2f(i * x_step, 0),
-             cv::Point2f(i * x_step, preview_height - 1), grid_color, 1);
-    cv::line(corrected_frame, cv::Point2f(0, i * y_step),
-             cv::Point2f(preview_width - 1, i * y_step), grid_color, 1);
+    cv::line(corrected_frame, cv::Point2f(x_start + i * x_step, y_start),
+             cv::Point2f(x_start + i * x_step, y_end), grid_color, 1);
+    cv::line(corrected_frame, cv::Point2f(x_start, y_start + i * y_step),
+             cv::Point2f(x_end, y_start + i * y_step), grid_color, 1);
   }
 
-  int marker_radius =
-      std::min(preview_width, preview_height) / 50; // Smaller marker
-  cv::Scalar black_marker_fill(0, 0, 0);
-  cv::Scalar white_marker_fill(255, 255, 255);
-  cv::Scalar black_marker_outline(255, 255, 255);
-  cv::Scalar white_marker_outline(0, 0, 0);
-
+  cv::Scalar white_marker_outline(255, 0, 0);
+  cv::Scalar black_marker_outline(0, 0, 255);
+ 
   // TL (Black Stone Target)
   cv::circle(corrected_frame,
-             cv::Point2f(0, 0) + cv::Point2f(marker_radius, marker_radius),
-             marker_radius, black_marker_fill, -1);
+             sample_pt_TL_stone,
+             adaptive_radius, black_marker_outline, 1); 
+  // TR (White Stone Target) 
   cv::circle(corrected_frame,
-             cv::Point2f(0, 0) + cv::Point2f(marker_radius, marker_radius),
-             marker_radius, black_marker_outline, 1);
-  // TR (White Stone Target)
+             sample_pt_TR_stone,
+             adaptive_radius, white_marker_outline, 1);
+  // BR (White Stone Target) 
   cv::circle(corrected_frame,
-             cv::Point2f(preview_width - 1 - marker_radius, marker_radius),
-             marker_radius, white_marker_fill, -1);
+             sample_pt_BR_stone,
+             adaptive_radius, white_marker_outline, 1);
+  // BL (Black Stone Target) 
   cv::circle(corrected_frame,
-             cv::Point2f(preview_width - 1 - marker_radius, marker_radius),
-             marker_radius, white_marker_outline, 1);
-  // BR (White Stone Target)
-  cv::circle(corrected_frame,
-             cv::Point2f(preview_width - 1 - marker_radius,
-                         preview_height - 1 - marker_radius),
-             marker_radius, white_marker_fill, -1);
-  cv::circle(corrected_frame,
-             cv::Point2f(preview_width - 1 - marker_radius,
-                         preview_height - 1 - marker_radius),
-             marker_radius, white_marker_outline, 1);
-  // BL (Black Stone Target)
-  cv::circle(corrected_frame,
-             cv::Point2f(marker_radius, preview_height - 1 - marker_radius),
-             marker_radius, black_marker_fill, -1);
-  cv::circle(corrected_frame,
-             cv::Point2f(marker_radius, preview_height - 1 - marker_radius),
-             marker_radius, black_marker_outline, 1);
+             sample_pt_BL_stone,
+             adaptive_radius, black_marker_outline, 1);
 
   std::string help_text =
       "Align physical stones to CORNER markers. Grid should be straight.";
@@ -637,6 +633,14 @@ void runInteractiveCalibration(int camera_index) {
   std::cout << "ACTIONS: 's' to save, 'esc' to exit." << std::endl;
   std::cout << "------------------------------------" << std::endl;
 
+  int correct_board_width = corrected_dest_points[1].x - corrected_dest_points[0].x;
+  int correct_board_height = corrected_dest_points[3].y - corrected_dest_points[0].y;
+  int adaptive_radius = calculateAdaptiveSampleRadius(
+      correct_board_width, correct_board_height);
+  if (bDebug)
+    std::cout << "  Sampling Lab colors from CORRECTED image using radius: "
+              << adaptive_radius << std::endl;
+
   while (true) {
     if (!cap.read(raw_frame) || raw_frame.empty()) {
       std::cerr << "Error: Could not read frame from camera." << std::endl;
@@ -651,12 +655,14 @@ void runInteractiveCalibration(int camera_index) {
 
     std::vector<cv::Point2f> current_source_points = {
         topLeft_raw, topRight_raw, bottomRight_raw, bottomLeft_raw};
+
     cv::Mat transform_matrix = cv::getPerspectiveTransform(
         current_source_points, corrected_dest_points);
-    cv::warpPerspective(raw_frame, display_corrected_bgr, transform_matrix,
+    cv::warpPerspective(display_raw, display_corrected_bgr, transform_matrix,
                         cv::Size(frame_width, frame_height));
 
-    drawCorrectedPreviewOSD(display_corrected_bgr, frame_width, frame_height);
+    drawCorrectedPreviewOSD(display_corrected_bgr, frame_width, frame_height,
+                            corrected_dest_points, adaptive_radius);
     cv::imshow(WINDOW_CORRECTED_PREVIEW, display_corrected_bgr);
 
     int key = cv::waitKey(30);
@@ -717,15 +723,7 @@ void runInteractiveCalibration(int camera_index) {
           (sample_pt_TL_stone + sample_pt_TR_stone + sample_pt_BL_stone +
            sample_pt_BR_stone) *
           0.25f);
-
-      const float calib_adaptive_radius_factor =
-          0.4f; // MUST MATCH processGoBoard's image.cpp factor
-      int adaptive_radius = calculateAdaptiveSampleRadius(
-          frame_width, frame_height);
-      if (bDebug)
-        std::cout << "  Sampling Lab colors from CORRECTED image using radius: "
-                  << adaptive_radius << std::endl;
-
+  
       // Stone colors based on their positions in the corrected standard view
       cv::Vec3f lab_tl_sampled = getAverageLab(
           final_corrected_lab, sample_pt_TL_stone, adaptive_radius); // Black
