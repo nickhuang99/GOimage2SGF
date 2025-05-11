@@ -1176,40 +1176,36 @@ static int classifySingleIntersectionByDistance(
   const float MAX_DIST_BOARD_WEIGHTED =
       35.0f; // YOU WILL NEED TO TUNE THIS EXPERIMENTALLY
 
-  // L* Heuristic Threshold Offsets
-  const float L_DARKER_THAN_BLACK_OFFSET =
-      15.0f; // If sample L < (black_ref_L - offset) -> it's black
-             // Black Ref L is ~73.5. Sample L=28. 73.5-28 = 45.5.
-             // So an offset of 40 might catch the L=28 stone.
-  const float L_BRIGHTER_THAN_WHITE_OFFSET =
-      15.0f; // If sample L > (white_ref_L + offset) -> it's white
-             // White Ref L is ~200. Sample L=168. Not brighter.
+  // The black stones in test1.jpg had L ~28-36, ref_black_L ~73.5. Difference
+  // is ~37-45. The white stones in test1.jpg had L ~168, ref_white_L ~200.
+  // Difference is ~32.
+  const float L_HEURISTIC_BLACK_OFFSET =
+      30.0f; // If L is this much lower than avg_black_calib[0]
+  const float L_HEURISTIC_WHITE_OFFSET =
+      20.0f; // If L is this much higher than avg_white_calib[0]
 
-  if (intersection_lab_color[0] < 0) { // Invalid sample
-    if (bDebug && false)
-      std::cerr << "Error: Invalid Lab sample in "
-                   "classifySingleIntersectionByDistance."
-                << std::endl;
-    return 0; // Default to empty
+  if (intersection_lab_color[0] < 0) { // Invalid sample   
+      THROWGEMERROR(
+          "Error: Invalid Lab sample in classifySingleIntersectionByDistance.")
   }
 
   // --- Heuristic 1: Absolute L* checks (your suggestion) ---
   if (intersection_lab_color[0] <
-      (avg_black_calib[0] - L_DARKER_THAN_BLACK_OFFSET)) {
+      (avg_black_calib[0] - L_HEURISTIC_BLACK_OFFSET)) {
     if (bDebug)
       std::cout << "      L-Heuristic: Classified as BLACK (L="
                 << intersection_lab_color[0]
                 << " < BlackRefL=" << avg_black_calib[0] << " - "
-                << L_DARKER_THAN_BLACK_OFFSET << ")" << std::endl;
+                << L_HEURISTIC_BLACK_OFFSET << ")" << std::endl;
     return 1; // Black
   }
   if (intersection_lab_color[0] >
-      (avg_white_calib[0] + L_BRIGHTER_THAN_WHITE_OFFSET)) {
+      (avg_white_calib[0] + L_HEURISTIC_WHITE_OFFSET)) {
     if (bDebug)
       std::cout << "      L-Heuristic: Classified as WHITE (L="
                 << intersection_lab_color[0]
                 << " > WhiteRefL=" << avg_white_calib[0] << " + "
-                << L_BRIGHTER_THAN_WHITE_OFFSET << ")" << std::endl;
+                << L_HEURISTIC_WHITE_OFFSET << ")" << std::endl;
     return 2; // White
   }
 

@@ -637,8 +637,8 @@ void runInteractiveCalibration(int camera_index) {
       board_sample_points.push_back((topLeft + bottomLeft) * 0.5f); // Mid-left
       board_sample_points.push_back((topRight + bottomRight) *
                                     0.5f); // Mid-right
-      board_sample_points.push_back(
-          (topLeft + topRight + bottomLeft + bottomRight) * 0.25f); // Centroid
+      // board_sample_points.push_back(
+      //     (topLeft + topRight + bottomLeft + bottomRight) * 0.25f); // Centroid
 
       cv::Vec3f sum_lab_board(0, 0, 0);
       int valid_board_samples = 0;
