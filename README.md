@@ -2,141 +2,182 @@
 
 ## Overview
 
-The Go Environment Manager (GEM) is a command-line tool designed to analyze Go board positions from images or live webcams, manage SGF (Smart Game Format) files, and assist in Go game recording. It leverages OpenCV for image processing and V4L2 (or OpenCV's backend) for webcam interactions.
+The Go Environment Manager (GEM) is a command-line tool designed to analyze Go board positions from images or live webcams, manage SGF (Smart Game Format) files, and assist in Go game recording. It leverages OpenCV for image processing and supports both direct V4L2 and OpenCV's VideoCapture backend for webcam interactions. Recent enhancements focus on a robust calibration system that significantly improves the accuracy of board detection and stone classification.
 
 ## Features
 
-* **Image Processing:**  
-    * Corrects perspective distortion in Go board images.  
-    * Detects the 19x19 grid lines on the Go board.  
-    * Identifies black and white stones at intersections using color clustering (Lab color space).  
-    * Applies post-processing filters to improve stone detection accuracy.  
-* **SGF Management:**  
-    * Generates SGF files from an analyzed board state (AB/AW setup).  
-    * Parses SGF files to extract header information, setup stones, and game moves.  
-    * Verifies a board image against an SGF file by overlaying SGF data on the image.  
-    * Compares two SGF files for semantic equivalence.  
-    * Determines the SGF move made between two board states.  
-* **Video Capture & Calibration:**  
-    * Probes connected video devices to list available webcams and their capabilities.  
-    * Captures snapshots (images) from a specified webcam.  
-    * Provides an interactive calibration mode to define the board area in the webcam view, saving these coordinates to `share/config.txt`. The `getBoardCorners` function in `image.cpp` will then use this configuration.  
-    * Supports two capture backends: direct V4L2 calls and OpenCV's VideoCapture (which can also use V4L2).  
-* **Command-Line Interface:**  
-    * Flexible options to perform various tasks.  
-    * Debug mode (`-d` or `--debug`) for verbose output.  
-* **Error Handling:**  
-    * Custom error classes (`GEMError`, `SGFError`) for more informative diagnostics.
+* **Advanced Image Processing & Board Analysis:**
+    * **Perspective Correction:** Corrects perspective distortion in Go board images using either default percentages or, more reliably, corner data from a `share/config.txt` file generated during calibration.
+    * **Calibrated Grid Generation:** Utilizes calibration data (specifically, the ideal board representation from `getBoardCornersCorrected`) to generate a perfectly uniform 19x19 grid on the perspective-corrected image. This replaces previous complex line detection algorithms for improved accuracy and consistency.
+    * **Calibrated Color-Based Stone Identification:**
+        * Samples colors in the Lab color space at each grid intersection using an adaptive sampling radius (calculated by `calculateAdaptiveSampleRadius` based on board size in the corrected view).
+        * Classifies stones (black, white, empty) by comparing sampled Lab colors against calibrated Lab values for black stones, white stones, and the average empty board color. These reference colors are stored in `share/config.txt` during calibration. This method (`classifyIntersectionsByCalibration`, `classifySingleIntersectionByDistance`) is more robust than relying solely on dynamic clustering.
+        * Uses median Lab values from sampled regions (`getAverageLab`) to reduce noise.
+    * **Post-processing:** Applies filters to reduce noise and improve stone detection accuracy (e.g., removing isolated white stones that might be glare).
+
+* **SGF Management:**
+    * Generates SGF files from an analyzed board state (AB/AW setup using `generateSGF`).
+    * Parses SGF files to extract header information, setup stones, and game moves (`parseSGFHeader`, `parseSGFGame`).
+    * Visually verifies a board image against an SGF file by overlaying SGF data on the image (`verifySGF`).
+    * Compares two SGF files for semantic equivalence (`compareSGF`).
+    * Determines the SGF move made between two board states (`determineSGFMove`).
+
+* **Video Capture & Enhanced Calibration:**
+    * **Device Probing:** Lists connected video devices and their capabilities (driver, card name, supported formats via V4L2 using `probeVideoDevices`).
+    * **Snapshotting:** Captures images from a specified webcam using either V4L2 or OpenCV backend (`captureSnapshot`, `captureFrame`).
+    * **Interactive Calibration (`runInteractiveCalibration`):**
+        * Provides a sophisticated two-window interface:
+            * **Raw Camera Feed (`WINDOW_RAW_FEED`):** Users adjust four corner markers (Top-Left, Top-Right, Bottom-Left, Bottom-Right) using keyboard inputs (`1`-`4` to select a corner, `i`/`j`/`k`/`l` to move the active corner).
+            * **Corrected Preview (`WINDOW_CORRECTED_PREVIEW`):** Shows a live perspective-corrected view of the board based on the user-adjusted corners. This window displays a grid and target markers for stone placement, aiding in precise alignment.
+        * **Comprehensive Configuration Saving:** Upon saving (`s` key):
+            * Saves the raw pixel coordinates of the four adjusted corners to `share/config.txt`.
+            * Samples Lab colors from the corrected view for:
+                * The stone at the Top-Left physical location (expected black).
+                * The stone at the Top-Right physical location (expected white).
+                * The stone at the Bottom-Left physical location (expected black).
+                * The stone at the Bottom-Right physical location (expected white).
+                * The average color of empty board spaces (sampled from mid-points).
+            * These sampled Lab values (L, a, b) are saved to `share/config.txt`.
+            * The image dimensions (width, height) at the time of calibration are also saved.
+        * **Snapshot Generation:**
+            * `share/snapshot_raw_calibration.jpg`: The raw frame from the camera when calibration was saved.
+            * `share/snapshot.jpg`: The perspective-corrected version of the board used for color sampling.
+            * `share/snapshot_osd.jpg` (if debug mode is active): The raw frame with OSD markers.
+    * **Capture Backend Selection:** Supports V4L2 (default) and OpenCV (`-M` or `--mode` option) for webcam operations.
+    * **Resolution Control:** Allows specifying desired capture resolution (e.g., `640x480`, `1280x720`) via the `--size` option, facilitated by `trySetCameraResolution`.
+
+* **Command-Line Interface:**
+    * Flexible options to perform various tasks (see `gem.cpp` `displayHelpMessage`).
+    * Debug mode (`-d` or `--debug`) for verbose output and visualizations.
+
+* **Error Handling:**
+    * Custom error class `GEMError` (using `THROWGEMERROR` macro) for detailed diagnostics, including file, line, and function information.
+    * Specific `SGFError` for SGF parsing issues.
+
+* **Configuration & Output:**
+    * Primary calibration data is stored in `share/config.txt`.
+    * Snapshots and SGF files are typically saved in the `./share/` directory or as specified by user.
+    * Constants for these paths (`CALIB_CONFIG_PATH`, `CALIB_SNAPSHOT_PATH`, etc.) are defined in `camera.cpp` and declared in `common.h`.
 
 ## Building
 
 To build GEM, you need:
 
-* A C++ compiler supporting C++17 (e.g., g++)  
-* OpenCV (version 4 or later) - Development libraries (`libopencv-dev`)  
-* libv4l-dev (for V4L2 support)
+* A C++ compiler supporting C++17 (e.g., g++)
+* OpenCV (version 4 or later) - Development libraries (`libopencv-dev`)
+* `libv4l-dev` (for V4L2 support)
 
-Use the following command to compile the source code:
+Use the `build.sh` script provided, or compile manually:
 
-```bash  
-g++ -g image.cpp sgf.cpp snapshot.cpp gem.cpp camera.cpp -o gem.exe `pkg-config --cflags --libs opencv4` -lv4l2
+```bash
+./build.sh
+# or
+# g++ -g image.cpp sgf.cpp snapshot.cpp gem.cpp camera.cpp -o gem.exe `pkg-config --cflags --libs opencv4` -lv4l2
 
-This command compiles all the C++ source files and links them with the necessary OpenCV and V4L2 libraries. The -g flag includes debugging symbols.
+  
+This command compiles all the C++ source files and links them with the necessary OpenCV and V4L2 libraries. The \-g flag includes debugging symbols.
 
-*** **Important: Permissions and the share Directory**
+## **Important: Permissions and the share Directory**
 
-*** **Webcam Access (V4L2)**
+### **Webcam Access (V4L2 & OpenCV)**
 
-Operations involving direct webcam access via V4L2 (like probing devices, taking snapshots with the V4L2 backend, or calibration) require permission to access video device files (e.g., /dev/video0).
+Operations involving webcam access (probing, snapshots, calibration) require permission to access video device files (e.g., /dev/video0).
 
-  **Running as root (sudo):** The simplest way is to run the application with sudo ./gem.exe .... However, this is generally not recommended for regular use due to security risks.  
-  **Using the video group (Recommended):** A better approach is to add your user to the video group. This group typically has the necessary permissions to access video devices without needing root privileges for the application itself.  
+* **Running as root (sudo):** sudo ./gem.exe .... Generally not recommended for regular use.  
+* **Using the video group (Recommended):** Add your user to the video group:  
   Bash  
-  sudo usermod -aG video $USER  
+  sudo usermod \-aG video $USER  
   You will need to **log out and log back in** for this change to take effect.
 
-*** **The share Directory**
+### **The share Directory**
 
-Even when running as a non-root user who is a member of the video group, there's a nuance: the program, when accessing V4L2 devices, might operate under the effective group ID of video. This video group might not have write permissions in your user's home directory or the project's current working directory if it was created solely by your user.  
-To ensure that GEM can save files like snapshot.jpg (from snapshot/calibration) and config.txt (from calibration) without permission errors, a share subdirectory is used. You need to create this directory and give it open permissions:
+GEM saves calibration data, snapshots, and generated SGF files into a share subdirectory within its working directory. Create this directory and ensure it has open permissions, especially if running with modified group IDs for device access:
 
 Bash
 
-mkdir share  
+mkdir \-p share  
 chmod 777 share
 
-This allows the program, even when its effective group for device access might be video, to write necessary files into the share folder. The calibration process specifically saves snapshot.jpg (or snapshot_osd.jpg in debug mode) and config.txt into this share directory.
+This allows the program to write necessary files (e.g., config.txt, snapshot.jpg) without permission errors.
 
-** **Usage**
+## **Usage**
 
-./gem.exe [options]
+Bash
 
-*** **Options:**
+./gem.exe \[options\]
 
-* -d, --debug: Enable debug output. Place this option first if used.  
-* -D, --device <device_path>: Specify the video device path (default: /dev/video0). Place this option early if used with device-dependent operations.  
-* -M, --mode <backend>: Specify capture backend ('v4l2' or 'opencv', default: v4l2).  
-* -b, --calibration: Run interactive board corner calibration using the webcam. Saves results to share/config.txt and a snapshot to share/snapshot.jpg.  
-* -p, --process-image <image_path>: Process the specified Go board image and display the result (if debug mode is active or explicitly coded).  
-* -g, --generate-sgf <input_image> <output_sgf>: Process an image and generate an SGF file representing the board state.  
-* -v, --verify <image_path> <sgf_path>: Overlay SGF data on the image to visually verify stone positions.  
-* -c, --compare <sgf_path1> <sgf_path2>: Compare two SGF files for semantic equivalence.  
-* --parse <sgf_path>: Parse an SGF file and print its header, setup stones, and moves.  
-* --probe-devices: List available video capture devices and their supported formats.  
-* -s, --snapshot <output_file_path>: Capture a snapshot from the webcam and save it to the specified path (e.g., share/my_snapshot.jpg).  
-* -r, --record-sgf <output_sgf_path>: Capture a snapshot, process it, and generate an SGF file (e.g., share/recorded_game.sgf).  
-* -t, --test-perspective <image_path>: (Development/Test) Test the perspective correction on an image.  
-* -h, --help: Display the help message.
+### **Options:**
 
-*** **Examples:**
+* \-d, \--debug: Enable debug output. Place this option first if used.  
+* \-D, \--device \<device\_path\>: Specify the video device path (default: /dev/video0).  
+* \-M, \--mode \<backend\>: Specify capture backend ('v4l2' or 'opencv', default: v4l2).  
+* \--size \<WxH\>: Specify capture resolution (e.g., 640x480, 1280x720). Default: 640x480.  
+* \-b, \--calibration: Run interactive board corner and color calibration using the webcam. Saves results to share/config.txt and various snapshots to the share/ directory.  
+* \--test-calibration-config: Loads share/config.txt and share/snapshot.jpg (or share/snapshot\_osd.jpg if debug) to draw the calibrated corners on the snapshot for verification.  
+* \-p, \--process-image \<image\_path\>: Process the specified Go board image. Requires valid share/config.txt.  
+* \-g, \--generate-sgf \<input\_image\> \<output\_sgf\>: Process an image and generate an SGF file. Requires valid share/config.txt.  
+* \-v, \--verify \<image\_path\> \<sgf\_path\>: Overlay SGF data on the image to visually verify stone positions. Requires valid share/config.txt.  
+* \-c, \--compare \<sgf\_path1\> \<sgf\_path2\>: Compare two SGF files for semantic equivalence.  
+* \--parse \<sgf\_path\>: Parse an SGF file and print its header, setup stones, and moves.  
+* \--probe-devices: List available video capture devices and their supported formats (uses V4L2).  
+* \-s, \--snapshot \<output\_file\_path\>: Capture a snapshot from the webcam and save it (e.g., share/my\_snapshot.jpg).  
+* \-r, \--record-sgf \<output\_sgf\_path\>: Capture a snapshot, process it, and generate an SGF file (e.g., share/recorded\_game.sgf). Requires valid share/config.txt.  
+* \--test-perspective \<image\_path\>: (Development/Test) Test the perspective correction on an image using current share/config.txt or defaults.  
+* \-h, \--help: Display the help message.
 
-1. **Enable debug mode and specify a different camera for probing:**  
+### **Examples:**
+
+1. **Enable debug mode, specify camera /dev/video1, and probe devices:**  
    Bash  
-   ./gem.exe -d -D /dev/video1 --probe-devices
+   ./gem.exe \-d \-D /dev/video1 \--probe-devices
 
-2. **Run interactive calibration for /dev/video0 using OpenCV backend:**  
+2. **Run interactive calibration for /dev/video0 using OpenCV backend and 1280x720 resolution:**  
    Bash  
-   ./gem.exe -M opencv -b
+   ./gem.exe \-M opencv \--size 1280x720 \-b
 
-   *(Ensure the share directory exists and is writable as explained above.)*  
-3. **Take a snapshot from /dev/video0 and save it to share/board_setup.jpg:**  
+3. **Take a snapshot and save it to share/board\_setup.jpg:**  
    Bash  
-   ./gem.exe -s share/board_setup.jpg
+   ./gem.exe \-s share/board\_setup.jpg
 
-   *(Ensure you have permissions or are in the video group, and share is writable.)*  
-4. **Process a local image:**  
+4. **Process a local image (ensure share/config.txt exists and matches image dimensions if applicable):**  
    Bash  
-   ./gem.exe -p ./my_go_game.png
+   ./gem.exe \-p ./my\_go\_game.png
 
 5. **Generate an SGF from an image:**  
    Bash  
-   ./gem.exe -g ./go_board_image.jpg ./output_game.sgf
+   ./gem.exe \-g ./go\_board\_image.jpg ./output\_game.sgf
 
-6. **Record a current board position from webcam to an SGF file:**  
+6. **Test your current calibration visually:**  
    Bash  
-   ./gem.exe -r share/live_game.sgf
+   ./gem.exe \--test-calibration-config
 
-*** **Functionality Details**
+## **Functionality Details**
 
 * **Board Processing (processGoBoard in image.cpp):**  
-  1. Applies perspective correction using corners defined in share/config.txt (if available and dimensions match) or default percentages.  
-  2. Detects horizontal and vertical grid lines.  
-  3. Finds intersection points.  
-  4. Samples colors (in Lab space) around intersections.  
-  5. Uses K-Means clustering (k=3) on sampled colors to identify black stones, white stones, and empty board points.  
-  6. Classifies clusters based on their Lab characteristics.  
-  7. Applies a post-processing filter to remove isolated white stones (often glare or reflections).  
+  1. **Requires valid calibration data** (share/config.txt) matching the input image's original dimensions for raw corner perspective correction, and for stone/board color references. Throws an error if calibration data is missing or incomplete.  
+  2. Applies perspective correction using raw corner data from config.txt (getBoardCorners \-\> correctPerspective).  
+  3. Converts the corrected image to Lab color space.  
+  4. Generates a uniform 19x19 grid directly from the idealized board view defined by getBoardCornersCorrected (which uses a fixed percentage of the corrected image dimensions).  
+  5. Finds intersection points of this ideal grid.  
+  6. Samples Lab colors at each intersection (getAverageLab using an adaptive radius).  
+  7. Classifies each intersection as black, white, or empty by comparing its sampled Lab color to the calibrated Lab reference values for black stones, white stones, and the empty board (from config.txt) using a weighted Euclidean distance metric and L-value heuristics (classifyIntersectionsByCalibration).  
+  8. Applies a post-processing filter to remove isolated "white" stones (often glare).  
+  9. Outputs the 19x19 board state matrix and an image with detected stones overlaid.  
 * **Calibration (runInteractiveCalibration in camera.cpp):**  
-  * Displays a live feed from the selected camera.  
-  * Allows interactive adjustment of the four corner points of the Go board area using keyboard inputs (u/d for up/down, w/n for wider/narrower).  
-  * Saves the adjusted corner coordinates (both pixel and percentage values, along with image dimensions) to share/config.txt.  
-  * Saves a snapshot of the current frame to share/snapshot.jpg (or share/snapshot_osd.jpg if bDebug is true).  
-* **SGF Generation (generateSGF in sgf.cpp):** Creates an SGF file with AB (add black) and AW (add white) properties based on the detected board state.  
-* **Device Probing (probeVideoDevices in snapshot.cpp):** Iterates through /dev/videoX devices, queries their capabilities (driver, card name, supported formats) using V4L2 ioctl calls.
+  * Displays a raw camera feed where the user adjusts four corner markers (topLeft\_raw, topRight\_raw, bottomLeft\_raw, bottomRight\_raw) using 1-4 to select and ijkl to move.  
+  * Simultaneously displays a corrected preview window showing the board based on the current raw corners and a target set of corrected points (getBoardCornersCorrected). This preview includes a grid and markers for stone placement guidance.  
+  * When 's' is pressed:  
+    * Saves the current raw corner coordinates and camera frame dimensions.  
+    * Performs perspective correction on the current raw frame.  
+    * Samples Lab colors from this corrected frame at the four corner locations (TL, TR, BL, BR assuming specific stone placements) and at board mid-points to calculate average black, white, and empty board Lab values.  
+    * Saves all these values (raw corners, image dimensions, Lab values for TL, TR, BL, BR stones, and average board color) into share/config.txt.  
+    * Saves share/snapshot\_raw\_calibration.jpg (the raw camera frame) and share/snapshot.jpg (the corrected frame used for sampling).  
+* **SGF Generation (generateSGF in sgf.cpp):** Creates an SGF file with AB (add black) and AW (add white) properties based on the board state matrix from processGoBoard.  
+* **Device Probing (probeVideoDevices in snapshot.cpp):** Iterates through /dev/videoX devices, queries their capabilities using V4L2 ioctl calls, and lists supported formats and frame sizes.
 
 ## **Contributing**
 
-Contributions to GEM are welcome! Please follow these general steps:
+Contributions to GEM are welcome\! Please follow these general steps:
 
 1. Fork the repository.  
 2. Create a new branch for your feature or bug fix.  
@@ -164,4 +205,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,  
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE  
 SOFTWARE.
-
