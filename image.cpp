@@ -876,90 +876,115 @@ vector<double> findUniformGridLinesImproved(const vector<double> &values,
 }
 
 // 5. Find Uniform Grid Lines (Refactored - More Robust)
-vector<double> findUniformGridLines(vector<double> &values, int target_count,
-                                    double tolerance, bool bDebug) {
-  // target_count is expected to be 19
-
-  if (bDebug && !values.empty()) {
-    cout << "Sorted clustered values of size: {" << values.size() << "}:\n";
-    for (size_t i = 0; i < values.size() - 1; ++i) {
-      cout << "value[" << i << "]: " << values[i]
-           << " distance: " << values[i + 1] - values[i] << endl;
-    }
-    cout << "value[" << values.size() - 1 << "]:" << values[values.size() - 1]
-         << endl;
-  }
-  vector<double> uniform_lines; // Declare uniform_lines here!
-  if (values.size() < 2) {
-    if (bDebug) {
-      cout << "findUniformGridLines: Less than 2 clustered values ("
-           << values.size() << "), cannot find uniform grid." << endl;
-    }
-    return vector<double>{}; // Return empty if too few lines
+std::vector<double> findUniformGridLines(
+    int target_count,           // Expected number of lines (e.g., 19)
+    bool bDebug,                // Debug flag
+    int corrected_image_width,  // Width of the perspective-corrected image
+    int corrected_image_height, // Height of the perspective-corrected image
+    bool is_generating_horizontal_lines // True for horizontal (y-coords), false
+                                        // for vertical (x-coords)
+) {
+  if (bDebug) {
+    std::cout
+        << "  Debug (findUniformGridLines - NEW CALIBRATED METHOD): Generating "
+        << (is_generating_horizontal_lines ? "horizontal" : "vertical")
+        << " lines for image size " << corrected_image_width << "x"
+        << corrected_image_height << std::endl;
   }
 
-  // 1. Calculate distances between adjacent clustered lines.
-  vector<double> distances;
-  for (size_t i = 0; i < values.size() - 1; ++i) {
-    distances.push_back(values[i + 1] - values[i]);
+  if (target_count <= 1) {
+    THROWGEMERROR("findUniformGridLines: target_count must be greater than 1.");
+  }
+  if (corrected_image_width <= 0 || corrected_image_height <= 0) {
+    THROWGEMERROR(
+        "findUniformGridLines: corrected_image dimensions must be positive.");
   }
 
-  // 2. Estimate the dominant grid spacing.
-  // We'll do this by analyzing the distribution of distances.
-  // A simple way is to use a histogram or cluster the distances.
-  // Let's try clustering the distances to find the most frequent spacing.
+  // Get the ideal corner positions in the corrected image
+  // getBoardCornersCorrected is from common.h (defined in image.cpp)
+  std::vector<cv::Point2f> corrected_board_corners =
+      getBoardCornersCorrected(corrected_image_width, corrected_image_height);
 
-  if (distances.empty()) {
-    if (bDebug) {
-      cout << "findUniformGridLines: No distances between clustered values."
-           << endl;
-    }
-    return vector<double>{};
+  if (corrected_board_corners.size() != 4) {
+    THROWGEMERROR("findUniformGridLines: getBoardCornersCorrected did not "
+                  "return 4 points.");
   }
 
-  // Use a map to count the frequency of distances (with a small bin size)
-  map<int, int> distance_hist;
-  double bin_size = 1.0; // Bin size for the histogram of distances
-  for (double d : distances) {
-    distance_hist[static_cast<int>(d / bin_size)]++;
-  }
-
-  int max_freq = 0;
-  int dominant_distance_bin = -1;
-  for (auto const &[bin, freq] : distance_hist) {
-    if (freq > max_freq) {
-      max_freq = freq;
-      dominant_distance_bin = bin;
-    }
-  }
-
-  double estimated_dominant_distance = dominant_distance_bin * bin_size;
-
-  // Refine the dominant distance by averaging the distances within the dominant
-  // bin
-  double sum_dominant_distances = 0;
-  int count_dominant_distances = 0;
-  for (double d : distances) {
-    if (abs(d - estimated_dominant_distance) <
-        bin_size) { // Check if distance is close to the estimated dominant
-                    // distance
-      sum_dominant_distances += d;
-      count_dominant_distances++;
-    }
-  }
-
-  double dominant_distance = estimated_dominant_distance;
-  if (count_dominant_distances > 0) {
-    dominant_distance = sum_dominant_distances / count_dominant_distances;
-  }
+  cv::Point2f tl = corrected_board_corners[0]; // Top-Left
+  cv::Point2f tr = corrected_board_corners[1]; // Top-Right
+  // cv::Point2f br = corrected_board_corners[2]; // Bottom-Right (not directly
+  // used for main axis start/end)
+  cv::Point2f bl = corrected_board_corners[3]; // Bottom-Left
 
   if (bDebug) {
-    cout << "Estimated dominant distance: " << dominant_distance << endl;
+    std::cout
+        << "    Corrected board corners used for generation (TL, TR, BR, BL):"
+        << std::endl;
+    std::cout << "      TL: " << tl << ", TR: " << tr
+              << ", BR: " << corrected_board_corners[2] << ", BL: " << bl
+              << std::endl;
   }
 
-  // 3. Find the best starting line and generate the 19 uniform lines.
-  return findUniformGridLinesImproved(values, dominant_distance, 19,
-                                      dominant_distance * tolerance, bDebug);
+  std::vector<double> lines;
+  lines.reserve(target_count);
+
+  if (is_generating_horizontal_lines) {
+    // Generating Y-coordinates for horizontal lines
+    float first_line_y = tl.y;
+    float last_line_y =
+        bl.y; // Use Bottom-Left Y for the extent of horizontal lines
+
+    if (std::abs(last_line_y - first_line_y) <
+        1.0f) { // Check for negligible height
+      THROWGEMERROR("findUniformGridLines: Corrected board height is too small "
+                    "for horizontal line generation.");
+    }
+
+    double spacing =
+        static_cast<double>(last_line_y - first_line_y) / (target_count - 1.0);
+
+    if (bDebug) {
+      std::cout << "    Horizontal lines: start_y=" << first_line_y
+                << ", end_y=" << last_line_y << ", spacing=" << spacing
+                << std::endl;
+    }
+
+    for (int i = 0; i < target_count; ++i) {
+      lines.push_back(static_cast<double>(first_line_y) + i * spacing);
+    }
+  } else {
+    // Generating X-coordinates for vertical lines
+    float first_line_x = tl.x;
+    float last_line_x =
+        tr.x; // Use Top-Right X for the extent of vertical lines
+
+    if (std::abs(last_line_x - first_line_x) <
+        1.0f) { // Check for negligible width
+      THROWGEMERROR("findUniformGridLines: Corrected board width is too small "
+                    "for vertical line generation.");
+    }
+
+    double spacing =
+        static_cast<double>(last_line_x - first_line_x) / (target_count - 1.0);
+
+    if (bDebug) {
+      std::cout << "    Vertical lines: start_x=" << first_line_x
+                << ", end_x=" << last_line_x << ", spacing=" << spacing
+                << std::endl;
+    }
+
+    for (int i = 0; i < target_count; ++i) {
+      lines.push_back(static_cast<double>(first_line_x) + i * spacing);
+    }
+  }
+
+  if (lines.size() != static_cast<size_t>(target_count)) {
+    // This should ideally not happen if logic is correct
+    THROWGEMERROR(
+        "findUniformGridLines: Failed to generate the target number of lines.");
+  }
+
+  return lines;
 }
 
 // Helper function to find the optimal clustering for a given set of lines
@@ -1054,61 +1079,104 @@ findOptimalClustering(const vector<Line> &horizontal_lines_raw,
 
 // Refactored detectUniformGrid to use the new findOptimalClustering function
 pair<vector<double>, vector<double>> detectUniformGrid(const Mat &image) {
-  Mat processed_image = preprocessImage(image, bDebug);
-  vector<Vec4i> mixed_segments = detectLineSegments(processed_image, bDebug);
-  auto [horizontal_lines_raw, vertical_lines_raw] =
-      convertSegmentsToLines(mixed_segments, bDebug);
-
-  // Use the new function to find the optimal clustering to get potentially 19
-  // lines We pass 19 as the target count for clustering
-  auto [clustered_horizontal_y, clustered_vertical_x] = findOptimalClustering(
-      horizontal_lines_raw, vertical_lines_raw, 19, bDebug);
-
-  vector<double> final_horizontal_y;
-  vector<double> final_vertical_x;
-
-  // Now, use findUniformGridLines to verify the uniformity of the clustered
-  // lines findUniformGridLines expects exactly 19 lines as input in the ideal
-  // case and verifies uniformity
-  double uniformity_tolerance =
-      0.1; // Tolerance for uniformity check - needs tuning
-  // Call the robust findUniformGridLines
-  final_horizontal_y = findUniformGridLines(clustered_horizontal_y, 19,
-                                            uniformity_tolerance, bDebug);
-  final_vertical_x = findUniformGridLines(clustered_vertical_x, 19,
-                                          uniformity_tolerance, bDebug);
-
-  // Final check: If we didn't end up with exactly 19 uniform lines in both
-  // directions, throw an exception.
-  if (final_horizontal_y.size() != 19 || final_vertical_x.size() != 19) {
-    if (bDebug) {
-      cout << "Final grid line detection failed: Expected 19x19 uniform grid, "
-              "but found "
-           << final_horizontal_y.size() << " horizontal and "
-           << final_vertical_x.size()
-           << " vertical uniform lines after findUniformGridLines." << endl;
-    }
-    // Throw an exception as the detection failed
-    THROWGEMERROR(std::string("Failed to detect 19x19 Go board grid. Found ") +
-                  Num2Str(final_horizontal_y.size()).str() +
-                  " horizontal and " + Num2Str(final_vertical_x.size()).str() +
-                  " vertical lines after uniform grid finding.");
+  // image here is expected to be the perspective-corrected BGR image
+  if (bDebug) {
+    std::cout << "Debug (detectUniformGrid): Using NEW calibrated method via "
+                 "refactored findUniformGridLines."
+              << std::endl;
   }
 
-  // The lines are already sorted by clusterAndAverageLines and verified by
-  // findUniformGridLines. No need to sort again here.
+  if (image.empty()) {
+    THROWGEMERROR("detectUniformGrid: Input image is empty.");
+  }
+
+  int corrected_width = image.cols;
+  int corrected_height = image.rows;
+  const int target_line_count = 19;
+
+  // Call the refactored findUniformGridLines
+  std::vector<double> final_horizontal_y = findUniformGridLines(
+      target_line_count, bDebug, corrected_width, corrected_height,
+      true); // true for is_generating_horizontal_lines
+
+  std::vector<double> final_vertical_x = findUniformGridLines(
+      target_line_count, bDebug, corrected_width, corrected_height,
+      false); // false for is_generating_horizontal_lines
+
+  // Basic validation
+  if (final_horizontal_y.size() != target_line_count ||
+      final_vertical_x.size() != target_line_count) {
+    THROWGEMERROR(
+        std::string("detectUniformGrid: Refactored findUniformGridLines failed "
+                    "to return 19x19 lines. Got H:") +
+        Num2Str(final_horizontal_y.size()).str() +
+        ", V:" + Num2Str(final_vertical_x.size()).str());
+  }
 
   if (bDebug) {
-    cout << "Final detected uniform horizontal lines (y): ";
+    std::cout << "  Debug (detectUniformGrid): Generated uniform horizontal "
+                 "lines (y): ";
     for (double y : final_horizontal_y)
-      cout << y << " ";
-    cout << endl;
-    cout << "Final detected uniform vertical lines (x): ";
+      std::cout << y << " ";
+    std::cout << std::endl;
+    std::cout << "  Debug (detectUniformGrid): Generated uniform vertical "
+                 "lines (x): ";
     for (double x : final_vertical_x)
-      cout << x << " ";
-    cout << endl;
+      std::cout << x << " ";
+    std::cout << std::endl;
+
+    // Optional: Draw these generated lines on a copy of the input image for
+    // visualization
+    cv::Mat grid_visualization_image = image.clone();
+    std::vector<cv::Point2f> dbg_corrected_corners =
+        getBoardCornersCorrected(corrected_width, corrected_height);
+
+    for (double y_coord : final_horizontal_y) {
+      cv::line(
+          grid_visualization_image, cv::Point(0, static_cast<int>(y_coord)),
+          cv::Point(grid_visualization_image.cols, static_cast<int>(y_coord)),
+          cv::Scalar(0, 255, 0), 1);
+    }
+    for (double x_coord : final_vertical_x) {
+      cv::line(
+          grid_visualization_image, cv::Point(static_cast<int>(x_coord), 0),
+          cv::Point(static_cast<int>(x_coord), grid_visualization_image.rows),
+          cv::Scalar(0, 255, 0), 1);
+    }
+    if (dbg_corrected_corners.size() == 4) {
+      cv::circle(grid_visualization_image, dbg_corrected_corners[0], 5,
+                 cv::Scalar(0, 0, 255), -1); // TL Red
+      cv::circle(grid_visualization_image, dbg_corrected_corners[1], 5,
+                 cv::Scalar(0, 0, 255), -1); // TR Red
+      cv::circle(grid_visualization_image, dbg_corrected_corners[2], 5,
+                 cv::Scalar(0, 0, 255), -1); // BR Red
+      cv::circle(grid_visualization_image, dbg_corrected_corners[3], 5,
+                 cv::Scalar(0, 0, 255), -1); // BL Red
+    }
+    cv::imshow("Generated Grid on Corrected Image (detectUniformGrid)",
+               grid_visualization_image);
+    cv::waitKey(1);
   }
-  return make_pair(final_horizontal_y, final_vertical_x);
+
+  return std::make_pair(final_horizontal_y, final_vertical_x);
+
+  /*
+  // --- OLD LOGIC THAT IS NOW BYPASSED ---
+  Mat processed_image = preprocessImage(image, bDebug); // Now unused by this
+  path vector<Vec4i> mixed_segments = detectLineSegments(processed_image,
+  bDebug); // Now unused auto [horizontal_lines_raw, vertical_lines_raw] =
+      convertSegmentsToLines(mixed_segments, bDebug); // Now unused
+
+  auto [clustered_horizontal_y, clustered_vertical_x] = findOptimalClustering(
+      horizontal_lines_raw, vertical_lines_raw, 19, bDebug); // Now unused
+
+  // The old findUniformGridLines would have been called here with
+  clustered_horizontal_y / clustered_vertical_x
+  // e.g., findUniformGridLines(clustered_horizontal_y, 19,
+  uniformity_tolerance, bDebug);
+  // That call is now replaced by the direct calls to the NEW
+  findUniformGridLines above.
+  */
 }
 
 // Function to find intersection points of two sets of lines
