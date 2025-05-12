@@ -23,7 +23,9 @@ ActiveCorner currentActiveCorner = ActiveCorner::TOP_LEFT; // Default to TL
 
 // --- NEW: Define calibration output paths ---
 const std::string CALIB_CONFIG_PATH = "./share/config.txt";
+const std::string CALIB_DEBUG_CONFIG_PATH = "./share/config_debug.txt";
 const std::string CALIB_SNAPSHOT_PATH = "./share/snapshot.jpg";
+const std::string CALIB_SNAPSHOT_RAW_PATH ="./share/snapshot_raw_calibration.jpg";
 const std::string CALIB_SNAPSHOT_DEBUG_PATH = "./share/snapshot_osd.jpg";
 
 const std::string WINDOW_RAW_FEED =
@@ -563,6 +565,63 @@ bool trySetCameraResolution(cv::VideoCapture &cap, int desired_width,
   return success;
 }
 
+void sampleLabColorsAndSaveConfig(
+    const cv::Mat& final_corrected_lab,                 // Input: Perspective-corrected LAB image
+    const std::vector<cv::Point2f>& corrected_dest_points, // Input: TL, TR, BR, BL coordinates in the corrected image
+    int adaptive_radius,                   // Input: Pre-calculated sampling radius
+    const std::string& output_config_filename)
+{
+  // Sample points are the corners of the `corrected_dest_points`
+  cv::Point2f sample_pt_TL_stone = corrected_dest_points[0];
+  cv::Point2f sample_pt_TR_stone = corrected_dest_points[1];
+  cv::Point2f sample_pt_BR_stone = corrected_dest_points[2];
+  cv::Point2f sample_pt_BL_stone = corrected_dest_points[3];
+
+  std::vector<cv::Point2f> board_sample_pts_corrected_final;
+  board_sample_pts_corrected_final.push_back(
+      (sample_pt_TL_stone + sample_pt_TR_stone) * 0.5f);
+  board_sample_pts_corrected_final.push_back(
+      (sample_pt_BL_stone + sample_pt_BR_stone) * 0.5f);
+  board_sample_pts_corrected_final.push_back(
+      (sample_pt_TL_stone + sample_pt_BL_stone) * 0.5f);
+  board_sample_pts_corrected_final.push_back(
+      (sample_pt_TR_stone + sample_pt_BR_stone) * 0.5f);
+  board_sample_pts_corrected_final.push_back(
+      (sample_pt_TL_stone + sample_pt_TR_stone + sample_pt_BL_stone +
+       sample_pt_BR_stone) *
+      0.25f);
+
+  // Stone colors based on their positions in the corrected standard view
+  cv::Vec3f lab_tl_sampled = getAverageLab(
+      final_corrected_lab, sample_pt_TL_stone, adaptive_radius); // Black
+  cv::Vec3f lab_tr_sampled = getAverageLab(
+      final_corrected_lab, sample_pt_TR_stone, adaptive_radius); // White
+  cv::Vec3f lab_bl_sampled = getAverageLab(
+      final_corrected_lab, sample_pt_BL_stone, adaptive_radius); // Black
+  cv::Vec3f lab_br_sampled = getAverageLab(
+      final_corrected_lab, sample_pt_BR_stone, adaptive_radius); // White
+
+  cv::Vec3f sum_lab_board(0, 0, 0);
+  int valid_board_s = 0;
+  for (const auto &pt : board_sample_pts_corrected_final) {
+    cv::Vec3f s = getAverageLab(final_corrected_lab, pt, adaptive_radius);
+    if (s[0] >= 0) {
+      sum_lab_board += s;
+      valid_board_s++;
+    }
+  }
+  cv::Vec3f avg_lab_board_sampled =
+      (valid_board_s > 0) ? (sum_lab_board / static_cast<float>(valid_board_s))
+                          : cv::Vec3f(-1, -1, -1);
+
+  // Save to config.txt: RAW corners, but LAB values from CORRECTED image.
+  saveCornerConfig(output_config_filename, sample_pt_TL_stone,
+                   sample_pt_TR_stone, sample_pt_BL_stone, sample_pt_BR_stone,
+                   final_corrected_lab.cols, final_corrected_lab.rows,
+                   lab_tl_sampled, lab_tr_sampled, lab_bl_sampled,
+                   lab_br_sampled, avg_lab_board_sampled);
+}
+
 // --- SIMPLIFIED Main Calibration Function ---
 void runInteractiveCalibration(int camera_index) {
   cv::VideoCapture cap;
@@ -678,7 +737,15 @@ void runInteractiveCalibration(int camera_index) {
       cv::Mat final_raw_bgr_for_snapshot =
           raw_frame.clone(); // The raw frame corresponding to the current good
                              // preview
-
+      if (bDebug) {
+        cv::Mat debug_sample_lab;
+        cv::cvtColor(final_raw_bgr_for_snapshot, debug_sample_lab,
+                   cv::COLOR_BGR2Lab);
+        sampleLabColorsAndSaveConfig(debug_sample_lab, current_source_points,
+                                     adaptive_radius, CALIB_DEBUG_CONFIG_PATH);
+        std::cout << "saving debug config at: " << CALIB_DEBUG_CONFIG_PATH
+                  << std::endl;
+      }
       // Perspective correct this final raw frame for sampling
       cv::Mat final_corrected_bgr_for_sampling;
       cv::warpPerspective(final_raw_bgr_for_snapshot,
@@ -686,16 +753,14 @@ void runInteractiveCalibration(int camera_index) {
                           cv::Size(frame_width, frame_height));
 
       // Save snapshots
-      cv::imwrite("./share/snapshot_raw_calibration.jpg",
-                  final_raw_bgr_for_snapshot);
+      cv::imwrite(CALIB_SNAPSHOT_RAW_PATH, final_raw_bgr_for_snapshot);
       cv::imwrite(CALIB_SNAPSHOT_PATH,
                   final_corrected_bgr_for_sampling); // This is the one whose
                                                      // colors are sampled
       if (bDebug)
         cv::imwrite(CALIB_SNAPSHOT_DEBUG_PATH, display_raw); // OSD on raw
       std::cout << "  Raw calibration snapshot saved to "
-                   "./share/snapshot_raw_calibration.jpg"
-                << std::endl;
+                << CALIB_SNAPSHOT_RAW_PATH << std::endl;
       std::cout << "  Corrected calibration snapshot (used for color sampling) "
                    "saved to "
                 << CALIB_SNAPSHOT_PATH << std::endl;
@@ -704,55 +769,57 @@ void runInteractiveCalibration(int camera_index) {
       cv::cvtColor(final_corrected_bgr_for_sampling, final_corrected_lab,
                    cv::COLOR_BGR2Lab);
 
-      // Sample points are the corners of the `corrected_dest_points`
-      cv::Point2f sample_pt_TL_stone = corrected_dest_points[0];
-      cv::Point2f sample_pt_TR_stone = corrected_dest_points[1];
-      cv::Point2f sample_pt_BR_stone = corrected_dest_points[2];
-      cv::Point2f sample_pt_BL_stone = corrected_dest_points[3];
+      sampleLabColorsAndSaveConfig(final_corrected_lab, corrected_dest_points,
+                                   adaptive_radius, CALIB_CONFIG_PATH);
+      // // Sample points are the corners of the `corrected_dest_points`
+      // cv::Point2f sample_pt_TL_stone = corrected_dest_points[0];
+      // cv::Point2f sample_pt_TR_stone = corrected_dest_points[1];
+      // cv::Point2f sample_pt_BR_stone = corrected_dest_points[2];
+      // cv::Point2f sample_pt_BL_stone = corrected_dest_points[3];
 
-      std::vector<cv::Point2f> board_sample_pts_corrected_final;
-      board_sample_pts_corrected_final.push_back(
-          (sample_pt_TL_stone + sample_pt_TR_stone) * 0.5f);
-      board_sample_pts_corrected_final.push_back(
-          (sample_pt_BL_stone + sample_pt_BR_stone) * 0.5f);
-      board_sample_pts_corrected_final.push_back(
-          (sample_pt_TL_stone + sample_pt_BL_stone) * 0.5f);
-      board_sample_pts_corrected_final.push_back(
-          (sample_pt_TR_stone + sample_pt_BR_stone) * 0.5f);
-      board_sample_pts_corrected_final.push_back(
-          (sample_pt_TL_stone + sample_pt_TR_stone + sample_pt_BL_stone +
-           sample_pt_BR_stone) *
-          0.25f);
+      // std::vector<cv::Point2f> board_sample_pts_corrected_final;
+      // board_sample_pts_corrected_final.push_back(
+      //     (sample_pt_TL_stone + sample_pt_TR_stone) * 0.5f);
+      // board_sample_pts_corrected_final.push_back(
+      //     (sample_pt_BL_stone + sample_pt_BR_stone) * 0.5f);
+      // board_sample_pts_corrected_final.push_back(
+      //     (sample_pt_TL_stone + sample_pt_BL_stone) * 0.5f);
+      // board_sample_pts_corrected_final.push_back(
+      //     (sample_pt_TR_stone + sample_pt_BR_stone) * 0.5f);
+      // board_sample_pts_corrected_final.push_back(
+      //     (sample_pt_TL_stone + sample_pt_TR_stone + sample_pt_BL_stone +
+      //      sample_pt_BR_stone) *
+      //     0.25f);
   
-      // Stone colors based on their positions in the corrected standard view
-      cv::Vec3f lab_tl_sampled = getAverageLab(
-          final_corrected_lab, sample_pt_TL_stone, adaptive_radius); // Black
-      cv::Vec3f lab_tr_sampled = getAverageLab(
-          final_corrected_lab, sample_pt_TR_stone, adaptive_radius); // White
-      cv::Vec3f lab_bl_sampled = getAverageLab(
-          final_corrected_lab, sample_pt_BL_stone, adaptive_radius); // Black
-      cv::Vec3f lab_br_sampled = getAverageLab(
-          final_corrected_lab, sample_pt_BR_stone, adaptive_radius); // White
+      // // Stone colors based on their positions in the corrected standard view
+      // cv::Vec3f lab_tl_sampled = getAverageLab(
+      //     final_corrected_lab, sample_pt_TL_stone, adaptive_radius); // Black
+      // cv::Vec3f lab_tr_sampled = getAverageLab(
+      //     final_corrected_lab, sample_pt_TR_stone, adaptive_radius); // White
+      // cv::Vec3f lab_bl_sampled = getAverageLab(
+      //     final_corrected_lab, sample_pt_BL_stone, adaptive_radius); // Black
+      // cv::Vec3f lab_br_sampled = getAverageLab(
+      //     final_corrected_lab, sample_pt_BR_stone, adaptive_radius); // White
 
-      cv::Vec3f sum_lab_board(0, 0, 0);
-      int valid_board_s = 0;
-      for (const auto &pt : board_sample_pts_corrected_final) {
-        cv::Vec3f s = getAverageLab(final_corrected_lab, pt, adaptive_radius);
-        if (s[0] >= 0) {
-          sum_lab_board += s;
-          valid_board_s++;
-        }
-      }
-      cv::Vec3f avg_lab_board_sampled =
-          (valid_board_s > 0)
-              ? (sum_lab_board / static_cast<float>(valid_board_s))
-              : cv::Vec3f(-1, -1, -1);
+      // cv::Vec3f sum_lab_board(0, 0, 0);
+      // int valid_board_s = 0;
+      // for (const auto &pt : board_sample_pts_corrected_final) {
+      //   cv::Vec3f s = getAverageLab(final_corrected_lab, pt, adaptive_radius);
+      //   if (s[0] >= 0) {
+      //     sum_lab_board += s;
+      //     valid_board_s++;
+      //   }
+      // }
+      // cv::Vec3f avg_lab_board_sampled =
+      //     (valid_board_s > 0)
+      //         ? (sum_lab_board / static_cast<float>(valid_board_s))
+      //         : cv::Vec3f(-1, -1, -1);
 
-      // Save to config.txt: RAW corners, but LAB values from CORRECTED image.
-      saveCornerConfig(CALIB_CONFIG_PATH, topLeft_raw, topRight_raw,
-                       bottomLeft_raw, bottomRight_raw, frame_width,
-                       frame_height, lab_tl_sampled, lab_tr_sampled,
-                       lab_bl_sampled, lab_br_sampled, avg_lab_board_sampled);
+      // // Save to config.txt: RAW corners, but LAB values from CORRECTED image.
+      // saveCornerConfig(CALIB_CONFIG_PATH, topLeft_raw, topRight_raw,
+      //                  bottomLeft_raw, bottomRight_raw, frame_width,
+      //                  frame_height, lab_tl_sampled, lab_tr_sampled,
+      //                  lab_bl_sampled, lab_br_sampled, avg_lab_board_sampled);
       std::cout << "Calibration complete. Configuration saved." << std::endl;
       break;
     }
