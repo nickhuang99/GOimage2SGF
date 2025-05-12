@@ -562,15 +562,11 @@ bool trySetCameraResolution(cv::VideoCapture &cap, int desired_width,
   return success;
 }
 
-void sampleLabColorsAndSaveConfig(
-    const cv::Mat
-        &final_corrected_lab, // Input: Perspective-corrected LAB image
-    const std::vector<cv::Point2f>
-        &corrected_dest_points, // Input: TL, TR, BR, BL coordinates in the
-                                // corrected image
-    int adaptive_radius,        // Input: Pre-calculated sampling radius
-    const std::string &output_config_filename) {
-  // Sample points are the corners of the `corrected_dest_points`
+
+void sampleDataForConfig(const cv::Mat &final_corrected_lab,
+                         const std::vector<cv::Point2f> &corrected_dest_points,
+                         int adaptive_radius, std::vector<cv::Vec3f> &output) {
+ // Sample points are the corners of the `corrected_dest_points`
   cv::Point2f sample_pt_TL_stone = corrected_dest_points[0];
   cv::Point2f sample_pt_TR_stone = corrected_dest_points[1];
   cv::Point2f sample_pt_BR_stone = corrected_dest_points[2];
@@ -612,13 +608,11 @@ void sampleLabColorsAndSaveConfig(
   cv::Vec3f avg_lab_board_sampled =
       (valid_board_s > 0) ? (sum_lab_board / static_cast<float>(valid_board_s))
                           : cv::Vec3f(-1, -1, -1);
-
-  // Save to config.txt: RAW corners, but LAB values from CORRECTED image.
-  saveCornerConfig(output_config_filename, sample_pt_TL_stone,
-                   sample_pt_TR_stone, sample_pt_BL_stone, sample_pt_BR_stone,
-                   final_corrected_lab.cols, final_corrected_lab.rows,
-                   lab_tl_sampled, lab_tr_sampled, lab_bl_sampled,
-                   lab_br_sampled, avg_lab_board_sampled);
+  output.push_back(lab_tl_sampled);
+  output.push_back(lab_tr_sampled);
+  output.push_back(lab_bl_sampled);
+  output.push_back(lab_br_sampled);
+  output.push_back(avg_lab_board_sampled);
 }
 
 // --- SIMPLIFIED Main Calibration Function ---
@@ -742,10 +736,9 @@ void runInteractiveCalibration(int camera_index) {
         cv::Mat debug_sample_lab;
         cv::cvtColor(final_raw_bgr_for_snapshot, debug_sample_lab,
                      cv::COLOR_BGR2Lab);
-        sampleLabColorsAndSaveConfig(debug_sample_lab, current_source_points,
-                                     adaptive_radius, CALIB_DEBUG_CONFIG_PATH);
-        std::cout << "saving debug config at: " << CALIB_DEBUG_CONFIG_PATH
-                  << std::endl;
+        std::vector<cv::Vec3f> output;
+        sampleDataForConfig(debug_sample_lab, current_source_points,
+                            adaptive_radius, output);
       }
       // Perspective correct this final raw frame for sampling
       cv::Mat final_corrected_bgr_for_sampling;
@@ -769,10 +762,13 @@ void runInteractiveCalibration(int camera_index) {
       cv::Mat final_corrected_lab;
       cv::cvtColor(final_corrected_bgr_for_sampling, final_corrected_lab,
                    cv::COLOR_BGR2Lab);
-
-      sampleLabColorsAndSaveConfig(final_corrected_lab, corrected_dest_points,
-                                   adaptive_radius, CALIB_CONFIG_PATH);
-
+      std::vector<cv::Vec3f> sample_data;
+      sampleDataForConfig(final_corrected_lab, corrected_dest_points,
+                          adaptive_radius, sample_data);     
+      saveCornerConfig(CALIB_CONFIG_PATH, topLeft_raw, topRight_raw,
+                       bottomLeft_raw, bottomRight_raw, frame_width,
+                       frame_height, sample_data[0], sample_data[1],
+                       sample_data[2], sample_data[3], sample_data[4]);
       std::cout << "Calibration complete. Configuration saved." << std::endl;
       break;
     }
