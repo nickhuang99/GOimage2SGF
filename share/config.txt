@@ -1,43 +1,44 @@
 # Go Board Calibration Configuration
-ImageWidth=640
-ImageHeight=480
+ImageWidth=1280
+ImageHeight=720
 
-# Corner Pixel Coordinates (TL, TR, BL, BR)
-TL_X_PX=156.0
-TL_Y_PX=157.0
-TR_X_PX=494.0
-TR_Y_PX=152.0
-BL_X_PX=56.0
-BL_Y_PX=443.0
-BR_X_PX=594.0
-BR_Y_PX=438.0
+# Corner Pixel Coordinates (Raw Image - TL, TR, BL, BR)
+TL_X_PX=402.0
+TL_Y_PX=98.0
+TR_X_PX=908.0
+TR_Y_PX=88.0
+BL_X_PX=262.0
+BL_Y_PX=517.0
+BR_X_PX=1043.0
+BR_Y_PX=512.0
 
-# Sampled Corner Lab Colors (L: 0-255, a/b: 0-255 approx)
-# Black stones expected at TL, BL. White stones at TR, BR.
-TL_L=80.0
-TL_A=123.0
-TL_B=132.0
-TR_L=219.0
-TR_A=118.0
-TR_B=120.0
-BL_L=81.0
-BL_A=119.0
-BL_B=123.0
-BR_L=198.0
-BR_A=119.0
-BR_B=125.0
+# Sampled Lab Colors from Corrected Image (L:0-255, A:0-255, B:0-255)
+# Black stones expected at TL, BL physical locations.
+# White stones expected at TR, BR physical locations.
+TL_L=79.0
+TL_A=125.0
+TL_B=117.0
+TR_L=227.0
+TR_A=114.0
+TR_B=112.0
+BL_L=74.0
+BL_A=123.0
+BL_B=116.0
+BR_L=197.0
+BR_A=120.0
+BR_B=116.0
 
-# Sampled Average Empty Board Lab Color
-BOARD_L_AVG=151.8
-BOARD_A_AVG=123.4
-BOARD_B_AVG=141.4
+# Sampled Average Empty Board Lab Color (from Corrected Image)
+BOARD_L_AVG=157.0
+BOARD_A_AVG=124.8
+BOARD_B_AVG=131.4
 
-# Corner Percentage Coordinates (%)
-TL_X_PC=24.4
-TL_Y_PC=32.7
-TR_X_PC=77.2
-TR_Y_PC=31.7
-BL_X_PC=8.8
-BL_Y_PC=92.3
-BR_X_PC=92.8
-BR_Y_PC=91.2
+# Corner Percentage Coordinates (Raw Image %)
+TL_X_PC=31.4
+TL_Y_PC=13.6
+TR_X_PC=70.9
+TR_Y_PC=12.2
+BL_X_PC=20.5
+BL_Y_PC=71.8
+BR_X_PC=81.5
+BR_Y_PC=71.1
