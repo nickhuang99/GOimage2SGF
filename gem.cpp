@@ -20,8 +20,8 @@ using namespace std;
 // Global debug variable
 bool bDebug = false;
 CaptureMode gCaptureMode = MODE_V4L2; // Default capture mode is V4L2
-int g_capture_width = 640;  // Default capture width
-int g_capture_height = 480; // Default capture height
+int g_capture_width = 640;            // Default capture width
+int g_capture_height = 480;           // Default capture height
 
 void displayHelpMessage() {
   cout << "Go Environment Manager (GEM)" << endl;
@@ -33,44 +33,49 @@ void displayHelpMessage() {
   cout << "  -D, --device <device_path>      : Specify the video device path "
           "(default: /dev/video0). Must be at the beginning."
        << endl;
-  cout << "  -b, --calibration               : Run calibration workflow "
-          "(displays " // Added option
-          "live webcam feed)."
-       << endl;
-  cout << "  -p, --process-image <image_path> : Process the Go board image."
-       << endl;
-  cout << "  -g, --generate-sgf <input_image> <output_sgf>"
-       << " : Generate SGF from image." << endl;
-  cout << "  -v, --verify <image_path> <sgf_path>"
-       << " : Verify board state against SGF." << endl;
-  cout << "  -c, --compare <sgf_path1> <sgf_path2>"
-       << " : Compare two SGF files." << endl;
-  cout << "  --parse <sgf_path>              : Parse an SGF file." << endl;
-  cout << "  --probe-devices                 : List available video devices. "
-          "Requires root privileges."
-       << endl;
-  cout << "  -s, --snapshot <output_file>    : Capture a snapshot from the "
-          "webcam. Requires root privileges."
-       << endl;
-  cout
-      << "  -r, --record-sgf <output_sgf>    : Capture a snapshot, process it, "
-         "and generate an SGF file. Requires root privileges."
-      << endl;
-  cout << "  -h, --help                        : Display this help message."
-       << endl;
-  cout << "\n  Note: Snapshot and recording operations (--probe-devices, "
-          "-s/--snapshot, -r/--record-sgf) often require root privileges (use "
-          "sudo).\n";
-  // Added option
-  cout << "  -M, --mode <backend>          : Specify capture backend ('v4l2' "
+  cout << "  -M, --mode <backend>              : Specify capture backend "
+          "('v4l2' "
           "or 'opencv', default: v4l2)."
        << endl;
-  cout << "  --size <WxH>                  : Specify capture resolution (e.g., "
+  cout << "  --size <WxH>                      : Specify capture resolution "
+          "(e.g., "
           "1280x720). Default: 640x480."
-       << endl; // New option
-  cout << "  --test-calibration-config     : Load calibration snapshot and "
+       << endl;
+  cout << "  -b, --calibration                 : Run calibration workflow."
+       << endl;
+  cout << "  --test-calibration-config         : Load calibration snapshot and "
           "config, draw corners."
-       << endl; // New option
+       << endl;
+  cout << "  -p, --process-image <image_path>   : Process the Go board image."
+       << endl;
+  cout << "  -g, --generate-sgf <in_img> <out_sgf> : Generate SGF from image."
+       << endl;
+  cout << "  -v, --verify <image_path> <sgf_path> : Verify board state against "
+          "SGF."
+       << endl;
+  cout << "  -c, --compare <sgf1> <sgf2>         : Compare two SGF files."
+       << endl;
+  cout << "  --parse <sgf_path>                  : Parse an SGF file." << endl;
+  cout
+      << "  --probe-devices                     : List available video devices."
+      << endl;
+  cout << "  -s, --snapshot <output_file>        : Capture a snapshot from the "
+          "webcam."
+       << endl;
+  cout << "  -r, --record-sgf <output_sgf>        : Capture snapshot, process, "
+          "and generate SGF."
+       << endl;
+  cout << "  -t, --tournament-mode             : Run in tournament mode "
+          "(workflow TBD)."
+       << endl; // New tournament mode
+  cout << "      --test-perspective <image_path> : (Dev) Test perspective "
+          "correction." // Removed -t
+       << endl;
+  cout << "  -h, --help                          : Display this help message."
+       << endl;
+  cout << "\n  Note: Webcam operations may require appropriate permissions "
+          "(e.g., user in 'video' group)."
+       << endl;
 }
 
 void processImageWorkflow(const std::string &imagePath) {
@@ -92,7 +97,7 @@ void processImageWorkflow(const std::string &imagePath) {
       }
     } catch (const cv::Exception &e) {
       THROWGEMERROR("OpenCV error in processImageWorkflow: " +
-                     string(e.what())); // Wrap OpenCV exceptions
+                    string(e.what())); // Wrap OpenCV exceptions
     }
   }
 }
@@ -119,7 +124,7 @@ void generateSGFWorkflow(const std::string &inputImagePath,
       cout << "SGF content written to: " << outputSGFPath << endl;
     } catch (const cv::Exception &e) {
       THROWGEMERROR("OpenCV error in generateSGFWorkflow: " +
-                     string(e.what())); // Wrap OpenCV exceptions
+                    string(e.what())); // Wrap OpenCV exceptions
     }
   }
 }
@@ -255,14 +260,14 @@ void probeVideoDevicesWorkflow() {
               << "\n  Capabilities: "
               << getCapabilityDescription(available_devices[i].capabilities)
               << " (0x" << std::hex << available_devices[i].capabilities
-              << std::dec << ")"
-              << "\n  Supported Formats & Sizes:";
+              << std::dec << ")" << "\n  Supported Formats & Sizes:";
     if (available_devices[i].supported_format_details.empty()) {
-        std::cout << " None listed or error in enumeration.";
+      std::cout << " None listed or error in enumeration.";
     } else {
-        for (const std::string& detail : available_devices[i].supported_format_details) {
-            std::cout << "\n    - " << detail;
-        }
+      for (const std::string &detail :
+           available_devices[i].supported_format_details) {
+        std::cout << "\n    - " << detail;
+      }
     }
     std::cout << "\n\n"; // Add an extra newline for better separation
   }
@@ -288,8 +293,8 @@ void recordSGFWorkflow(const std::string &device_path,
        << " mode, processing, and generating SGF to: " << output_sgf
        << " from device: " << device_path << endl;
 
-  Mat captured_image; 
-  try {       
+  Mat captured_image;
+  try {
     if (!captureFrame(device_path, captured_image)) {
       THROWGEMERROR("Failed to capture frame from device.");
     }
@@ -318,7 +323,7 @@ void recordSGFWorkflow(const std::string &device_path,
 }
 
 // New function for testing perspective transform
-void testPerspectiveTransform(const std::string& imagePath) {
+void testPerspectiveTransform(const std::string &imagePath) {
   Mat image = imread(imagePath);
   if (image.empty()) {
     cerr << "Error: Could not open image: " << imagePath << endl;
@@ -466,6 +471,29 @@ void testCalibrationConfigWorkflow() {
   std::cout << "Calibration Test Finished." << std::endl;
 }
 
+void testPerspectiveTransformWorkflow(const std::string& imagePath) { // Renamed function
+  cout << "Testing perspective transform on image: " << imagePath << endl;
+  Mat image = imread(imagePath);
+  if (image.empty()) {
+    cerr << "Error: Could not open image for perspective test: " << imagePath << endl;
+    return;
+  }
+  Mat corrected_image = correctPerspective(image);
+  if (bDebug || !corrected_image.empty()) {
+      imshow("Original for Perspective Test", image);
+      imshow("Corrected Perspective Test", corrected_image);
+      waitKey(0);
+      destroyAllWindows();
+  } else if (corrected_image.empty()){
+      cerr << "Error: Perspective correction resulted in an empty image." << endl;
+  }
+}
+
+void tournamentModeWorkflow() {
+    std::cout << "Tournament Mode Activated (Workflow TBD)." << std::endl;
+    // Placeholder for future tournament mode logic
+}
+
 int main(int argc, char *argv[]) {
   try {
     if (argc == 1) {
@@ -473,13 +501,14 @@ int main(int argc, char *argv[]) {
       return 0;
     }
     int option_index = 0;
-    std::string device_path = "/dev/video0"; // Default device
+    std::string device_path = "/dev/video0";
     std::string snapshot_output;
     std::string record_sgf_output;
-    std::string test_image_path; // For -t option
+    std::string test_perspective_image_path; // For --test-perspective
     bool probe_only = false;
-    bool run_calibration = false;    // Flag for calibration mode
-    bool run_test_calibration = false; // Flag for the new mode
+    bool run_calibration = false;
+    bool run_test_calibration = false;
+    bool run_tournament_mode = false; // Flag for new tournament mode
 
     struct option long_options[] = {
         {"process-image", required_argument, nullptr, 'p'},
@@ -489,21 +518,25 @@ int main(int argc, char *argv[]) {
         {"parse", required_argument, nullptr, 0},
         {"help", no_argument, nullptr, 'h'},
         {"debug", no_argument, nullptr, 'd'},
-        {"probe-devices", no_argument, nullptr, 1},
+        {"probe-devices", no_argument, nullptr, 0},
         {"snapshot", required_argument, nullptr, 's'},
         {"device", required_argument, nullptr, 'D'},
         {"record-sgf", required_argument, nullptr, 'r'},
-        {"test-perspective", required_argument, nullptr, 't'}, // Add -t option
-        {"calibration", no_argument, nullptr, 'b'}, // Added calibration long option 
-        {"mode", required_argument, nullptr, 'M'}, // Added mode option 
-        {"size", required_argument, nullptr, 'S'}, // Use S as a unique identifier for --size 
-        {"test-calibration-config", no_argument, nullptr, 'f'}, // Use f as unique value  
+        {"tournament-mode", no_argument, nullptr, 't'},
+        {"test-perspective", required_argument, nullptr, 0}, // Add -t option
+        {"calibration", no_argument, nullptr,
+         'b'}, // Added calibration long option
+        {"mode", required_argument, nullptr, 'M'}, // Added mode option
+        {"size", required_argument, nullptr,
+         'S'}, // Use S as a unique identifier for --size
+        {"test-calibration-config", no_argument, nullptr,
+         'f'}, // Use f as unique value
         {nullptr, 0, nullptr, 0}};
 
     int c;
     // Process all options in a single loop
-    while ((c = getopt_long(argc, argv, "dp:g:v:c:h:s:r:D:t:bM:S:f", long_options,
-                            &option_index)) != -1) {
+    while ((c = getopt_long(argc, argv, "dp:g:v:c:h:s:r:D:t:bM:S:f",
+                            long_options, &option_index)) != -1) {
       switch (c) {
       case 'd':
         bDebug = true;
@@ -596,23 +629,12 @@ int main(int argc, char *argv[]) {
         }
       } // End of scope for case 'S'
       break;
-      case 'f': // Corresponds to --test-calibration-config      
-          run_test_calibration = true;      
-      break;
+      case 'f': // Corresponds to --test-calibration-config
+        run_test_calibration = true;
+        break;
       case 'h':
         displayHelpMessage();
         return 0;
-      case 0: // Long-only option
-        if (strcmp(long_options[option_index].name, "parse") == 0) {
-          parseSGFWorkflow(optarg);
-        }
-        break;
-      case 1: // Long-only option
-        if (strcmp(long_options[option_index].name, "probe-devices") == 0) {
-          probe_only = true;
-          probeVideoDevicesWorkflow();
-        }
-        break;
       case 's':
         snapshot_output = optarg;
         break;
@@ -620,9 +642,24 @@ int main(int argc, char *argv[]) {
         record_sgf_output = optarg;
         break;
       case 't': // Handle -t option
-        test_image_path = optarg;
-        testPerspectiveTransform(test_image_path);
-        return 0; // Exit after testing
+        run_tournament_mode = true;
+        break;
+      case 0: // Long-only options
+        if (long_options[option_index].name == std::string("parse")) {
+          parseSGFWorkflow(optarg);
+        } else if (long_options[option_index].name ==
+                   std::string("probe-devices")) {
+          probe_only = true;
+        } else if (long_options[option_index].name ==
+                   std::string("test-calibration-config")) {
+          run_test_calibration = true;
+        } else if (long_options[option_index].name ==
+                   std::string("test-perspective")) {
+          test_perspective_image_path = optarg;
+          // Action for test-perspective is handled after loop if no other
+          // primary action taken
+        }
+        break;
       case '?':
       default:
         displayHelpMessage();
@@ -630,27 +667,66 @@ int main(int argc, char *argv[]) {
       }
     }
 
-    // Calibration takes precedence if set
-    if (run_calibration) {
-      calibrationWorkflow(device_path);
-      return 0; // Exit after calibration
-    }
-    if (run_test_calibration) { // Then test calibration if requested
-      testCalibrationConfigWorkflow();
-      return 0;
-    }
-    // Handle any remaining non-option arguments here if needed
+    // Workflow execution based on flags
     if (probe_only) {
-      return 0; // Exit if only probing devices
-    }
-
-    if (!snapshot_output.empty()) {
+      probeVideoDevicesWorkflow();
+    } else if (run_calibration) {
+      calibrationWorkflow(device_path);
+    } else if (run_test_calibration) {
+      testCalibrationConfigWorkflow();
+    } else if (run_tournament_mode) {
+      tournamentModeWorkflow();
+    } else if (!snapshot_output.empty()) {
       captureSnapshotWorkflow(device_path, snapshot_output);
+    } else if (!record_sgf_output.empty()) {
+      recordSGFWorkflow(device_path, record_sgf_output);
+    } else if (!test_perspective_image_path.empty()) {
+      // Execute if no other primary workflow was triggered by a short option
+      // and test-perspective was the only major action specified.
+      // This check ensures it doesn't run if, e.g., -p was also given.
+      // A more robust way might be to ensure only one "primary workflow" flag
+      // is true.
+      bool primary_action_taken =
+          run_calibration || run_test_calibration || run_tournament_mode ||
+          !snapshot_output.empty() || !record_sgf_output.empty() ||
+          (argc > optind + 1); // Heuristic: if other positional args for
+                               // p,g,v,c were processed
+
+      // This logic for when to execute testPerspectiveTransformWorkflow might
+      // need refinement based on how you want to prioritize options. For now,
+      // if it's the *only* path remaining and was set:
+      int non_opt_args = argc - optind;
+      bool other_actions_from_getopt =
+          false; // Check if any case apart from '0' (for long-only) and
+                 // 'd'/'D'/'M'/'S' was hit. This would require more complex
+                 // flag tracking inside the loop.
+
+      // Simple approach for now: if test_perspective_image_path is set and no
+      // other *major* workflow flag is true:
+      if (!run_calibration && !run_test_calibration && !run_tournament_mode &&
+          snapshot_output.empty() && record_sgf_output.empty()) {
+        // And ensure no *other* action that consumes optarg was taken after
+        // this (e.g. -p path_for_p) This check is tricky with getopt_long as it
+        // processes in order. The most reliable way is to have a flag for
+        // test_perspective_workflow and check it here.
+        testPerspectiveTransformWorkflow(test_perspective_image_path);
+      }
+    } else if (optind == argc &&
+               argc > 1) { // No primary actions left, but options were given
+      // This means options like -d, -D, -M, --size might have been given
+      // without a primary action. Or a long-only option like --parse was
+      // processed, and that's fine. If no workflow was explicitly triggered and
+      // no files remain, but options were parsed, it might be an incomplete
+      // command. However, getopt handles errors for missing arguments. If we
+      // reach here and nothing else was done, it's likely okay or help was
+      // already shown.
+    } else if (optind < argc) {
+      std::cerr << "Error: Unprocessed arguments. What is '" << argv[optind]
+                << "'?" << std::endl;
+      displayHelpMessage();
+      return 1;
     }
 
-    if (!record_sgf_output.empty()) {
-      recordSGFWorkflow(device_path, record_sgf_output);
-    }
   } catch (const GEMError &e) {
     cerr << "Error: " << e.what() << endl;
     return 1;
