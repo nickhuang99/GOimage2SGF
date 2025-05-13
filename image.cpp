@@ -1155,7 +1155,7 @@ pair<vector<double>, vector<double>> detectUniformGrid(const Mat &image) {
     }
     cv::imshow("Generated Grid on Corrected Image (detectUniformGrid)",
                grid_visualization_image);
-    cv::waitKey(1);
+    cv::waitKey(0);
   }
 
   return std::make_pair(final_horizontal_y, final_vertical_x);
@@ -1417,7 +1417,7 @@ static void classifyIntersectionsByCalibration(
   }
   if (bDebug) {
     imshow("Direct Classification Result (Helper)", board_with_stones_output);
-    cv::waitKey(1);
+    cv::waitKey(0);
   }
   if (bDebug)
     std::cout << "  Debug (classifyIntersectionsByCalibration): Finished."
@@ -1462,7 +1462,7 @@ void processGoBoard(
   }
   if (bDebug) {
     imshow("Corrected Perspective", image_bgr_corrected);
-    cv::waitKey(1);
+    cv::waitKey(0);
   }
 
   // 3. Convert to Lab and Detect Grid
@@ -1473,7 +1473,7 @@ void processGoBoard(
   }
   if (bDebug) {
     imshow("Lab Image", image_lab);
-    cv::waitKey(1);
+    cv::waitKey(0);
   }
 
   std::pair<std::vector<double>, std::vector<double>> grid_lines =
@@ -1535,58 +1535,9 @@ void processGoBoard(
   );
   // The imshow for "Direct Classification Result" is now inside
   // performDirectClassification if bDebug
-
-  // --- 6. Post-Processing Filter ---
-  if (bDebug)
-    std::cout << "  Debug: Applying post-processing filter." << std::endl;
-  // Ensure we have the expected number of points for 19x19 indexing
-  if (num_intersections == 361) {
-    cv::Mat temp_board_state = board_state_out.clone();
-    for (int r = 0; r < 19; ++r) {
-      for (int c = 0; c < 19; ++c) {
-        if (temp_board_state.at<uchar>(r, c) == 2) { // If white
-          bool has_stone_neighbor = false;
-          for (int dr = -1; dr <= 1; ++dr) {
-            for (int dc = -1; dc <= 1; ++dc) {
-              if (dr == 0 && dc == 0)
-                continue;
-              int nr = r + dr;
-              int nc = c + dc;
-              if (nr >= 0 && nr < 19 && nc >= 0 && nc < 19) {
-                if (temp_board_state.at<uchar>(nr, nc) == 1 ||
-                    temp_board_state.at<uchar>(nr, nc) == 2) {
-                  has_stone_neighbor = true;
-                  break;
-                }
-              }
-            }
-            if (has_stone_neighbor)
-              break;
-          }
-          if (!has_stone_neighbor) {
-            board_state_out.at<uchar>(r, c) = 0;
-            // Ensure index is valid before drawing
-            int intersection_idx = r * 19 + c;
-            if (intersection_idx < intersection_points_out.size()) {
-              // cv::circle(board_with_stones_out,
-              //            intersection_points_out[intersection_idx],
-              //            adaptive_sample_radius, cv::Scalar(0, 255, 0), 2);
-            }
-          }
-        }
-      }
-    }
-  } else if (bDebug) {
-    std::cout << "  Debug: Skipping post-processing filter due to non-standard "
-                 "number of intersections ("
-              << num_intersections << ")." << std::endl;
-  }
-
-  if (bDebug) {
-    imshow("Filtered Stones (Final)", board_with_stones_out);
+  
+ if (bDebug) {    
+    imshow("board_with_stones_out (Final)", board_with_stones_out);
     cv::waitKey(0);
-  }
-  if (bDebug)
-    std::cout << "Debug (processGoBoard): Board processing finished."
-              << std::endl;
+  } 
 }

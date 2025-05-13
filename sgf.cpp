@@ -99,6 +99,14 @@ string generateSGF(const Mat &board_state,
   vector<Point> black_stones;
   vector<Point> white_stones;
 
+  if (bDebug) {
+    for (int row = 0; row < 19; ++row) {
+      for (int col = 0; col < 19; ++col) {
+        cout << static_cast<int>(board_state.at<uchar>(row, col)) << ",";     
+      }
+      cout << endl;
+    }
+  }
   for (int row = 0; row < 19; ++row) {
     for (int col = 0; col < 19; ++col) {
       int stone = board_state.at<uchar>(row, col);
