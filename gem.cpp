@@ -578,8 +578,8 @@ void tournamentModeWorkflow(const std::string &game_name_final_prefix) {
 
   std::string snapshot_window_name = "Tournament: " + game_name_final_prefix;
   cv::namedWindow(snapshot_window_name, cv::WINDOW_AUTOSIZE);
-
-  while (true) {
+  bool canExit = false;
+  while (!canExit) {
     std::string window_title_current =
         snapshot_window_name + " - Step " + std::to_string(game_step_counter);
 
@@ -679,21 +679,24 @@ void tournamentModeWorkflow(const std::string &game_name_final_prefix) {
       cv::imshow(snapshot_window_name, display_image);
     } // end if processing_ok
 
-    // 6. Wait for user input AFTER processing the current step
-    int post_process_key = cv::waitKey(0);
-
-    if (post_process_key == 27) { // ESC
-      std::cout << "Tournament mode saved step " << game_step_counter
-                << " and exiting." << std::endl;
-      break;
-    } else if (post_process_key == 'n' || post_process_key == 'N') {
-      game_step_counter++;
-      // Loop will continue and capture a new frame for the new
-      // game_step_counter
-    } else {
-      if (bDebug)
-        std::cout << "Ignored key: " << post_process_key << ". Press N or ESC."
-                  << std::endl;    
+    // wait for only escape or 'n' key
+    while (true) {
+      int post_process_key = cv::waitKey(0);
+      if (post_process_key == 27) { // ESC
+        std::cout << "Tournament mode saved step " << game_step_counter
+                  << " and exiting." << std::endl;
+        canExit = true;
+        break;
+      } else if (post_process_key == 'n' || post_process_key == 'N') {
+        game_step_counter++;
+        break;
+        // Loop will continue and capture a new frame for the new
+        // game_step_counter
+      } else {
+        if (bDebug)
+          std::cout << "Ignored key: " << post_process_key
+                    << ". Press N or ESC." << std::endl;
+      }
     }
   }
   main_sgf_file_stream << ")" << std::endl;
