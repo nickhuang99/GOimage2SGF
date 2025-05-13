@@ -749,7 +749,7 @@ int main(int argc, char *argv[]) {
 
     int c;
     // Process all options in a single loop
-    while ((c = getopt_long(argc, argv, "dp:g:v:c:h:s:r:D:t:bM:S:f",
+    while ((c = getopt_long(argc, argv, "dp:g:v:c:h:s:r:D:bM:S:ft",
                             long_options, &option_index)) != -1) {
       switch (c) {
       case 'd':
