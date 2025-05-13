@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "common.h"
+using namespace std;
 
 // Enum to represent the active corner for adjustment
 enum class ActiveCorner {
@@ -615,9 +616,9 @@ void sampleDataForConfig(const cv::Mat &final_corrected_lab,
   output.push_back(avg_lab_board_sampled);
 }
 
-static bool
-verifyCalibrationAfterSave(const cv::Mat &raw_image_for_verification) {
-  std::cout << "  Verifying calibration..." << std::endl;
+static bool verifyCalibrationAfterSave(
+    const cv::Mat &raw_image_for_verification) {
+  std::cout << "  Verifying calibration (strict check)..." << std::endl;
 
   if (raw_image_for_verification.empty()) {
     std::cerr
@@ -626,20 +627,11 @@ verifyCalibrationAfterSave(const cv::Mat &raw_image_for_verification) {
     return false;
   }
 
-  // processGoBoard requires a valid CALIB_CONFIG_PATH to load its calibration
-  // data. Since we just saved it, it should be available. processGoBoard
-  // internally calls loadCalibrationData.
-
   cv::Mat board_state_matrix;
-  cv::Mat board_with_stones_display; // For debug display if needed
-  std::vector<cv::Point2f>
-      intersection_points; // Not directly used for this verification logic
+  cv::Mat board_with_stones_display;
+  std::vector<cv::Point2f> intersection_points;
 
   try {
-    // Process the raw snapshot using the calibration config we just saved.
-    // processGoBoard will apply perspective correction using CALIB_CONFIG_PATH,
-    // then detect grid and classify stones using the color data from
-    // CALIB_CONFIG_PATH.
     processGoBoard(raw_image_for_verification, board_state_matrix,
                    board_with_stones_display, intersection_points);
 
@@ -651,45 +643,43 @@ verifyCalibrationAfterSave(const cv::Mat &raw_image_for_verification) {
       return false;
     }
 
-    // Expected stone types (1 for Black, 2 for White)
-    // Note: SGF and internal representation often use (0,0) as top-left (A1 in
-    // SGF often means bottom-left for black). We assume standard Go board
-    // notation for SGF (A1 = bottom-left), but matrix (0,0) is top-left. The
-    // calibration expects: Physical TL: Black stone ->
-    // board_state_matrix.at<uchar>(0,0) Physical TR: White stone ->
-    // board_state_matrix.at<uchar>(0,18) Physical BL: Black stone ->
-    // board_state_matrix.at<uchar>(18,0) Physical BR: White stone ->
-    // board_state_matrix.at<uchar>(18,18)
-
-    int detected_tl = board_state_matrix.at<uchar>(0, 0);   // Top-Left
-    int detected_tr = board_state_matrix.at<uchar>(0, 18);  // Top-Right
-    int detected_bl = board_state_matrix.at<uchar>(18, 0);  // Bottom-Left
-    int detected_br = board_state_matrix.at<uchar>(18, 18); // Bottom-Right
-
-    bool tl_ok = (detected_tl == 1); // Expected Black
-    bool tr_ok = (detected_tr == 2); // Expected White
-    bool bl_ok = (detected_bl == 1); // Expected Black
-    bool br_ok = (detected_br == 2); // Expected White
-
-    std::cout << "    Verification Results:" << std::endl;
-    std::cout << "      Top-Left (expected Black=1): Detected " << detected_tl
-              << (tl_ok ? " (OK)" : " (FAIL!)") << std::endl;
-    std::cout << "      Top-Right (expected White=2): Detected " << detected_tr
-              << (tr_ok ? " (OK)" : " (FAIL!)") << std::endl;
-    std::cout << "      Bottom-Left (expected Black=1): Detected "
-              << detected_bl << (bl_ok ? " (OK)" : " (FAIL!)") << std::endl;
-    std::cout << "      Bottom-Right (expected White=2): Detected "
-              << detected_br << (br_ok ? " (OK)" : " (FAIL!)") << std::endl;
-
-    if (bDebug && !board_with_stones_display.empty()) {
-      cv::imshow("Calibration Verification - Processed Board",
-                 board_with_stones_display);
-      cv::waitKey(1); // Display for a moment
+    for (int r = 0; r < 19; ++r) {
+      for (int c = 0; c < 19; ++c) {
+        if (r != 0 || r != 18 || c != 0 || c != 18) {
+          if (board_state_matrix.at<uchar>(r, c) != 0) {
+            cout << "verifyCalibrationAfterSave: not empty at[" << r << "," << c
+                 << "]" << endl;
+            if (bDebug) {
+              cv::imshow("Calibration Verification empty detection failed",
+                         board_with_stones_display);
+              cv::waitKey(0);
+            }
+            return false;
+          } else {
+            int color = board_state_matrix.at<uchar>(r, c);
+            bool black_correct =
+                color == BLACK && (r == 0 && c == 0 || r == 18 && c == 0);
+            bool white_correct =
+                color == WHITE && (r == 0 && c == 18 || r == 18 && c == 18);
+            if (!black_correct || !white_correct) {
+              cout << "stone detection failed at [" << r << "," << c << "]"
+                   << color << endl;
+              if (bDebug) {
+                cv::imshow("Calibration Verification stones detection failed",
+                           board_with_stones_display);
+                cv::waitKey(0);
+              }
+              return false;
+            }
+          }
+        }
+      }
     }
-
-    return tl_ok && tr_ok && bl_ok && br_ok;
-
-  } catch (const std::exception &e) {
+    return true;
+  } catch (const GEMError &ge) { // Catch specific GEMError from processGoBoard
+    std::cerr << "    Verification GEMError: " << ge.what() << std::endl;
+    return false;
+  } catch (const std::exception &e) { // Catch other standard exceptions
     std::cerr << "    Verification Exception: " << e.what() << std::endl;
     return false;
   }

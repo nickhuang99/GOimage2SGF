@@ -205,11 +205,11 @@ static int classifyIntersectionByCalibration(
   int classification = 0; // Default to empty (board)
 
   if (min_dist == dist_b && dist_b < MAX_DIST_STONE_CALIB) {
-    classification = 1; // Black
+    classification = BLACK; // Black
   } else if (min_dist == dist_w && dist_w < MAX_DIST_STONE_CALIB) {
-    classification = 2; // White
+    classification = WHITE; // White
   } else if (min_dist == dist_empty && dist_empty < MAX_DIST_BOARD_CALIB) {
-    classification = 0; // Empty
+    classification = EMPTY; // Empty
   } else {
     // Uncertain or too far from all references, classify as empty
     classification = 0;

@@ -19,6 +19,10 @@ extern const std::string CALIB_CONFIG_PATH;
 extern const std::string CALIB_SNAPSHOT_PATH;
 extern const std::string CALIB_SNAPSHOT_DEBUG_PATH;
 
+#define WHITE 2
+#define BLACK 1
+#define EMPTY 0
+
 // Custom exception class for GEM errors
 class GEMError : public std::runtime_error {
 public:
