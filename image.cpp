@@ -212,7 +212,7 @@ static int classifyIntersectionByCalibration(
     classification = EMPTY; // Empty
   } else {
     // Uncertain or too far from all references, classify as empty
-    classification = 0;
+    classification = EMPTY;
     if (bDebug) {
       // This case might be interesting to log if min_dist wasn't one of the
       // three, or if it matched but exceeded its threshold. For now, just

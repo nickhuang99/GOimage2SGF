@@ -101,7 +101,7 @@ void processImageWorkflow(const std::string &imagePath) {
                      intersection_points);
       // Further processing or display (could be moved to another function if
       // needed)
-      if (bDebug) {
+      if (bDebug || true) {
         imshow("processGoBoard", board_with_stones);
         waitKey(0);
       }
