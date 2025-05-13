@@ -1,6 +1,7 @@
 // gem.cpp
 #include "common.h"
 #include <algorithm>
+#include <bits/getopt_core.h>
 #include <fstream>
 #include <getopt.h> // Include for getopt_long
 #include <iomanip>
@@ -36,8 +37,10 @@ void displayHelpMessage() {
   cout << "  -d, --debug                       : Enable debug output (must be "
           "at the beginning)."
        << endl;
-  cout << "  -D, --device <device_path>      : Specify the video device path "
-          "(default: /dev/video0). Must be at the beginning."
+  cout << "  -D, --device <device_path>      : Specify video device by number "
+          "(e.g., 0, 1) "
+          "(default: 0 which is equivalent to /dev/video0). Must be at the "
+          "beginning."
        << endl;
   cout << "  -M, --mode <backend>              : Specify capture backend "
           "('v4l2' "
@@ -759,9 +762,19 @@ int main(int argc, char *argv[]) {
         bDebug = true;
         cout << "Debug mode enabled." << endl;
         break;
-      case 'D':
-        g_device_path = optarg;
-        break;
+      case 'D': // need to handle more than one digig
+      {
+        Str2Num num(optarg);
+        if (num && num.val() >= 0 && num.val() < 256) {
+          auto sz = g_device_path.size() - 1;
+          g_device_path.resize(sz);
+          g_device_path += optarg;
+          cout << "Device:" << g_device_path << endl;
+        } else {
+          cout << "invalid device number: " << optarg << endl;
+        }
+      } 
+      break;
       case 'b': // Handle calibration option
         run_calibration = true;
         break;

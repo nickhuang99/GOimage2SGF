@@ -9,7 +9,11 @@
 #include <sstream>
 #include <stdexcept>
 #include <string>
+#include <tuple>
 #include <vector>
+#include <cstring>
+#include <charconv>
+
 
 extern bool bDebug;
 extern int g_capture_width;
@@ -50,6 +54,19 @@ public:
   }
   operator std::string() { return m_str; }
   std::string str() { return m_str; }
+};
+
+class Str2Num {
+  int value;
+  bool valid;
+
+public:
+  explicit Str2Num(const char *data) {
+    auto [ptr, ec] = std::from_chars(data, data + strlen(data), value);
+    valid = ec == std::errc();
+  }
+  operator bool() { return valid; }
+  int val() { return value; }
 };
 
 // Macro for throwing GEMError exceptions with source code information
