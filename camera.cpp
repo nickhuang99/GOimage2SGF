@@ -645,8 +645,25 @@ static bool verifyCalibrationAfterSave(
 
     for (int r = 0; r < 19; ++r) {
       for (int c = 0; c < 19; ++c) {
-        if (r != 0 || r != 18 || c != 0 || c != 18) {
-          if (board_state_matrix.at<uchar>(r, c) != 0) {
+        // corner cases
+        if ((r == 0 || r == 18) && (c == 0 || c == 18)) {
+          int color = board_state_matrix.at<uchar>(r, c);
+          bool black_correct =
+              color == BLACK && (r == 0 && c == 0 || r == 18 && c == 0);
+          bool white_correct =
+              color == WHITE && (r == 0 && c == 18 || r == 18 && c == 18);
+          if (!black_correct || !white_correct) {
+            cout << "stone detection failed at [" << r << "," << c << "]"
+                 << color << endl;
+            if (bDebug) {
+              cv::imshow("Calibration Verification stones detection failed",
+                         board_with_stones_display);
+              cv::waitKey(0);
+            }
+            return false;
+          }
+        } else { // non-corner cases, must be empty
+          if (board_state_matrix.at<uchar>(r, c) != EMPTY) {
             cout << "verifyCalibrationAfterSave: not empty at[" << r << "," << c
                  << "]" << endl;
             if (bDebug) {
@@ -655,22 +672,6 @@ static bool verifyCalibrationAfterSave(
               cv::waitKey(0);
             }
             return false;
-          } else {
-            int color = board_state_matrix.at<uchar>(r, c);
-            bool black_correct =
-                color == BLACK && (r == 0 && c == 0 || r == 18 && c == 0);
-            bool white_correct =
-                color == WHITE && (r == 0 && c == 18 || r == 18 && c == 18);
-            if (!black_correct || !white_correct) {
-              cout << "stone detection failed at [" << r << "," << c << "]"
-                   << color << endl;
-              if (bDebug) {
-                cv::imshow("Calibration Verification stones detection failed",
-                           board_with_stones_display);
-                cv::waitKey(0);
-              }
-              return false;
-            }
           }
         }
       }
