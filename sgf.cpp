@@ -15,6 +15,17 @@
 using namespace std;
 using namespace cv;
 
+static void debugPrint(const Mat& before_board_state, const Mat& next_board_state) {
+  for (int row = 0; row < 19; ++row) {   
+    for (int col = 0; col < 19; ++col) {
+      int before_stone = before_board_state.at<uchar>(row, col);
+      int next_stone = next_board_state.at<uchar>(row, col);
+      cout << before_stone << "(" << next_stone << ") ";    
+    }
+    cout << endl;
+  }
+}
+
 // Function to determine the SGF move between two board states
 string determineSGFMove(const Mat &before_board_state,
                         const Mat &next_board_state) {
@@ -71,9 +82,11 @@ string determineSGFMove(const Mat &before_board_state,
           "AE[" + string(1, sgf_col_remove) + string(1, sgf_row_remove) + "]";
     }
   } else {
-    sgf_move = ";ERROR: Invalid move detected!"; // Handle as an error
+    if (bDebug) {
+      debugPrint(before_board_state, next_board_state);
+    }
+    THROWGEMERROR("ERROR: Invalid move detected!");
   }
-
   return sgf_move;
 }
 

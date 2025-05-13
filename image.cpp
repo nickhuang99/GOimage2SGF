@@ -555,7 +555,7 @@ Mat correctPerspective(const Mat &image) {
   Mat corrected_image;
   warpPerspective(image, corrected_image, perspective_matrix,
                   Size(width, height));
-  if (bDebug && false) {
+  if (bDebug) {
     // Draw the input and output corners on the original and corrected images
     for (const auto &corner : input_corners) {
       circle(image, corner, 5, Scalar(0, 0, 255), -1); // Red circles
