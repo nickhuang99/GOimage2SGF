@@ -18,6 +18,7 @@
 extern bool bDebug;
 extern int g_capture_width;
 extern int g_capture_height;
+extern std::string g_device_path;
 
 extern const std::string CALIB_CONFIG_PATH;
 extern const std::string CALIB_SNAPSHOT_PATH;
@@ -111,19 +112,19 @@ struct CalibrationData {
   cv::Vec3f lab_tr = {-1.0f, -1.0f, -1.0f};
   cv::Vec3f lab_bl = {-1.0f, -1.0f, -1.0f};
   cv::Vec3f lab_br = {-1.0f, -1.0f, -1.0f};
-  // --- NEW: Add board color fields ---
-  cv::Vec3f lab_board_avg = {-1.0f, -1.0f,
-                             -1.0f}; // For the averaged board color
+  cv::Vec3f lab_board_avg = {-1.0f, -1.0f, -1.0f}; 
 
-  int image_width = 0;
-  int image_height = 0;
+  // --- MODIFIED/CLARIFIED ---
+  std::string device_path;       // Device path string (e.g., "/dev/video0")
+  int image_width = 0;           // Frame width at time of calibration
+  int image_height = 0;          // Frame height at time of calibration
 
   bool corners_loaded = false;
-  bool colors_loaded = false; // For corner stone colors
-  bool dimensions_loaded = false;
-  bool board_color_loaded = false; // NEW flag for average board color
+  bool colors_loaded = false; 
+  bool board_color_loaded = false; 
+  bool dimensions_loaded = false;           // Covers image_width_at_calibration, image_height_at_calibration
+  bool device_path_loaded = false;          // NEW flag for device_path_at_calibration
 };
-
 // Structure to represent a single move, including captured stones
 struct Move {
   int player; // 1 for Black, 2 for White, 0 for remove

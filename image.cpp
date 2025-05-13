@@ -365,18 +365,27 @@ CalibrationData loadCalibrationData(const std::string &config_path) {
   configFile.close();
 
   try {
+    if (config_map.count("DevicePath")) {
+      data.device_path = config_map["DevicePath"];
+      data.device_path_loaded = true;
+      if (bDebug)
+        std::cout << "  Debug: Loaded DevicePath: "
+                  << data.device_path << std::endl;
+    } else {
+      if (bDebug)
+        std::cerr << "  Warning: DevicePath missing from config." << std::endl;
+    }
     // Parse Dimensions (as in your file)
-    if (config_map.count("ImageWidth") && config_map.count("ImageHeight")) {
-      data.image_width = std::stoi(config_map["ImageWidth"]);
+     if (config_map.count("ImageWidth") && config_map.count("ImageHeight")) {
+      data.image_width = std::stoi(config_map["ImageWidth"]); // Store in new distinct fields
       data.image_height = std::stoi(config_map["ImageHeight"]);
       data.dimensions_loaded = true;
       if (bDebug)
-        std::cout << "  Debug: Loaded Dimensions: " << data.image_width << "x"
+        std::cout << "  Debug: Loaded Dimensions at Calib: " << data.image_width << "x"
                   << data.image_height << std::endl;
     } else {
       if (bDebug)
-        std::cerr << "  Warning: ImageWidth or ImageHeight missing from config."
-                  << std::endl;
+        std::cerr << "  Warning: ImageWidth or ImageHeight missing from config." << std::endl;
     }
 
     // Parse Corners (_PX) (as in your file)

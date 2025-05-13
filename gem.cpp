@@ -554,7 +554,85 @@ generateFirstGameStateSGF(const std::string &current_step_sgf_content_full) {
                 current_step_sgf_content_full)
 }
 
+static bool setupCalibrationFromConfig() {
+  std::cout << "  Attempting to load calibration settings from: "
+            << CALIB_CONFIG_PATH << std::endl;
+  CalibrationData data = loadCalibrationData(
+      CALIB_CONFIG_PATH); // loadCalibrationData is in image.cpp
+
+  if (!data.device_path_loaded || data.device_path_at_calibration.empty()) {
+    THROWGEMERROR("Tournament mode requires 'DevicePath' in " +
+                  CALIB_CONFIG_PATH + ". Please run calibration first.");
+  }
+  if (!data.dimensions_loaded || data.image_width_at_calibration <= 0 ||
+      data.image_height_at_calibration <= 0) {
+    THROWGEMERROR(
+        "Tournament mode requires 'ImageWidth' and 'ImageHeight' in " +
+        CALIB_CONFIG_PATH + ". Please run calibration first.");
+  }
+  if (!data.corners_loaded) {
+    THROWGEMERROR("Tournament mode requires corner data (e.g. TL_X_PX) in " +
+                  CALIB_CONFIG_PATH + ". Please run calibration first.");
+  }
+  if (!data.colors_loaded || !data.board_color_loaded) {
+    THROWGEMERROR("Tournament mode requires color calibration data (stones and "
+                  "board average) in " +
+                  CALIB_CONFIG_PATH + ". Please run calibration first.");
+  }
+
+  // Store original command-line specified values (or defaults)
+  std::string original_g_device_path = g_device_path;
+  int original_g_capture_width = g_capture_width;
+  int original_g_capture_height = g_capture_height;
+
+  // Update globals with values from config file for tournament mode
+  g_device_path = data.device_path;
+  g_capture_width = data.image_width;
+  g_capture_height = data.image_height;
+
+  std::cout << "  Successfully loaded calibration settings for Tournament Mode:"
+            << std::endl;
+  std::cout << "    Device Path: " << g_device_path << " (from config)"
+            << std::endl;
+  std::cout << "    Resolution: " << g_capture_width << "x" << g_capture_height
+            << " (from config)" << std::endl;
+
+  // Check if command-line options for device/size were also provided and warn
+  // if they differ User might have specified -D or --size along with -t
+  bool cmd_line_device_differs =
+      (original_g_device_path != g_device_path) &&
+      (original_g_device_path !=
+       "/dev/video0"); // Check if original was not the un-touched default
+  bool cmd_line_size_differs =
+      (original_g_capture_width != g_capture_width ||
+       original_g_capture_height != g_capture_height) &&
+      (original_g_capture_width != 640 ||
+       original_g_capture_height !=
+           480); // Check if original was not un-touched default
+
+  if (cmd_line_device_differs) {
+    std::cout << "    WARNING: Command-line specified device '"
+              << original_g_device_path
+              << "' is overridden by calibrated device '" << g_device_path
+              << "' from config for tournament mode." << std::endl;
+  }
+  if (cmd_line_size_differs) {
+    std::cout << "    WARNING: Command-line specified size '"
+              << original_g_capture_width << "x" << original_g_capture_height
+              << "' is overridden by calibrated size '" << g_capture_width
+              << "x" << g_capture_height << "' from config for tournament mode."
+              << std::endl;
+  }
+
+  return true;
+}
+
 void tournamentModeWorkflow(const std::string &game_name_final_prefix) {
+  // Setup calibration settings from config file FIRST
+  if (!setupCalibrationFromConfig()) {
+    // Error already thrown by setupCalibrationFromConfig
+    return;
+  }
   std::cout << "Starting Tournament Mode..." << std::endl;
   std::cout << "  Game Name Prefix: " << game_name_final_prefix << std::endl;
   std::cout << "  Device: " << g_device_path << std::endl;
