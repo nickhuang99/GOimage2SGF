@@ -652,7 +652,7 @@ static bool verifyCalibrationAfterSave(
               color == BLACK && (r == 0 && c == 0 || r == 18 && c == 0);
           bool white_correct =
               color == WHITE && (r == 0 && c == 18 || r == 18 && c == 18);
-          if (!black_correct || !white_correct) {
+          if (!black_correct && !white_correct) {
             cout << "stone detection failed at [" << r << "," << c << "]"
                  << color << endl;
             if (bDebug) {
