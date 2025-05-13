@@ -615,6 +615,86 @@ void sampleDataForConfig(const cv::Mat &final_corrected_lab,
   output.push_back(avg_lab_board_sampled);
 }
 
+static bool
+verifyCalibrationAfterSave(const cv::Mat &raw_image_for_verification) {
+  std::cout << "  Verifying calibration..." << std::endl;
+
+  if (raw_image_for_verification.empty()) {
+    std::cerr
+        << "    Verification Error: Input image for verification is empty."
+        << std::endl;
+    return false;
+  }
+
+  // processGoBoard requires a valid CALIB_CONFIG_PATH to load its calibration
+  // data. Since we just saved it, it should be available. processGoBoard
+  // internally calls loadCalibrationData.
+
+  cv::Mat board_state_matrix;
+  cv::Mat board_with_stones_display; // For debug display if needed
+  std::vector<cv::Point2f>
+      intersection_points; // Not directly used for this verification logic
+
+  try {
+    // Process the raw snapshot using the calibration config we just saved.
+    // processGoBoard will apply perspective correction using CALIB_CONFIG_PATH,
+    // then detect grid and classify stones using the color data from
+    // CALIB_CONFIG_PATH.
+    processGoBoard(raw_image_for_verification, board_state_matrix,
+                   board_with_stones_display, intersection_points);
+
+    if (board_state_matrix.empty() || board_state_matrix.rows != 19 ||
+        board_state_matrix.cols != 19) {
+      std::cerr << "    Verification Error: processGoBoard did not return a "
+                   "valid 19x19 board state."
+                << std::endl;
+      return false;
+    }
+
+    // Expected stone types (1 for Black, 2 for White)
+    // Note: SGF and internal representation often use (0,0) as top-left (A1 in
+    // SGF often means bottom-left for black). We assume standard Go board
+    // notation for SGF (A1 = bottom-left), but matrix (0,0) is top-left. The
+    // calibration expects: Physical TL: Black stone ->
+    // board_state_matrix.at<uchar>(0,0) Physical TR: White stone ->
+    // board_state_matrix.at<uchar>(0,18) Physical BL: Black stone ->
+    // board_state_matrix.at<uchar>(18,0) Physical BR: White stone ->
+    // board_state_matrix.at<uchar>(18,18)
+
+    int detected_tl = board_state_matrix.at<uchar>(0, 0);   // Top-Left
+    int detected_tr = board_state_matrix.at<uchar>(0, 18);  // Top-Right
+    int detected_bl = board_state_matrix.at<uchar>(18, 0);  // Bottom-Left
+    int detected_br = board_state_matrix.at<uchar>(18, 18); // Bottom-Right
+
+    bool tl_ok = (detected_tl == 1); // Expected Black
+    bool tr_ok = (detected_tr == 2); // Expected White
+    bool bl_ok = (detected_bl == 1); // Expected Black
+    bool br_ok = (detected_br == 2); // Expected White
+
+    std::cout << "    Verification Results:" << std::endl;
+    std::cout << "      Top-Left (expected Black=1): Detected " << detected_tl
+              << (tl_ok ? " (OK)" : " (FAIL!)") << std::endl;
+    std::cout << "      Top-Right (expected White=2): Detected " << detected_tr
+              << (tr_ok ? " (OK)" : " (FAIL!)") << std::endl;
+    std::cout << "      Bottom-Left (expected Black=1): Detected "
+              << detected_bl << (bl_ok ? " (OK)" : " (FAIL!)") << std::endl;
+    std::cout << "      Bottom-Right (expected White=2): Detected "
+              << detected_br << (br_ok ? " (OK)" : " (FAIL!)") << std::endl;
+
+    if (bDebug && !board_with_stones_display.empty()) {
+      cv::imshow("Calibration Verification - Processed Board",
+                 board_with_stones_display);
+      cv::waitKey(1); // Display for a moment
+    }
+
+    return tl_ok && tr_ok && bl_ok && br_ok;
+
+  } catch (const std::exception &e) {
+    std::cerr << "    Verification Exception: " << e.what() << std::endl;
+    return false;
+  }
+}
+
 // --- SIMPLIFIED Main Calibration Function ---
 void runInteractiveCalibration(int camera_index) {
   cv::VideoCapture cap;
@@ -765,13 +845,38 @@ void runInteractiveCalibration(int camera_index) {
                    cv::COLOR_BGR2Lab);
       std::vector<cv::Vec3f> sample_data;
       sampleDataForConfig(final_corrected_lab, corrected_dest_points,
-                          adaptive_radius, sample_data);     
+                          adaptive_radius, sample_data);
       saveCornerConfig(CALIB_CONFIG_PATH, topLeft_raw, topRight_raw,
                        bottomLeft_raw, bottomRight_raw, frame_width,
                        frame_height, sample_data[0], sample_data[1],
                        sample_data[2], sample_data[3], sample_data[4]);
       std::cout << "Calibration complete. Configuration saved." << std::endl;
-      break;
+      bool verification_passed =
+          verifyCalibrationAfterSave(final_raw_bgr_for_snapshot);
+      if (verification_passed) {
+        std::cout << "  Calibration VERIFIED successfully! Corner stones match "
+                     "expected."
+                  << std::endl;
+        break; // Original behavior: exit calibration loop on save
+      } else {
+        std::cout << "  Calibration VERIFICATION FAILED! Detected corner "
+                     "stones do not match expected."
+                  << std::endl;
+        std::cout << "  ADVICE: Please check stone placement (Black at TL & "
+                     "BL, White at TR & BR),"
+                  << std::endl;
+        std::cout << "          lighting conditions, and ensure corners are "
+                     "accurately marked."
+                  << std::endl;
+        std::cout << "          Consider re-adjusting and saving again, or "
+                     "exiting (ESC) to retry later."
+                  << std::endl;
+        // Do NOT break here. Allow user to see the message and decide if they
+        // want to continue adjusting or ESC. The calibration is saved anyway,
+        // but they are warned. If you want to force them to recalibrate, you
+        // might not break and perhaps reset some state, or make
+        // saveCornerConfig conditional on verification. For now, save and warn.
+      }
     }
   }
   cap.release();
