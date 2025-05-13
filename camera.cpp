@@ -574,18 +574,45 @@ void sampleDataForConfig(const cv::Mat &final_corrected_lab,
   cv::Point2f sample_pt_BL_stone = corrected_dest_points[3];
 
   std::vector<cv::Point2f> board_sample_pts_corrected_final;
-  board_sample_pts_corrected_final.push_back(
-      (sample_pt_TL_stone + sample_pt_TR_stone) * 0.5f);
-  board_sample_pts_corrected_final.push_back(
-      (sample_pt_BL_stone + sample_pt_BR_stone) * 0.5f);
-  board_sample_pts_corrected_final.push_back(
-      (sample_pt_TL_stone + sample_pt_BL_stone) * 0.5f);
-  board_sample_pts_corrected_final.push_back(
-      (sample_pt_TR_stone + sample_pt_BR_stone) * 0.5f);
-  board_sample_pts_corrected_final.push_back(
-      (sample_pt_TL_stone + sample_pt_TR_stone + sample_pt_BL_stone +
-       sample_pt_BR_stone) *
-      0.25f);
+  board_sample_pts_corrected_final.clear(); // Start with an empty list
+
+// Assuming corrected_dest_points are [0]=TL, [1]=TR, [2]=BR, [3]=BL
+cv::Point2f c_tl = corrected_dest_points[0];
+cv::Point2f c_tr = corrected_dest_points[1];
+cv::Point2f c_br = corrected_dest_points[2]; 
+cv::Point2f c_bl = corrected_dest_points[3];
+
+// Calculate grid spacing in the corrected image
+// Use the full span of the board defined by these corners.
+// Note: This assumes a rectangular shape defined by these 4 points.
+// Width from TL.x to TR.x; Height from TL.y to BL.y
+float board_pixel_width = c_tr.x - c_tl.x;
+float board_pixel_height = c_bl.y - c_tl.y; 
+
+if (board_pixel_width < 18.0f || board_pixel_height < 18.0f) {
+    // Handle degenerate case, perhaps revert to old 5-point sampling or error
+    THROWGEMERROR("Corrected board dimensions too small for full empty space sampling.");
+}
+
+float x_step = board_pixel_width / 18.0f;
+float y_step = board_pixel_height / 18.0f;
+
+for (int r = 0; r < 19; ++r) {
+    for (int c = 0; c < 19; ++c) {
+        // Check if this is one of the four stone corners
+        bool is_stone_corner = (r == 0 && c == 0) ||  // TL
+                               (r == 0 && c == 18) || // TR
+                               (r == 18 && c == 0) || // BL
+                               (r == 18 && c == 18);  // BR
+        
+        if (!is_stone_corner) {
+            cv::Point2f current_intersection_pt;
+            current_intersection_pt.x = c_tl.x + c * x_step;
+            current_intersection_pt.y = c_tl.y + r * y_step;
+            board_sample_pts_corrected_final.push_back(current_intersection_pt);
+        }
+    }
+}
 
   // Stone colors based on their positions in the corrected standard view
   cv::Vec3f lab_tl_sampled = getAverageLab(
@@ -601,10 +628,8 @@ void sampleDataForConfig(const cv::Mat &final_corrected_lab,
   int valid_board_s = 0;
   for (const auto &pt : board_sample_pts_corrected_final) {
     cv::Vec3f s = getAverageLab(final_corrected_lab, pt, adaptive_radius);
-    if (s[0] >= 0) {
-      sum_lab_board += s;
-      valid_board_s++;
-    }
+    sum_lab_board += s;
+    valid_board_s++;
   }
   cv::Vec3f avg_lab_board_sampled =
       (valid_board_s > 0) ? (sum_lab_board / static_cast<float>(valid_board_s))
