@@ -175,6 +175,7 @@ cv::Mat correctPerspective(const cv::Mat &image);
 
 // Declare the function to display webcam feed (defined in snapshot.cpp)
 void runInteractiveCalibration(int camera_index);
+void runCaptureCalibration(int camera_index);
 
 bool trySetCameraResolution(
     cv::VideoCapture &cap, int desired_width, int desired_height,
@@ -205,6 +206,9 @@ void drawSimulatedGoBoard(
     int last_move_color = EMPTY, // EMPTY, BLACK, or WHITE for the last move
     int canvas_size_px = 760     // Default canvas size
 );
+bool processAndSaveCalibration(
+    const cv::Mat &final_raw_bgr_for_snapshot,
+    const std::vector<cv::Point2f> &current_source_points);
 
 bool detectFourCornersGoBoard(
     const cv::Mat &input_image,

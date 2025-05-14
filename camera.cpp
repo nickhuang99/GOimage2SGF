@@ -929,3 +929,79 @@ void runInteractiveCalibration(int camera_index) {
   cap.release();
   cv::destroyAllWindows();
 }
+
+void runCaptureCalibration(int camera_index) {
+  cv::VideoCapture cap;
+  cap.open(camera_index, cv::CAP_V4L2); // Try V4L2 first
+  if (!cap.isOpened()) {
+    if (bDebug)
+      std::cout
+          << "Debug: Opening with CAP_V4L2 failed, trying default backend."
+          << std::endl;
+    cap.open(camera_index); // Fallback to default
+    if (!cap.isOpened()) {
+      THROWGEMERROR("OpenCV failed to open camera index " +
+                    Num2Str(camera_index).str());
+    }
+  }
+  std::cout << "Opened Camera Index: " << camera_index
+            << " for Interactive Calibration." << std::endl;
+
+  if (!trySetCameraResolution(cap, g_capture_width, g_capture_height, true)) {    
+    std::string err = "cannot set capture frame size of ";
+    err += Num2Str(g_capture_width).str() + "x" + Num2Str(g_capture_height).str();
+    THROWGEMERROR(err);
+  }
+
+  cv::namedWindow(WINDOW_RAW_FEED, cv::WINDOW_AUTOSIZE);
+  cv::moveWindow(WINDOW_RAW_FEED, 0, 0);
+
+  cv::Mat raw_frame;
+
+  // Define destination points for the corrected preview
+
+  while (true) {
+    if (!cap.read(raw_frame) || raw_frame.empty()) {
+      std::cerr << "Error: Could not read frame from camera." << std::endl;
+      cv::waitKey(100);
+      continue; // Prevent tight loop on error
+    }
+
+    cv::Mat input_image = raw_frame.clone();
+
+    cv::imshow(WINDOW_RAW_FEED, input_image);
+    int key_action_type = cv::waitKey(30);
+    if (key_action_type == 27) { // ESC
+      std::cout << "Calibration cancelled by user." << std::endl;
+      break;
+    } else if (key_action_type == 's') {
+      std::cout << "Processing 'save' command..." << std::endl;
+      std::vector<cv::Point2f> detected_corners;
+      if (detectFourCornersGoBoard(input_image, detected_corners)) {
+        if (processAndSaveCalibration(input_image, detected_corners)) {
+          cout << "calibration succeed!" << endl;
+          break;
+        } else {
+          std::cout << "  Calibration VERIFICATION FAILED! Detected corner "
+                       "stones do not match expected."
+                    << std::endl;
+          std::cout << "  ADVICE: Please check stone placement (Black at TL & "
+                       "BL, White at TR & BR),"
+                    << std::endl;
+          std::cout << "          lighting conditions, and ensure corners are "
+                       "accurately marked."
+                    << std::endl;
+          std::cout << "          Consider re-adjusting and saving again, or "
+                       "exiting (ESC) to retry later."
+                    << std::endl;
+        }
+      } else {
+        cout << "detectFourCornersGoBoard failed please place two black stone "
+                "at corner of TL BL "
+             << "and two white stones at TR BR" << endl;
+      }
+    }
+  }
+  cap.release();
+  cv::destroyAllWindows();
+}
