@@ -1417,6 +1417,8 @@ int main(int argc, char *argv[]) {
       probeVideoDevicesWorkflow();
     } else if (run_calibration) {
       calibrationWorkflow(run_interactive_calibration);
+    } else if (!setupCalibrationFromConfig()){
+      THROWGEMERROR("setupCalibrationFromConfig failed");
     } else if (run_test_calibration) {
       testCalibrationConfigWorkflow();
     } else if (run_study_mode) {
