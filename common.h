@@ -194,4 +194,7 @@ int calculateAdaptiveSampleRadius(float board_pixel_width,
 
 std::vector<cv::Point2f> getBoardCornersCorrected(int width, int height);
 
+void drawSimulatedGoBoard(const std::string &sgf_content_str,
+                          cv::Mat &output_image, int pixel_sz);
+
 #endif // UTILITY_H

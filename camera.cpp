@@ -745,9 +745,9 @@ void runInteractiveCalibration(int camera_index) {
 
   cv::namedWindow(WINDOW_RAW_FEED, cv::WINDOW_AUTOSIZE);
   cv::namedWindow(WINDOW_CORRECTED_PREVIEW, cv::WINDOW_AUTOSIZE);
-  cv::moveWindow(WINDOW_RAW_FEED, 20, 0);
+  cv::moveWindow(WINDOW_RAW_FEED, 0, 0);
   // Position windows side-by-side
-  cv::moveWindow(WINDOW_CORRECTED_PREVIEW, frame_width + 100, 0);
+  cv::moveWindow(WINDOW_CORRECTED_PREVIEW, frame_width, 0);
 
   cv::Mat raw_frame, display_raw, display_corrected_bgr;
 

@@ -1550,3 +1550,148 @@ void processGoBoard(
     cv::waitKey(0);
   } 
 }
+
+// NEW function to draw a simulated Go board from an SGF string
+void drawSimulatedGoBoard(const std::string &sgf_content_str,
+                          cv::Mat &output_image, int canvas_size_px) {
+  
+  // --- Drawing Constants ---
+  const int margin_px =
+      std::max(20, canvas_size_px / 20); // Margin around the board
+  const int board_proper_size_px = canvas_size_px - 2 * margin_px;
+  const float line_spacing_px = static_cast<float>(board_proper_size_px) /
+                                18.0f; // 18 spaces for 19 lines
+  const int stone_radius_px = static_cast<int>(
+      line_spacing_px * 0.46f); // Slightly less than half spacing
+  const int hoshi_radius_px =
+      std::max(2, static_cast<int>(line_spacing_px * 0.1f));
+
+  // Colors (BGR format)
+  const cv::Scalar board_color_bgr(210, 180, 140); // Light Wood (Tan-like)
+  // const cv::Scalar board_color_bgr(130, 170, 220); // Alternative: Light Wood
+  // (Yellowish)
+  const cv::Scalar line_color_bgr(30, 30, 30); // Dark Gray/Soft Black for lines
+  const cv::Scalar stone_color_black_bgr(15, 15, 15);    // Deep Black
+  const cv::Scalar stone_color_white_bgr(240, 240, 240); // Bright White
+  const cv::Scalar stone_outline_color_bgr(80, 80,
+                                           80); // Subtle outline for stones
+
+  // --- Create Canvas ---
+  output_image =
+      cv::Mat(canvas_size_px, canvas_size_px, CV_8UC3, board_color_bgr);
+
+  // --- Draw Grid Lines ---
+  for (int i = 0; i < 19; ++i) {
+    float current_pos = static_cast<float>(margin_px) + i * line_spacing_px;
+    // Vertical line
+    cv::line(output_image,
+             cv::Point2f(current_pos, static_cast<float>(margin_px)),
+             cv::Point2f(current_pos,
+                         static_cast<float>(canvas_size_px - margin_px)),
+             line_color_bgr, 1, cv::LINE_AA);
+    // Horizontal line
+    cv::line(output_image,
+             cv::Point2f(static_cast<float>(margin_px), current_pos),
+             cv::Point2f(static_cast<float>(canvas_size_px - margin_px),
+                         current_pos),
+             line_color_bgr, 1, cv::LINE_AA);
+  }
+
+  // --- Draw Hoshi Points ---
+  int hoshi_coords[] = {3, 9, 15}; // 0-indexed coordinates for hoshi points
+  for (int r_idx : hoshi_coords) {
+    for (int c_idx : hoshi_coords) {
+      float hoshi_x_px =
+          static_cast<float>(margin_px) + c_idx * line_spacing_px;
+      float hoshi_y_px =
+          static_cast<float>(margin_px) + r_idx * line_spacing_px;
+      cv::circle(output_image, cv::Point2f(hoshi_x_px, hoshi_y_px),
+                 hoshi_radius_px, line_color_bgr, -1, cv::LINE_AA);
+    }
+  }
+
+  // --- Parse SGF to get stone placements ---
+  // We primarily expect AB (Add Black) and AW (Add White) for board state
+  // representation. parseSGFGame also handles B and W moves, placing them in
+  // the 'moves' vector. For displaying a static board state from an SGF (like
+  // N.sgf), AB/AW is sufficient. If the SGF contains a sequence of moves, we'd
+  // need to simulate them to get the final state. For now, assume
+  // sgf_content_str represents a board setup (AB/AW).
+  std::set<std::pair<int, int>> setupBlack, setupWhite;
+  std::vector<Move> moves; // Not used for drawing if SGF is just AB/AW setup
+
+  SGFHeader header; // Optional: parse header if needed (e.g., for SZ)
+  try {
+    header = parseSGFHeader(sgf_content_str);
+    if (header.sz != 0 && header.sz != 19 &&
+        bDebug) { // SZ 0 can mean "unknown" or "use default"
+      std::cout << "Warning (drawSimulatedGoBoard): SGF board size is "
+                << header.sz << ", but drawing as 19x19." << std::endl;
+    }
+    parseSGFGame(sgf_content_str, setupBlack, setupWhite, moves);
+  } catch (const SGFError &e) {
+    std::cerr << "Error parsing SGF for drawing simulated board: " << e.what()
+              << std::endl;
+    // Optionally draw an error message on the board image
+    cv::putText(output_image, "SGF Parse Error",
+                cv::Point(10, canvas_size_px / 2), cv::FONT_HERSHEY_SIMPLEX,
+                1.0, cv::Scalar(0, 0, 255), 2);
+    return; // Exit if SGF cannot be parsed
+  }
+
+  // --- Draw Stones ---
+  // Helper lambda to draw a stone
+  auto drawStone = [&](int r, int c, const cv::Scalar &color,
+                       const cv::Scalar &outline_color) {
+    if (r >= 0 && r < 19 && c >= 0 && c < 19) {
+      float stone_x_px = static_cast<float>(margin_px) + c * line_spacing_px;
+      float stone_y_px = static_cast<float>(margin_px) + r * line_spacing_px;
+      cv::circle(output_image, cv::Point2f(stone_x_px, stone_y_px),
+                 stone_radius_px, color, -1, cv::LINE_AA);
+      cv::circle(output_image, cv::Point2f(stone_x_px, stone_y_px),
+                 stone_radius_px, outline_color, 1, cv::LINE_AA); // Outline
+    }
+  };
+
+  // Draw setupBlack stones
+  for (const auto &stone_coord : setupBlack) {
+    drawStone(stone_coord.first, stone_coord.second, stone_color_black_bgr,
+              stone_outline_color_bgr);
+  }
+
+  // Draw setupWhite stones
+  for (const auto &stone_coord : setupWhite) {
+    drawStone(stone_coord.first, stone_coord.second, stone_color_white_bgr,
+              stone_outline_color_bgr);
+  }
+
+  // If the SGF also contains moves (B/W), and we want to draw them (e.g. if
+  // it's a game record not just setup) This part assumes that the `moves`
+  // vector represents the final state if it's a game record. For the tournament
+  // mode where N.sgf is a setup, this part might not be strictly necessary if
+  // AB/AW already reflect the full board. However, including it makes the
+  // function more general. A more advanced version would apply moves
+  // sequentially to an internal board state. For now, if B/W properties exist,
+  // they will overlay or add to AB/AW.
+  for (const auto &move : moves) {
+    if (move.player == BLACK) { // Black move
+      drawStone(move.row, move.col, stone_color_black_bgr,
+                stone_outline_color_bgr);
+    } else if (move.player == WHITE) { // White move
+      drawStone(move.row, move.col, stone_color_white_bgr,
+                stone_outline_color_bgr);
+    }
+    // AE (Add Empty / captured stones) are not typically drawn as "empty"
+    // markers unless specifically desired.
+  }
+
+  if (bDebug) {
+    std::cout << "Debug (drawSimulatedGoBoard): Drew " << setupBlack.size()
+              << " black setup stones, " << setupWhite.size()
+              << " white setup stones." << std::endl;
+    if (!moves.empty()) {
+      std::cout << "Debug (drawSimulatedGoBoard): Processed " << moves.size()
+                << " B/W moves from SGF." << std::endl;
+    }
+  }
+}

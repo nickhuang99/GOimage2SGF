@@ -2,6 +2,8 @@
 #include "common.h"
 #include <algorithm>
 #include <bits/getopt_core.h>
+#include <cerrno> // For errno
+#include <filesystem> // For std::filesystem::remove_all and create_directory (C++17)
 #include <fstream>
 #include <getopt.h> // Include for getopt_long
 #include <iomanip>
@@ -12,11 +14,9 @@
 #include <regex> // Include the regex library
 #include <set>
 #include <sstream>
-#include <stdexcept> // Include for standard exceptions
-#include <vector>
-#include <filesystem> // For std::filesystem::remove_all and create_directory (C++17)
+#include <stdexcept>  // Include for standard exceptions
 #include <sys/stat.h> // For mkdir (though filesystem is preferred)
-#include <cerrno>     // For errno
+#include <vector>
 
 using namespace cv;
 using namespace std;
@@ -27,9 +27,11 @@ bool bDebug = false;
 CaptureMode gCaptureMode = MODE_V4L2; // Default capture mode is V4L2
 int g_capture_width = 640;            // Default capture width
 int g_capture_height = 480;           // Default capture height
-std::string g_default_game_name_prefix = "tournament"; 
+std::string g_default_game_name_prefix = "tournament";
 std::string g_device_path = "/dev/video0";
 
+static const std::string Default_Go_Board_Window_Title = "Simulated Go Board";
+static const int canvas_size_px = 760;
 void displayHelpMessage() {
   cout << "Go Environment Manager (GEM)" << endl;
   cout << "Usage: gem [options]" << endl;
@@ -81,6 +83,9 @@ void displayHelpMessage() {
           "tournament mode (default: "
        << g_default_game_name_prefix << " or 'tournament' if only -t is used)."
        << endl;
+  cout << "      --draw-board <sgf_path>         : Read SGF, draw and display "
+          "simulated board."
+       << endl; // NEW
   cout << "      --test-perspective <image_path> : (Dev) Test perspective "
           "correction." // Removed -t
        << endl;
@@ -482,57 +487,70 @@ void testCalibrationConfigWorkflow() {
   std::cout << "Calibration Test Finished." << std::endl;
 }
 
-void testPerspectiveTransformWorkflow(const std::string& imagePath) { // Renamed function
+void testPerspectiveTransformWorkflow(
+    const std::string &imagePath) { // Renamed function
   cout << "Testing perspective transform on image: " << imagePath << endl;
   Mat image = imread(imagePath);
   if (image.empty()) {
-    cerr << "Error: Could not open image for perspective test: " << imagePath << endl;
+    cerr << "Error: Could not open image for perspective test: " << imagePath
+         << endl;
     return;
   }
   Mat corrected_image = correctPerspective(image);
   if (bDebug || !corrected_image.empty()) {
-      imshow("Original for Perspective Test", image);
-      imshow("Corrected Perspective Test", corrected_image);
-      waitKey(0);
-      destroyAllWindows();
-  } else if (corrected_image.empty()){
-      cerr << "Error: Perspective correction resulted in an empty image." << endl;
+    imshow("Original for Perspective Test", image);
+    imshow("Corrected Perspective Test", corrected_image);
+    waitKey(0);
+    destroyAllWindows();
+  } else if (corrected_image.empty()) {
+    cerr << "Error: Perspective correction resulted in an empty image." << endl;
   }
 }
-static bool createOrClearGameFolder(const std::string& folder_path, bool debug_flag) {
-    // 1. Ensure ./share exists (as per README, user should create it with 777)
-    //    This function will not attempt to create ./share itself.
-    if (!fs::exists("./share")) {
-        THROWGEMERROR("Base directory './share' does not exist. Please create it with appropriate permissions (e.g., chmod 777 share).");
-    }
-    if (!fs::is_directory("./share")) {
-        THROWGEMERROR("'./share' exists but is not a directory.");
-    }
+static bool createOrClearGameFolder(const std::string &folder_path,
+                                    bool debug_flag) {
+  // 1. Ensure ./share exists (as per README, user should create it with 777)
+  //    This function will not attempt to create ./share itself.
+  if (!fs::exists("./share")) {
+    THROWGEMERROR("Base directory './share' does not exist. Please create it "
+                  "with appropriate permissions (e.g., chmod 777 share).");
+  }
+  if (!fs::is_directory("./share")) {
+    THROWGEMERROR("'./share' exists but is not a directory.");
+  }
 
-    // 2. Handle the game-specific folder
-    if (fs::exists(folder_path)) {
-        if (debug_flag) std::cout << "  Debug: Game folder " << folder_path << " exists. Attempting to remove and recreate..." << std::endl;
-        std::error_code ec;
-        fs::remove_all(folder_path, ec); // C++17 way to remove directory and its contents
-        if (ec) {
-            // remove_all might fail if permissions are wrong or files are in use.
-            std::cerr << "Warning: Could not completely remove existing game folder '" << folder_path 
-                      << "': " << ec.message() << ". Attempting to proceed..." << std::endl;
-            // Attempt to create anyway, it might be empty or mkdir might handle it.
-        } else {
-             if (debug_flag) std::cout << "    Debug: Successfully removed existing folder: " << folder_path << std::endl;
-        }
+  // 2. Handle the game-specific folder
+  if (fs::exists(folder_path)) {
+    if (debug_flag)
+      std::cout << "  Debug: Game folder " << folder_path
+                << " exists. Attempting to remove and recreate..." << std::endl;
+    std::error_code ec;
+    fs::remove_all(folder_path,
+                   ec); // C++17 way to remove directory and its contents
+    if (ec) {
+      // remove_all might fail if permissions are wrong or files are in use.
+      std::cerr << "Warning: Could not completely remove existing game folder '"
+                << folder_path << "': " << ec.message()
+                << ". Attempting to proceed..." << std::endl;
+      // Attempt to create anyway, it might be empty or mkdir might handle it.
+    } else {
+      if (debug_flag)
+        std::cout << "    Debug: Successfully removed existing folder: "
+                  << folder_path << std::endl;
     }
+  }
 
-    // 3. Create the new game folder
-    std::error_code ec_create;
-    fs::create_directory(folder_path, ec_create);
-    if (ec_create) {
-         THROWGEMERROR("Failed to create game folder: " + folder_path + " - " + ec_create.message());
-    }
-    if (debug_flag) std::cout << "  Debug: Ensured game folder exists (created if new): " << folder_path << std::endl;
-    
-    return true;
+  // 3. Create the new game folder
+  std::error_code ec_create;
+  fs::create_directory(folder_path, ec_create);
+  if (ec_create) {
+    THROWGEMERROR("Failed to create game folder: " + folder_path + " - " +
+                  ec_create.message());
+  }
+  if (debug_flag)
+    std::cout << "  Debug: Ensured game folder exists (created if new): "
+              << folder_path << std::endl;
+
+  return true;
 }
 
 static std::string
@@ -560,12 +578,12 @@ static bool setupCalibrationFromConfig() {
   CalibrationData data = loadCalibrationData(
       CALIB_CONFIG_PATH); // loadCalibrationData is in image.cpp
 
-  if (!data.device_path_loaded || data.device_path_at_calibration.empty()) {
+  if (!data.device_path_loaded || data.device_path.empty()) {
     THROWGEMERROR("Tournament mode requires 'DevicePath' in " +
                   CALIB_CONFIG_PATH + ". Please run calibration first.");
   }
-  if (!data.dimensions_loaded || data.image_width_at_calibration <= 0 ||
-      data.image_height_at_calibration <= 0) {
+  if (!data.dimensions_loaded || data.image_width <= 0 ||
+      data.image_height <= 0) {
     THROWGEMERROR(
         "Tournament mode requires 'ImageWidth' and 'ImageHeight' in " +
         CALIB_CONFIG_PATH + ". Please run calibration first.");
@@ -628,97 +646,144 @@ static bool setupCalibrationFromConfig() {
 }
 
 void tournamentModeWorkflow(const std::string &game_name_final_prefix) {
-  // Setup calibration settings from config file FIRST
-  if (!setupCalibrationFromConfig()) {
-    // Error already thrown by setupCalibrationFromConfig
+  // First, setup calibration from config. This will update g_device_path,
+  // g_capture_width, g_capture_height
+  if (!setupCalibrationFromConfig()) { // Assuming setupCalibrationFromConfig is
+                                       // defined in gem.cpp
+    // Error already thrown by setupCalibrationFromConfig if critical data
+    // missing
+    std::cerr << "Tournament mode cannot start due to missing or invalid "
+                 "calibration configuration."
+              << std::endl;
     return;
   }
-  std::cout << "Starting Tournament Mode..." << std::endl;
-  std::cout << "  Game Name Prefix: " << game_name_final_prefix << std::endl;
-  std::cout << "  Device: " << g_device_path << std::endl;
 
-  std::string base_share_path = "./share/"; // Base path, must exist
+  std::cout << "Starting Tournament Mode (with Simulated Board Display)..."
+            << std::endl;
+  std::cout << "  Game Name Prefix: " << game_name_final_prefix << std::endl;
+  std::cout << "  Using Device: " << g_device_path << " at " << g_capture_width
+            << "x" << g_capture_height << " (from calibration config)"
+            << std::endl;
+
+  std::string base_share_path = "./share/";
   std::string game_folder_path = base_share_path + game_name_final_prefix;
 
   if (!createOrClearGameFolder(game_folder_path, bDebug)) {
-    return; // Error already thrown by helper
+    return;
   }
 
   std::string main_sgf_path = game_folder_path + "/tournament.sgf";
-  std::ofstream main_sgf_file_stream(
-      main_sgf_path, std::ios::trunc); // Overwrite existing
-  if (!main_sgf_file_stream.is_open()) {
-    THROWGEMERROR("Failed to create/overwrite main tournament SGF file: " +
-                  main_sgf_path);
-  }  
 
   int game_step_counter = 0;
   cv::Mat previous_board_state_matrix;
-  cv::Mat current_raw_frame;
-  cv::Mat display_image;
+  cv::Mat current_raw_frame;                // For capture
+  cv::Mat simulated_board_display_image;    // For the new clean board display
+  cv::Mat processed_camera_capture_display; // For debug view
 
-  std::string snapshot_window_name = "Tournament: " + game_name_final_prefix;
-  cv::namedWindow(snapshot_window_name, cv::WINDOW_AUTOSIZE);
-  bool canExit = false;
-  while (!canExit) {
-    std::string window_title_current =
-        snapshot_window_name + " - Step " + std::to_string(game_step_counter);
+  std::string main_display_window_name =
+      "Go Tournament: " + game_name_final_prefix + " (Simulated Board)";
+  cv::namedWindow(main_display_window_name, cv::WINDOW_AUTOSIZE);
 
-    // 1. Capture frame for the current step
+  std::string debug_capture_window_name = "Debug: Processed Camera View";
+  if (bDebug) {
+    cv::namedWindow(debug_capture_window_name, cv::WINDOW_AUTOSIZE);
+    cv::moveWindow(debug_capture_window_name, 800,
+                   50); // Position it to the side
+  }
+
+  while (true) {
+    std::string current_step_info = "Step " + std::to_string(game_step_counter);
+    cv::setWindowTitle(main_display_window_name,
+                       main_display_window_name + " - " + current_step_info);
+    if (bDebug) {
+      cv::setWindowTitle(debug_capture_window_name,
+                         debug_capture_window_name + " - " + current_step_info);
+    }
+
+    // 1. Capture frame
     if (!captureFrame(g_device_path, current_raw_frame)) {
-      std::cerr << "Error: Failed to capture frame for step "
-                << game_step_counter << ". Retrying in 1s..." << std::endl;
-      display_image =
-          cv::Mat::zeros(cv::Size(g_capture_width, g_capture_height), CV_8UC3);
-      cv::putText(display_image, "Capture Failed. Check Camera. ESC to exit.",
-                  cv::Point(10, g_capture_height / 2), cv::FONT_HERSHEY_SIMPLEX,
-                  0.6, cv::Scalar(0, 0, 255), 1);
-      cv::setWindowTitle(snapshot_window_name,
-                         window_title_current + " - CAPTURE ERROR");
-      cv::imshow(snapshot_window_name, display_image);
+      std::cerr << "Error: Failed to capture frame for " << current_step_info
+                << ". Retrying in 1s..." << std::endl;
+      // Display error on the simulated board window if possible
+      simulated_board_display_image =
+          cv::Mat::zeros(cv::Size(760, 760), CV_8UC3); // Default size
+      cv::putText(simulated_board_display_image,
+                  "Capture Failed. Check Camera. ESC to exit.",
+                  cv::Point(50, 380), cv::FONT_HERSHEY_SIMPLEX, 0.8,
+                  cv::Scalar(0, 0, 255), 2);
+      cv::imshow(main_display_window_name, simulated_board_display_image);
       if (cv::waitKey(1000) == 27)
         break;
       continue;
     }
 
-    // 2. Immediately process this frame
-    std::cout << "Processing step " << game_step_counter << "..." << std::endl;
-    display_image = current_raw_frame.clone();
-    cv::putText(display_image,
-                "Processing Step " + std::to_string(game_step_counter) + "...",
-                cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 0.5,
-                cv::Scalar(0, 255, 255), 1);
-    cv::setWindowTitle(snapshot_window_name,
-                       window_title_current + " - PROCESSING");
-    cv::imshow(snapshot_window_name, display_image);
-    cv::waitKey(1); // Allow OpenCV to render
+    // Display raw capture briefly if in debug mode, or just proceed
+    if (bDebug) {
+      cv::Mat temp_raw_display = current_raw_frame.clone();
+      cv::putText(temp_raw_display, "Raw Capture: " + current_step_info,
+                  cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 0.7,
+                  cv::Scalar(255, 255, 0), 2);
+      cv::imshow(debug_capture_window_name,
+                 temp_raw_display); // Show in debug window
+      cv::waitKey(1);               // Show briefly
+    }
+
+    // 2. Process this frame
+    std::cout << "Processing " << current_step_info << "..." << std::endl;
+    if (!simulated_board_display_image
+             .empty()) { // If there's an old board, update with processing text
+      cv::Mat temp_display = simulated_board_display_image.clone();
+      cv::putText(temp_display, "Processing " + current_step_info + "...",
+                  cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 0.7,
+                  cv::Scalar(0, 255, 255), 2);
+      cv::imshow(main_display_window_name, temp_display);
+      cv::waitKey(1);
+    }
 
     cv::Mat current_board_state_matrix_local;
-    cv::Mat board_with_stones_display;
     std::vector<cv::Point2f> intersections;
     bool processing_ok = true;
     try {
+      // board_with_stones_display (processed camera view) is now local to this
+      // block
+      cv::Mat board_with_stones_display_debug;
       processGoBoard(current_raw_frame, current_board_state_matrix_local,
-                     board_with_stones_display, intersections);
+                     board_with_stones_display_debug, intersections);
+      if (bDebug) { // Keep the debug window updated with processed camera view
+        cv::imshow(debug_capture_window_name, board_with_stones_display_debug);
+      }
+      processed_camera_capture_display =
+          board_with_stones_display_debug; // Save for potential ESC display
     } catch (const std::exception &e) {
-      THROWGEMERROR(string("Error processing board for step ") +
-                    Num2Str(game_step_counter).str() + e.what());
+      std::cerr << "Error processing board for " << current_step_info << ": "
+                << e.what() << std::endl;
+      processing_ok = false;
+      // Update main display with error
+      if (simulated_board_display_image.empty())
+        simulated_board_display_image =
+            cv::Mat::zeros(cv::Size(760, 760), CV_8UC3);
+      cv::putText(simulated_board_display_image,
+                  "Processing Error! " + current_step_info, cv::Point(10, 30),
+                  cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 0, 255), 2);
+      cv::putText(simulated_board_display_image,
+                  "Press 'N' for next, 'ESC' to exit.", cv::Point(10, 60),
+                  cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 0, 255), 1);
+      cv::imshow(main_display_window_name, simulated_board_display_image);
     }
 
-    if (!current_board_state_matrix_local.empty()) {
-      // 3. Save step snapshot (raw frame of this step)
+    std::string current_step_sgf_content_full = "";
+    if (processing_ok) {
       std::string step_snapshot_path =
           game_folder_path + "/" + std::to_string(game_step_counter) + ".jpg";
       if (!cv::imwrite(step_snapshot_path, current_raw_frame)) {
-        THROWGEMERROR(string("Error Failed to save step snapshot ") +
-                    step_snapshot_path);       
+        std::cerr << "Warning: Failed to save step snapshot: "
+                  << step_snapshot_path << std::endl;
       } else {
         std::cout << "  Saved step snapshot: " << step_snapshot_path
                   << std::endl;
       }
 
-      // 4. Generate and save step SGF
-      std::string current_step_sgf_content_full =
+      current_step_sgf_content_full =
           generateSGF(current_board_state_matrix_local, intersections);
       std::string step_sgf_path =
           game_folder_path + "/" + std::to_string(game_step_counter) + ".sgf";
@@ -728,67 +793,143 @@ void tournamentModeWorkflow(const std::string &game_name_final_prefix) {
         step_sgf_file_out.close();
         std::cout << "  Saved step SGF: " << step_sgf_path << std::endl;
       } else {
-        THROWGEMERROR(string("Error: Failed to save step SGF: ") +
-                      Num2Str(step_sgf_path).str());
+        std::cerr << "Warning: Failed to save step SGF: " << step_sgf_path
+                  << std::endl;
       }
 
-      // 5. Append to main tournament SGF
-      // Re-open in append mode for subsequent appends, or use the initial
-      // stream for the first write.
-
-      if (game_step_counter == 0) { // First step (initial board setup)
-        main_sgf_file_stream
-            << generateFirstGameStateSGF(current_step_sgf_content_full);
-      } else { // Subsequent steps (game_step_counter > 0)
-        std::string move_made = determineSGFMove(
-            previous_board_state_matrix, current_board_state_matrix_local);
-        main_sgf_file_stream << move_made;
-        if (bDebug) {
-          std::cout << "  Appended move: " << move_made << " to "
-                    << main_sgf_path << std::endl;
+      // Update main tournament SGF
+      if (previous_board_state_matrix.empty()) {
+        std::ofstream tournament_sgf_out(main_sgf_path, std::ios::trunc);
+        if (!tournament_sgf_out.is_open()) {
+          THROWGEMERROR(
+              "Failed to open main tournament SGF for initial write: " +
+              main_sgf_path);
         }
-      }  
-      previous_board_state_matrix = current_board_state_matrix_local.clone();
-      display_image = board_with_stones_display.clone(); // Show processed board
-      cv::putText(display_image,
-                  "Processed Step " + std::to_string(game_step_counter) +
-                      ". N or ESC.",
-                  cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 0.5,
-                  cv::Scalar(0, 255, 0), 1);
-      cv::setWindowTitle(snapshot_window_name,
-                         window_title_current + " - READY FOR NEXT");
-      cv::imshow(snapshot_window_name, display_image);
-    } // end if processing_ok
-
-    // wait for only escape or 'n' key
-    while (true) {
-      int post_process_key = cv::waitKey(0);
-      if (post_process_key == 27) { // ESC
-        std::cout << "Tournament mode saved step " << game_step_counter
-                  << " and exiting." << std::endl;
-        canExit = true;
-        break;
-      } else if (post_process_key == 'n' || post_process_key == 'N') {
-        game_step_counter++;
-        break;
-        // Loop will continue and capture a new frame for the new
-        // game_step_counter
+        size_t last_paren_pos = current_step_sgf_content_full.rfind(')');
+        std::string content_for_tournament_start;
+        if (last_paren_pos != std::string::npos) {
+          content_for_tournament_start =
+              current_step_sgf_content_full.substr(0, last_paren_pos);
+          while (!content_for_tournament_start.empty() &&
+                 (content_for_tournament_start.back() == '\n' ||
+                  content_for_tournament_start.back() == '\r')) {
+            content_for_tournament_start.pop_back();
+          }
+        } else {
+          content_for_tournament_start =
+              "(;FF[4]GM[1]SZ[19]AP[GEM:ErrorFormattingStep" +
+              std::to_string(game_step_counter) + "]";
+        }
+        tournament_sgf_out << content_for_tournament_start;
+        std::cout << "  Initialized " << main_sgf_path
+                  << " with content from step " << game_step_counter
+                  << std::endl;
+        tournament_sgf_out.close();
       } else {
-        if (bDebug)
-          std::cout << "Ignored key: " << post_process_key
-                    << ". Press N or ESC." << std::endl;
+        std::ofstream main_sgf_appender(main_sgf_path, std::ios::app);
+        if (!main_sgf_appender.is_open()) {
+          std::cerr
+              << "CRITICAL ERROR: Failed to open main SGF for appending move: "
+              << main_sgf_path << std::endl;
+        } else {
+          std::string move_made = determineSGFMove(
+              previous_board_state_matrix, current_board_state_matrix_local);
+          if (!move_made.empty() &&
+              move_made.find("ERROR") == std::string::npos) {
+            main_sgf_appender << "\n" << move_made;
+            std::cout << "  Appended move: " << move_made << " to "
+                      << main_sgf_path << std::endl;
+          } else { /* ... handle error or no move ... */
+          }
+          main_sgf_appender.close();
+        }
       }
+      previous_board_state_matrix = current_board_state_matrix_local.clone();
+
+      // Draw the new simulated board for the main display
+      drawSimulatedGoBoard(current_step_sgf_content_full,
+                           simulated_board_display_image, canvas_size_px);
+    }
+    // If processing was not OK, simulated_board_display_image already shows an
+    // error message
+
+    cv::putText(
+        simulated_board_display_image,
+        current_step_info + (processing_ok ? ". Ready. " : ". Error. ") +
+            "N: Next, ESC: Save & Exit",
+        cv::Point(10, canvas_size_px - 15), cv::FONT_HERSHEY_SIMPLEX, 0.5,
+        processing_ok ? cv::Scalar(0, 100, 0) : cv::Scalar(0, 0, 150), 1,
+        cv::LINE_AA);
+    cv::imshow(main_display_window_name, simulated_board_display_image);
+
+    int key_input = cv::waitKey(0);
+
+    if (key_input == 27) {
+      std::cout << "Tournament mode finishing after " << current_step_info
+                << "." << std::endl;
+      break;
+    } else if (key_input == 'n' || key_input == 'N') {
+      game_step_counter++;
+    } else {
+      if (bDebug)
+        std::cout << "Ignored key: " << key_input << ". Press N or ESC."
+                  << std::endl;
     }
   }
-  main_sgf_file_stream << ")" << std::endl;
-  main_sgf_file_stream.close();  
-  std::cout << "  Finalized main tournament SGF: " << main_sgf_path
-            << std::endl;
 
+  if (!previous_board_state_matrix.empty()) {
+    std::ofstream main_sgf_final_stream(main_sgf_path, std::ios::app);
+    if (main_sgf_final_stream.is_open()) {
+      main_sgf_final_stream << "\n)" << std::endl;
+      main_sgf_final_stream.close();
+      std::cout << "  Finalized main tournament SGF: " << main_sgf_path
+                << std::endl;
+    } else { /* Error message */
+    }
+  } else { /* No successful steps message */
+  }
 
   cv::destroyAllWindows();
   std::cout << "Tournament Mode Finished. Game data saved in: "
             << game_folder_path << std::endl;
+}
+
+void drawSimulatedBoardWorkflow(const std::string &sgf_file_path) { 
+  std::cout << "Starting Draw Simulated Board Workflow..." << std::endl;
+  std::cout << "  SGF File: " << sgf_file_path << std::endl;
+
+  std::ifstream sgf_file_stream(sgf_file_path);
+  if (!sgf_file_stream.is_open()) {
+    THROWGEMERROR("Failed to open SGF file: " + sgf_file_path);
+  }
+
+  std::stringstream buffer;
+  buffer << sgf_file_stream.rdbuf();
+  std::string sgf_content = buffer.str();
+  sgf_file_stream.close();
+
+  if (sgf_content.empty()) {
+    THROWGEMERROR("SGF file is empty or could not be read: " + sgf_file_path);
+  }
+
+  cv::Mat board_image;
+  // drawSimulatedGoBoard is declared in common.h and defined in image.cpp
+  drawSimulatedGoBoard(sgf_content, board_image,
+                       canvas_size_px); // Using default canvas size
+
+  if (board_image.empty()) {
+    THROWGEMERROR("drawSimulatedGoBoard function returned an empty image.");
+  }
+
+  std::string window_title =
+      Default_Go_Board_Window_Title + ": " + sgf_file_path;
+  cv::imshow(window_title, board_image);
+  std::cout << "  Displaying simulated board. Press any key in the OpenCV "
+               "window to close."
+            << std::endl;
+  cv::waitKey(0);
+  cv::destroyAllWindows();
+  std::cout << "Draw Simulated Board Workflow Finished." << std::endl;
 }
 
 int main(int argc, char *argv[]) {
@@ -798,14 +939,17 @@ int main(int argc, char *argv[]) {
       return 0;
     }
     int option_index = 0;
-    
+
     std::string snapshot_output;
     std::string record_sgf_output;
     std::string test_perspective_image_path; // For --test-perspective
+    std::string draw_board_sgf_path_arg;     // For --draw-board
+
     bool run_probe_devices = false;
     bool run_calibration = false;
     bool run_test_calibration = false;
-    bool run_tournament_mode = false; // Flag for new tournament mode
+    bool run_draw_board_workflow = false; // Flag for the new workflow
+    bool run_tournament_mode = false;     // Flag for new tournament mode
 
     struct option long_options[] = {
         {"process-image", required_argument, nullptr, 'p'},
@@ -827,6 +971,7 @@ int main(int argc, char *argv[]) {
         {"mode", required_argument, nullptr, 'M'}, // Added mode option
         {"size", required_argument, nullptr,
          'S'}, // Use S as a unique identifier for --size
+        {"draw-board", required_argument, nullptr, 0}, // NEW OPTION
         {"test-calibration-config", no_argument, nullptr,
          'f'}, // Use f as unique value
         {nullptr, 0, nullptr, 0}};
@@ -851,8 +996,7 @@ int main(int argc, char *argv[]) {
         } else {
           cout << "invalid device number: " << optarg << endl;
         }
-      } 
-      break;
+      } break;
       case 'b': // Handle calibration option
         run_calibration = true;
         break;
@@ -954,15 +1098,36 @@ int main(int argc, char *argv[]) {
         break;
       case 0: // Long-only options (val was 0)
         if (long_options[option_index].name == std::string("game-name")) {
-            g_default_game_name_prefix = optarg;            
-        } else if (long_options[option_index].name == std::string("test-calibration-config")) {
-            run_test_calibration = true;
+          g_default_game_name_prefix = optarg;
+          if (g_default_game_name_prefix.empty()) {
+            THROWGEMERROR("--game-name option requires a tournament directory "
+                          "name argument.");
+          }
+        } else if (long_options[option_index].name ==
+                   std::string("test-calibration-config")) {
+          run_test_calibration = true;
         } else if (long_options[option_index].name == std::string("parse")) {
-             parseSGFWorkflow(optarg); return 0;
-        } else if (long_options[option_index].name == std::string("probe-devices")) {
-             run_probe_devices = true;
-        } else if (long_options[option_index].name == std::string("test-perspective")) {
-             test_perspective_image_path = optarg;
+          parseSGFWorkflow(optarg);
+          return 0;
+        } else if (long_options[option_index].name ==
+                   std::string("probe-devices")) {
+          run_probe_devices = true;
+        } else if (long_options[option_index].name ==
+                   std::string("test-perspective")) {
+          test_perspective_image_path = optarg;
+          if (test_perspective_image_path.empty()) {
+            THROWGEMERROR("--test-perspective option requires an image file "
+                          "path argument.");
+          }
+        } else if (long_options[option_index].name ==
+                   std::string("draw-board")) { // NEW
+          draw_board_sgf_path_arg = optarg;
+          if (!draw_board_sgf_path_arg.empty()) {
+            run_draw_board_workflow = true;
+          } else {
+            THROWGEMERROR(
+                "--draw-board option requires an SGF file path argument.");
+          }
         }
         break;
       case '?':
@@ -985,6 +1150,8 @@ int main(int argc, char *argv[]) {
       captureSnapshotWorkflow(snapshot_output);
     } else if (!record_sgf_output.empty()) {
       recordSGFWorkflow(record_sgf_output);
+    } else if (run_draw_board_workflow) {
+      drawSimulatedBoardWorkflow(draw_board_sgf_path_arg);
     } else if (!test_perspective_image_path.empty()) {
       // Execute if no other primary workflow was triggered by a short option
       // and test-perspective was the only major action specified.
