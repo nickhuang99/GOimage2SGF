@@ -81,15 +81,18 @@ void displayHelpMessage() {
   cout << "  -r, --record-sgf <output_sgf>        : Capture snapshot, process, "
           "and generate SGF."
        << endl;
-  cout << "  -t, --tournament-mode             : Start tournament recording "
+  cout << "  -t, --tournament             : Start tournament recording "
           "mode."
        << endl;
   cout << "      --game-name <prefix>            : Set game name prefix for "
-          "tournament mode (default: "
+          "tournament or study mode (default: "
        << g_default_game_name_prefix << " or 'tournament' if only -t is used)."
        << endl;
   cout << "      --draw-board <sgf_path>         : Read SGF, draw and display "
           "simulated board."
+       << endl; // NEW
+  cout << "  -u, --study             : Start study mode to replay a "
+          "recorded game."
        << endl; // NEW
   cout << "      --test-perspective <image_path> : (Dev) Test perspective "
           "correction." // Removed -t
@@ -970,6 +973,197 @@ void drawSimulatedBoardWorkflow(const std::string &sgf_file_path) {
   std::cout << "Draw Simulated Board Workflow Finished." << std::endl;
 }
 
+
+static int loadGameSteps(const std::string& game_folder_path, 
+                         std::vector<std::string>& sgf_files_out, 
+                         std::vector<std::string>& jpg_files_out) {
+    sgf_files_out.clear();
+    jpg_files_out.clear();
+    std::map<int, std::string> found_sgfs;
+    std::map<int, std::string> found_jpgs;
+    int max_step = -1;
+
+    try {
+        if (!fs::exists(game_folder_path) || !fs::is_directory(game_folder_path)) {
+            std::cerr << "Error (loadGameSteps): Game folder not found or is not a directory: " << game_folder_path << std::endl;
+            return -1;
+        }
+
+        for (const auto& entry : fs::directory_iterator(game_folder_path)) {
+            if (entry.is_regular_file()) {
+                std::string filename = entry.path().filename().string();
+                std::string extension = entry.path().extension().string();
+                std::string name_part = filename.substr(0, filename.length() - extension.length());
+                
+                try {
+                    size_t chars_processed = 0;
+                    int step_num = std::stoi(name_part, &chars_processed);
+                    if (chars_processed == name_part.length()) { // Ensure entire name_part was a number
+                        if (extension == ".sgf") {
+                            found_sgfs[step_num] = entry.path().string();
+                            if (step_num > max_step) max_step = step_num;
+                        } else if (extension == ".jpg") {
+                            found_jpgs[step_num] = entry.path().string();
+                            if (step_num > max_step) max_step = step_num; // Keep max_step consistent
+                        }
+                    }
+                } catch (const std::invalid_argument&) {
+                    // Not a purely numeric filename component, ignore
+                } catch (const std::out_of_range&) {
+                    // Number too large, ignore
+                }
+            }
+        }
+
+        if (max_step == -1 && bDebug) { // No numbered files found at all
+             std::cout << "Debug (loadGameSteps): No numbered SGF/JPG step files found in " << game_folder_path << std::endl;
+        }
+        
+        // Populate output vectors in sorted order from 0 to max_step
+        // Only include steps for which BOTH .sgf and .jpg exist
+        int actual_max_step_with_pairs = -1;
+        for (int i = 0; i <= max_step; ++i) {
+            if (found_sgfs.count(i) && found_jpgs.count(i)) {
+                sgf_files_out.push_back(found_sgfs[i]);
+                jpg_files_out.push_back(found_jpgs[i]);
+                actual_max_step_with_pairs = i;
+            } else {
+                if (bDebug) std::cout << "Debug (loadGameSteps): Missing SGF or JPG for step " << i << ". Stopping scan for pairs here." << std::endl;
+                // If a step is missing, we might not want to load subsequent steps
+                // or handle it by allowing jumps. For now, stop at the first missing pair.
+                break; 
+            }
+        }
+        if (sgf_files_out.empty() && jpg_files_out.empty() && max_step > -1) {
+             // This means numbered files were seen, but no complete pairs from step 0 upwards.
+             return -1; // No valid sequential steps found
+        }
+
+
+        return actual_max_step_with_pairs; // This is the highest index for which both files exist sequentially from 0
+
+    } catch (const fs::filesystem_error& e) {
+        std::cerr << "Filesystem error in loadGameSteps for " << game_folder_path << ": " << e.what() << std::endl;
+        return -1;
+    }
+}
+
+
+// NEW Study Mode Workflow
+void studyModeWorkflow(const std::string& game_to_study_name) {
+    std::cout << "Starting Study Mode for game: " << game_to_study_name << std::endl;
+
+    std::string game_folder_path = "./share/" + game_to_study_name;
+    std::vector<std::string> sgf_step_files;
+    std::vector<std::string> jpg_step_files;
+
+    int max_step_idx = loadGameSteps(game_folder_path, sgf_step_files, jpg_step_files);
+
+    if (max_step_idx < 0 || sgf_step_files.empty()) {
+        THROWGEMERROR("No game steps (matching SGF/JPG pairs) found in folder: " + game_folder_path + 
+                      ". Ensure files like 0.sgf, 0.jpg, 1.sgf, 1.jpg, etc., exist.");
+    }
+    std::cout << "  Loaded " << max_step_idx + 1 << " game steps (0 to " << max_step_idx << ")." << std::endl;
+
+    int current_step_idx = 0;
+    cv::Mat simulated_board_image;
+    cv::Mat snapshot_image;
+
+    std::string sim_board_window = "Study: Simulated Board - " + game_to_study_name;
+    std::string snapshot_window = "Study: Snapshot View - " + game_to_study_name;
+    cv::namedWindow(sim_board_window, cv::WINDOW_AUTOSIZE);
+    cv::namedWindow(snapshot_window, cv::WINDOW_AUTOSIZE);
+    cv::moveWindow(sim_board_window, 50, 50);
+    cv::moveWindow(snapshot_window, 50 + 760 + 20, 50); // Assuming canvas_size_px is around 760
+
+    // Helper lambda to load and display a step
+    auto displayStep = [&](int step_idx) {
+        if (step_idx < 0 || static_cast<size_t>(step_idx) >= sgf_step_files.size()) {
+            std::cerr << "Error: Invalid step index " << step_idx << std::endl;
+            return;
+        }
+
+        std::cout << "  Displaying Step: " << step_idx << std::endl;
+        cv::setWindowTitle(sim_board_window, "Study: Simulated Board - " + game_to_study_name + " (Step " + std::to_string(step_idx) + ")");
+        cv::setWindowTitle(snapshot_window, "Study: Snapshot View - " + game_to_study_name + " (Step " + std::to_string(step_idx) + ")");
+
+        // Load snapshot
+        snapshot_image = cv::imread(jpg_step_files[step_idx]);
+        if (snapshot_image.empty()) {
+            std::cerr << "Error loading snapshot: " << jpg_step_files[step_idx] << std::endl;
+            cv::Mat error_img = cv::Mat::zeros(480, 640, CV_8UC3);
+            cv::putText(error_img, "Snapshot Load Error", cv::Point(50,240), cv::FONT_HERSHEY_SIMPLEX, 1, cv::Scalar(0,0,255),2);
+            cv::imshow(snapshot_window, error_img);
+        } else {
+            cv::imshow(snapshot_window, snapshot_image);
+        }
+
+        // Load SGF content for the current step
+        std::ifstream sgf_file(sgf_step_files[step_idx]);
+        if (!sgf_file.is_open()) {
+            std::cerr << "Error loading SGF file: " << sgf_step_files[step_idx] << std::endl;
+            // Draw error on simulated board
+            simulated_board_image = cv::Mat::zeros(cv::Size(canvas_size_px, canvas_size_px), CV_8UC3);
+            cv::putText(simulated_board_image, "SGF Load Error", cv::Point(50, canvas_size_px/2), cv::FONT_HERSHEY_SIMPLEX, 1, cv::Scalar(0,0,255),2);
+            cv::imshow(sim_board_window, simulated_board_image);
+            return;
+        }
+        std::stringstream sstream;
+        sstream << sgf_file.rdbuf();
+        std::string current_step_sgf_content = sstream.str();
+        sgf_file.close();
+
+        // For Phase 1, drawSimulatedGoBoard just shows the board state from current_step_sgf_content.
+        // No complex move numbering yet.
+        // For step 0, if it has AB/AW, draw "0" on those stones.
+        int move_num_to_highlight = 0; // Default no highlight
+        int r_highlight = -1, c_highlight = -1, clr_highlight = EMPTY;
+
+        if (step_idx == 0) {
+            // For step 0, we want to number all placed stones as "0"
+            // This requires drawSimulatedGoBoard to handle a special mode or interpret move_num_to_highlight=0 differently.
+            // For now, let's pass it as if it's the "last move" to trigger numbering.
+            // The drawSimulatedGoBoard needs to be smart about this.
+            // A simpler Phase 1: no numbers on step 0 stones.
+            // Let's go with numbering setup stones as "0".
+            // We don't have a single "last move" for setup, so we'll pass 0 and let drawSimulatedGoBoard handle it.
+             drawSimulatedGoBoard(current_step_sgf_content, simulated_board_image, 0, -1, -1, EMPTY);
+        } else {
+            // For subsequent steps, determine the move that LED to this state.
+            // This requires loading previous SGF, parsing both to board states, then determineSGFMove.
+            // This is for Phase 2. For Phase 1, just draw the board.
+            drawSimulatedGoBoard(current_step_sgf_content, simulated_board_image); // No highlight for Phase 1
+        }
+        cv::imshow(sim_board_window, simulated_board_image);
+    };
+
+    displayStep(current_step_idx); // Display initial step
+
+    while (true) {
+        int key = cv::waitKey(0);
+        if (key == 27) { // ESC
+            break;
+        } else if (key == 'f' || key == 'F') { // Forward
+            if (current_step_idx < max_step_idx) {
+                current_step_idx++;
+                displayStep(current_step_idx);
+            } else {
+                std::cout << "  Already at the last step (" << max_step_idx << ")." << std::endl;
+            }
+        } else if (key == 'b' || key == 'B') { // Backward
+            if (current_step_idx > 0) {
+                current_step_idx--;
+                displayStep(current_step_idx);
+            } else {
+                std::cout << "  Already at the first step (0)." << std::endl;
+            }
+        }
+    }
+
+    cv::destroyAllWindows();
+    std::cout << "Study Mode Finished for game: " << game_to_study_name << std::endl;
+}
+
 int main(int argc, char *argv[]) {
   try {
     if (argc == 1) {
@@ -989,6 +1183,7 @@ int main(int argc, char *argv[]) {
     bool run_test_calibration = false;
     bool run_draw_board_workflow = false; // Flag for the new workflow
     bool run_tournament_mode = false;     // Flag for new tournament mode
+    bool run_study_mode = false;
 
     struct option long_options[] = {
         {"process-image", required_argument, nullptr, 'p'},
@@ -1002,8 +1197,9 @@ int main(int argc, char *argv[]) {
         {"snapshot", required_argument, nullptr, 's'},
         {"device", required_argument, nullptr, 'D'},
         {"record-sgf", required_argument, nullptr, 'r'},
-        {"tournament-mode", no_argument, nullptr, 't'},
+        {"tournament", no_argument, nullptr, 't'},
         {"game-name", required_argument, nullptr, 0},
+        {"study", no_argument, nullptr, 'u'},
         {"test-perspective", required_argument, nullptr, 0}, // Add -t option
         {"calibration", no_argument, nullptr,
          'b'}, // Added calibration long option
@@ -1019,7 +1215,7 @@ int main(int argc, char *argv[]) {
 
     int c;
     // Process all options in a single loop
-    while ((c = getopt_long(argc, argv, "dp:g:v:c:h:s:r:D:BbM:S:ft",
+    while ((c = getopt_long(argc, argv, "dp:g:v:c:h:s:r:D:BbM:S:ftu",
                             long_options, &option_index)) != -1) {
       switch (c) {
       case 'd':
@@ -1045,7 +1241,7 @@ int main(int argc, char *argv[]) {
       case 'B':
         run_calibration = true;
         run_interactive_calibration = true;
-        break;
+        break; 
       case 'M': // Handle capture mode option
         if (optarg) {
           std::string mode_str(optarg);
@@ -1142,6 +1338,9 @@ int main(int argc, char *argv[]) {
       case 't': // Handle -t option
         run_tournament_mode = true;
         break;
+      case 'u':
+        run_study_mode = true;
+        break;
       case 0: // Long-only options (val was 0)
         if (long_options[option_index].name == std::string("game-name")) {
           g_default_game_name_prefix = optarg;
@@ -1190,6 +1389,8 @@ int main(int argc, char *argv[]) {
       calibrationWorkflow(run_interactive_calibration);
     } else if (run_test_calibration) {
       testCalibrationConfigWorkflow();
+    } else if (run_study_mode) {
+      studyModeWorkflow(g_default_game_name_prefix);    
     } else if (run_tournament_mode) {
       tournamentModeWorkflow(g_default_game_name_prefix);
     } else if (!snapshot_output.empty()) {
