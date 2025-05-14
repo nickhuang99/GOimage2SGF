@@ -197,14 +197,13 @@ std::vector<cv::Point2f> getBoardCornersCorrected(int width, int height);
 
 void drawSimulatedGoBoard(
     const std::string
-        &current_board_sgf_str, // SGF for the complete current board state
+        &full_tournament_sgf_content, // Entire game history from tournament.sgf
+    int display_up_to_move_idx, // Display state AFTER this many B/W moves (0
+                                // for setup, 1 after 1st B/W move, etc.)
     cv::Mat &output_image,
-    int last_move_number = 0, // Current move number (1-indexed for display); 0
-                              // if no specific last move
-    int last_move_row = -1,   // 0-18, row of the last move
-    int last_move_col = -1,   // 0-18, col of the last move
-    int last_move_color = EMPTY, // EMPTY, BLACK, or WHITE for the last move
-    int canvas_size_px = 760     // Default canvas size
+    int highlight_this_move_idx = -1, // Move index (0 for setup, 1-based for
+                                      // B/W moves) to highlight, -1 for none
+    int canvas_size_px = 760          // Default canvas size
 );
 bool processAndSaveCalibration(
     const cv::Mat &final_raw_bgr_for_snapshot,
