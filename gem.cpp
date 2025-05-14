@@ -960,6 +960,7 @@ void tournamentModeWorkflow(const std::string &game_name_final_prefix) {
             << game_folder_path << std::endl;
 }
 
+// Corrected drawSimulatedBoardWorkflow
 void drawSimulatedBoardWorkflow(const std::string &sgf_file_path) {
   std::cout << "Starting Draw Simulated Board Workflow..." << std::endl;
   std::cout << "  SGF File: " << sgf_file_path << std::endl;
@@ -979,164 +980,219 @@ void drawSimulatedBoardWorkflow(const std::string &sgf_file_path) {
   }
 
   cv::Mat board_image;
-  
-  // Determine total B/W moves to display the final state and highlight the last move
-  std::set<std::pair<int, int>> setupB, setupW; // Not strictly needed for count, but parseSGFGame needs them
+
+  std::set<std::pair<int, int>> setupB, setupW;
   std::vector<Move> moves;
-  SGFHeader header; // Not strictly needed for count here
+  SGFHeader header;
   try {
-    header = parseSGFHeader(sgf_content); // Optional
+    header = parseSGFHeader(sgf_content);
     parseSGFGame(sgf_content, setupB, setupW, moves);
-  } catch (const SGFError& e) {
-      THROWGEMERROR("SGF Parsing error in drawSimulatedBoardWorkflow: " + std::string(e.what()));
-  }
-  
-  int total_bw_moves = 0;
-  for(const auto& move : moves){
-      if(move.player == BLACK || move.player == WHITE){
-          total_bw_moves++;
-      }
+  } catch (const SGFError &e) {
+    THROWGEMERROR("SGF Parsing error in drawSimulatedBoardWorkflow: " +
+                  std::string(e.what()));
   }
 
-  // Call with corrected signature:
-  // 1. SGF content string
-  // 2. Display up to this move index (total_bw_moves means all B/W moves)
-  // 3. Output Mat
-  // 4. Highlight this move index (total_bw_moves to highlight the last B/W move)
-  // 5. Canvas size (optional, uses default)
-  drawSimulatedGoBoard(sgf_content, 
-                       total_bw_moves, 
-                       board_image, 
-                       total_bw_moves, 
-                       canvas_size_px); 
+  int total_bw_moves = 0;
+  for (const auto &move : moves) {
+    if (move.player == BLACK || move.player == WHITE) {
+      total_bw_moves++;
+    }
+  }
+
+  // Corrected call to drawSimulatedGoBoard:
+  // Arg1: sgf_content (string)
+  // Arg2: display_up_to_move_idx (int) - show all B/W moves
+  // Arg3: board_image (Mat&)
+  // Arg4: highlight_this_move_idx (int) - highlight the last B/W move
+  // Arg5: canvas_size_px (int)
+  drawSimulatedGoBoard(sgf_content, total_bw_moves, board_image, total_bw_moves,
+                       canvas_size_px);
 
   if (board_image.empty()) {
     THROWGEMERROR("drawSimulatedGoBoard function returned an empty image.");
   }
 
-  std::string window_title = Default_Go_Board_Window_Title + ": " + sgf_file_path;
+  std::string window_title =
+      Default_Go_Board_Window_Title + ": " + sgf_file_path;
   cv::imshow(window_title, board_image);
-  std::cout << "  Displaying simulated board. Press any key in the OpenCV window to close." << std::endl;
+  std::cout << "  Displaying simulated board. Press any key in the OpenCV "
+               "window to close."
+            << std::endl;
   cv::waitKey(0);
   cv::destroyAllWindows();
   std::cout << "Draw Simulated Board Workflow Finished." << std::endl;
 }
 
-
-// Corrected studyModeWorkflow (Phase 1 structure, calls to drawSimulatedGoBoard updated for Phase 2 signature)
+// Corrected studyModeWorkflow (Phase 1 structure, calls to drawSimulatedGoBoard
+// updated for Phase 2 signature)
 static int loadGameSteps(const std::string &game_folder_path,
                          std::vector<std::string> &sgf_files_out,
                          std::vector<std::string> &jpg_files_out) {
-    // ... (Implementation from your latest gem.cpp)
-    sgf_files_out.clear(); jpg_files_out.clear(); std::map<int, std::string> found_sgfs, found_jpgs; int max_step = -1;
-    try {
-        if (!fs::exists(game_folder_path) || !fs::is_directory(game_folder_path)) return -1;
-        for (const auto& entry : fs::directory_iterator(game_folder_path)) {
-            if (entry.is_regular_file()) {
-                std::string fn = entry.path().filename().string(), ext = entry.path().extension().string(), name = fn.substr(0, fn.length()-ext.length());
-                try { size_t chars_proc=0; int sn=std::stoi(name, &chars_proc); if(chars_proc==name.length()){ if(ext==".sgf")found_sgfs[sn]=entry.path().string(); else if(ext==".jpg")found_jpgs[sn]=entry.path().string(); if(sn>max_step)max_step=sn;} } catch(...){}
-            }
+  // ... (Implementation from your latest gem.cpp)
+  sgf_files_out.clear();
+  jpg_files_out.clear();
+  std::map<int, std::string> found_sgfs, found_jpgs;
+  int max_step = -1;
+  try {
+    if (!fs::exists(game_folder_path) || !fs::is_directory(game_folder_path))
+      return -1;
+    for (const auto &entry : fs::directory_iterator(game_folder_path)) {
+      if (entry.is_regular_file()) {
+        std::string fn = entry.path().filename().string(),
+                    ext = entry.path().extension().string(),
+                    name = fn.substr(0, fn.length() - ext.length());
+        try {
+          size_t chars_proc = 0;
+          int sn = std::stoi(name, &chars_proc);
+          if (chars_proc == name.length()) {
+            if (ext == ".sgf")
+              found_sgfs[sn] = entry.path().string();
+            else if (ext == ".jpg")
+              found_jpgs[sn] = entry.path().string();
+            if (sn > max_step)
+              max_step = sn;
+          }
+        } catch (...) {
         }
-        int actual_max_step = -1;
-        for(int i=0; i<=max_step; ++i) { if(found_sgfs.count(i)&&found_jpgs.count(i)){ sgf_files_out.push_back(found_sgfs[i]); jpg_files_out.push_back(found_jpgs[i]); actual_max_step=i;} else break;}
-        if (sgf_files_out.empty() && max_step == -1 && bDebug) std::cout << "Debug (loadGameSteps): No numbered SGF/JPG step files found in " << game_folder_path << std::endl;
-        else if (sgf_files_out.empty() && max_step > -1) return -1; // Found numbered files but no pairs from 0
-        return actual_max_step;
-    } catch (const fs::filesystem_error& e) { std::cerr << "FS error loadGameSteps: " << e.what() << std::endl; return -1; }
+      }
+    }
+    int actual_max_step = -1;
+    for (int i = 0; i <= max_step; ++i) {
+      if (found_sgfs.count(i) && found_jpgs.count(i)) {
+        sgf_files_out.push_back(found_sgfs[i]);
+        jpg_files_out.push_back(found_jpgs[i]);
+        actual_max_step = i;
+      } else
+        break;
+    }
+    if (sgf_files_out.empty() && max_step == -1 && bDebug)
+      std::cout
+          << "Debug (loadGameSteps): No numbered SGF/JPG step files found in "
+          << game_folder_path << std::endl;
+    else if (sgf_files_out.empty() && max_step > -1)
+      return -1;
+    return actual_max_step;
+  } catch (const fs::filesystem_error &e) {
+    std::cerr << "FS error loadGameSteps: " << e.what() << std::endl;
+    return -1;
+  }
 }
 
 void studyModeWorkflow(const std::string &game_to_study_name) {
-  std::cout << "Starting Study Mode for game: " << game_to_study_name << std::endl;
+  std::cout << "Starting Study Mode for game: " << game_to_study_name
+            << std::endl;
 
   std::string game_folder_path = "./share/" + game_to_study_name;
-  std::vector<std::string> sgf_step_files; // Paths to N.sgf (board state snapshots)
-  std::vector<std::string> jpg_step_files; 
+  std::vector<std::string> sgf_step_files;
+  std::vector<std::string> jpg_step_files;
 
-  int max_step_idx = loadGameSteps(game_folder_path, sgf_step_files, jpg_step_files);
+  int max_step_idx =
+      loadGameSteps(game_folder_path, sgf_step_files, jpg_step_files);
 
   if (max_step_idx < 0 || sgf_step_files.empty()) {
-    THROWGEMERROR("No game steps (matching SGF/JPG pairs from 0..N) found in folder: " + game_folder_path);
+    THROWGEMERROR(
+        "No game steps (matching SGF/JPG pairs from 0..N) found in folder: " +
+        game_folder_path);
   }
-  std::cout << "  Loaded " << max_step_idx + 1 << " game steps (0 to " << max_step_idx << ")." << std::endl;
+  std::cout << "  Loaded " << max_step_idx + 1 << " game steps (0 to "
+            << max_step_idx << ")." << std::endl;
 
   std::string main_tournament_sgf_path = game_folder_path + "/tournament.sgf";
   std::ifstream tournament_sgf_stream(main_tournament_sgf_path);
   if (!tournament_sgf_stream.is_open()) {
-      THROWGEMERROR("Failed to open main tournament SGF file: " + main_tournament_sgf_path);
+    THROWGEMERROR("Failed to open main tournament SGF file: " +
+                  main_tournament_sgf_path);
   }
   std::stringstream sstream_tournament;
   sstream_tournament << tournament_sgf_stream.rdbuf();
   std::string full_tournament_sgf_content = sstream_tournament.str();
   tournament_sgf_stream.close();
   if (full_tournament_sgf_content.empty()) {
-      THROWGEMERROR("Main tournament SGF file is empty: " + main_tournament_sgf_path);
+    THROWGEMERROR("Main tournament SGF file is empty: " +
+                  main_tournament_sgf_path);
   }
 
-  int current_display_step_idx = 0; 
+  int current_display_step_idx = 0;
   cv::Mat simulated_board_image;
   cv::Mat snapshot_image;
 
-  std::string sim_board_window = "Study: Simulated Board - " + game_to_study_name;
+  std::string sim_board_window =
+      "Study: Simulated Board - " + game_to_study_name;
   std::string snapshot_window = "Study: Snapshot View - " + game_to_study_name;
   cv::namedWindow(sim_board_window, cv::WINDOW_AUTOSIZE);
   cv::namedWindow(snapshot_window, cv::WINDOW_AUTOSIZE);
   cv::moveWindow(sim_board_window, 50, 50);
-  cv::moveWindow(snapshot_window, 50 + canvas_size_px + 20, 50); 
+  cv::moveWindow(snapshot_window, 50 + canvas_size_px + 20, 50);
 
   auto displayCurrentStudyStep = [&]() {
-    if (current_display_step_idx < 0 || static_cast<size_t>(current_display_step_idx) >= jpg_step_files.size()) { // Check jpg_files_size as it dictates pairs
-        std::cerr << "Error: Invalid step index " << current_display_step_idx << " for display." << std::endl;
-        return;
+    if (current_display_step_idx < 0 ||
+        static_cast<size_t>(current_display_step_idx) >=
+            jpg_step_files.size()) {
+      std::cerr << "Error: Invalid step index " << current_display_step_idx
+                << " for display." << std::endl;
+      return;
     }
 
     std::cout << "  Displaying Step: " << current_display_step_idx << std::endl;
-    cv::setWindowTitle(sim_board_window, "Study: Sim Board - " + game_to_study_name + " (Step " + std::to_string(current_display_step_idx) + ")");
-    cv::setWindowTitle(snapshot_window, "Study: Snapshot - " + game_to_study_name + " (Step " + std::to_string(current_display_step_idx) + ")");
+    cv::setWindowTitle(sim_board_window,
+                       "Study: Sim Board - " + game_to_study_name + " (Step " +
+                           std::to_string(current_display_step_idx) + ")");
+    cv::setWindowTitle(snapshot_window,
+                       "Study: Snapshot - " + game_to_study_name + " (Step " +
+                           std::to_string(current_display_step_idx) + ")");
 
     snapshot_image = cv::imread(jpg_step_files[current_display_step_idx]);
     if (snapshot_image.empty()) {
-        std::cerr << "Error loading snapshot: " << jpg_step_files[current_display_step_idx] << std::endl;
-        cv::Mat error_img = cv::Mat::zeros(480, 640, CV_8UC3);
-        cv::putText(error_img, "Snapshot Load Error", cv::Point(50,240), cv::FONT_HERSHEY_SIMPLEX, 1, cv::Scalar(0,0,255),2);
-        cv::imshow(snapshot_window, error_img);
+      std::cerr << "Error loading snapshot: "
+                << jpg_step_files[current_display_step_idx] << std::endl;
+      cv::Mat error_img = cv::Mat::zeros(480, 640, CV_8UC3);
+      cv::putText(error_img, "Snapshot Load Error", cv::Point(50, 240),
+                  cv::FONT_HERSHEY_SIMPLEX, 1, cv::Scalar(0, 0, 255), 2);
+      cv::imshow(snapshot_window, error_img);
     } else {
-        cv::imshow(snapshot_window, snapshot_image);
+      cv::imshow(snapshot_window, snapshot_image);
     }
-    
-    // Call drawSimulatedGoBoard with Phase 2 signature
-    // current_display_step_idx is the number of B/W moves to replay from tournament.sgf to get to this state
-    // (0 for setup, 1 for after first B/W move, etc.)
-    // We also highlight the move that *led* to this state.
-    drawSimulatedGoBoard(full_tournament_sgf_content, 
-                         current_display_step_idx, 
-                         simulated_board_image, 
-                         current_display_step_idx, // Highlight the current move number
-                         canvas_size_px); 
+
+    // Corrected call to drawSimulatedGoBoard with Phase 2 signature
+    // Arg1: full_tournament_sgf_content (string)
+    // Arg2: current_display_step_idx (int) - this is 'display_up_to_move_idx'
+    // Arg3: simulated_board_image (Mat&)
+    // Arg4: current_display_step_idx (int) - this is 'highlight_this_move_idx'
+    // Arg5: canvas_size_px (int)
+    drawSimulatedGoBoard(full_tournament_sgf_content, current_display_step_idx,
+                         simulated_board_image, current_display_step_idx,
+                         canvas_size_px);
     cv::imshow(sim_board_window, simulated_board_image);
   };
 
-  displayCurrentStudyStep(); 
+  displayCurrentStudyStep();
 
   while (true) {
     int key = cv::waitKey(0);
-    if (key == 27) { break; } 
-    else if (key == 'f' || key == 'F') { 
-        if (current_display_step_idx < max_step_idx) {
-            current_display_step_idx++;
-            displayCurrentStudyStep();
-        } else { std::cout << "  Already at the last step (" << max_step_idx << ")." << std::endl; }
-    } else if (key == 'b' || key == 'B') { 
-        if (current_display_step_idx > 0) {
-            current_display_step_idx--;
-            displayCurrentStudyStep();
-        } else { std::cout << "  Already at the first step (0)." << std::endl; }
+    if (key == 27) {
+      break;
+    } else if (key == 'f' || key == 'F') {
+      if (current_display_step_idx < max_step_idx) {
+        current_display_step_idx++;
+        displayCurrentStudyStep();
+      } else {
+        std::cout << "  Already at the last step (" << max_step_idx << ")."
+                  << std::endl;
+      }
+    } else if (key == 'b' || key == 'B') {
+      if (current_display_step_idx > 0) {
+        current_display_step_idx--;
+        displayCurrentStudyStep();
+      } else {
+        std::cout << "  Already at the first step (0)." << std::endl;
+      }
     }
   }
 
   cv::destroyAllWindows();
-  std::cout << "Study Mode Finished for game: " << game_to_study_name << std::endl;
+  std::cout << "Study Mode Finished for game: " << game_to_study_name
+            << std::endl;
 }
-
 
 int main(int argc, char *argv[]) {
   try {
