@@ -52,7 +52,9 @@ void displayHelpMessage() {
           "(e.g., "
           "1280x720). Default: 640x480."
        << endl;
-  cout << "  -b, --calibration                 : Run calibration workflow."
+  cout << "  -b, --calibration                 : Run capture calibration workflow."
+       << endl;
+  cout << "  -B, --interactive-calibration     : Run interactive calibration workflow."
        << endl;
   cout << "  --test-calibration-config         : Load calibration snapshot and "
           "config, draw corners."
@@ -349,7 +351,7 @@ void testPerspectiveTransform(const std::string &imagePath) {
 }
 
 // --- NEW Calibration Workflow Function ---
-void calibrationWorkflow() {
+void calibrationWorkflow(bool bInteractive) {
   cout << "Starting Calibration Workflow..." << endl;
 
   // Extract camera index from device path (e.g., /dev/video0 -> 0)
@@ -378,7 +380,12 @@ void calibrationWorkflow() {
   cout << "Displaying live feed from camera index: " << camera_index
        << " (derived from " << g_device_path << ")" << endl;
   // Call the function (defined in snapshot.cpp)
-  runInteractiveCalibration(camera_index);
+  if (bInteractive) {
+    runInteractiveCalibration(camera_index);
+  } else {
+    runCaptureCalibration(camera_index);
+  }
+  
   cout << "Calibration workflow finished." << endl;
 }
 
@@ -947,6 +954,7 @@ int main(int argc, char *argv[]) {
 
     bool run_probe_devices = false;
     bool run_calibration = false;
+    bool run_interactive_calibration = false;
     bool run_test_calibration = false;
     bool run_draw_board_workflow = false; // Flag for the new workflow
     bool run_tournament_mode = false;     // Flag for new tournament mode
@@ -968,6 +976,8 @@ int main(int argc, char *argv[]) {
         {"test-perspective", required_argument, nullptr, 0}, // Add -t option
         {"calibration", no_argument, nullptr,
          'b'}, // Added calibration long option
+        {"interactive-calibration", no_argument, nullptr,
+         'B'}, // Added calibration long option
         {"mode", required_argument, nullptr, 'M'}, // Added mode option
         {"size", required_argument, nullptr,
          'S'}, // Use S as a unique identifier for --size
@@ -978,7 +988,7 @@ int main(int argc, char *argv[]) {
 
     int c;
     // Process all options in a single loop
-    while ((c = getopt_long(argc, argv, "dp:g:v:c:h:s:r:D:bM:S:ft",
+    while ((c = getopt_long(argc, argv, "dp:g:v:c:h:s:r:D:BbM:S:ft",
                             long_options, &option_index)) != -1) {
       switch (c) {
       case 'd':
@@ -999,6 +1009,11 @@ int main(int argc, char *argv[]) {
       } break;
       case 'b': // Handle calibration option
         run_calibration = true;
+        run_interactive_calibration = false;
+        break;
+      case 'B':
+        run_calibration = true;
+        run_interactive_calibration = true;
         break;
       case 'M': // Handle capture mode option
         if (optarg) {
@@ -1141,7 +1156,7 @@ int main(int argc, char *argv[]) {
     if (run_probe_devices) {
       probeVideoDevicesWorkflow();
     } else if (run_calibration) {
-      calibrationWorkflow();
+      calibrationWorkflow(run_interactive_calibration);
     } else if (run_test_calibration) {
       testCalibrationConfigWorkflow();
     } else if (run_tournament_mode) {
