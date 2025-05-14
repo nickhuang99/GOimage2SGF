@@ -1563,7 +1563,7 @@ void drawSimulatedGoBoard(
     int canvas_size_px) {
 
   // --- Drawing Constants ---
-  const int base_margin_px = std::max(20, canvas_size_px / 25); // Base margin
+  const int base_margin_px = std::max(20, canvas_size_px / 26); // Base margin
   const int label_space_px =
       std::max(15, canvas_size_px / 40); // Extra space for labels
   const int total_margin_px = base_margin_px + label_space_px;

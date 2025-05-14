@@ -16,6 +16,7 @@
 #include <sstream>
 #include <stdexcept>  // Include for standard exceptions
 #include <sys/stat.h> // For mkdir (though filesystem is preferred)
+#include <tuple>
 #include <vector>
 
 using namespace cv;
@@ -52,9 +53,11 @@ void displayHelpMessage() {
           "(e.g., "
           "1280x720). Default: 640x480."
        << endl;
-  cout << "  -b, --calibration                 : Run capture calibration workflow."
+  cout << "  -b, --calibration                 : Run capture calibration "
+          "workflow."
        << endl;
-  cout << "  -B, --interactive-calibration     : Run interactive calibration workflow."
+  cout << "  -B, --interactive-calibration     : Run interactive calibration "
+          "workflow."
        << endl;
   cout << "  --test-calibration-config         : Load calibration snapshot and "
           "config, draw corners."
@@ -385,7 +388,7 @@ void calibrationWorkflow(bool bInteractive) {
   } else {
     runCaptureCalibration(camera_index);
   }
-  
+
   cout << "Calibration workflow finished." << endl;
 }
 
@@ -697,7 +700,30 @@ void tournamentModeWorkflow(const std::string &game_name_final_prefix) {
     cv::moveWindow(debug_capture_window_name, 800,
                    50); // Position it to the side
   }
+  auto parseLastMoveInfo =
+      [](const std::string &sgf_move_node) -> std::tuple<int, int, int> {
+    if (sgf_move_node.length() < 5 || sgf_move_node[0] != ';') { // Basic check
+      return {-1, -1, EMPTY};
+    }
+    char player_char = sgf_move_node[1];
+    int color = EMPTY;
+    if (player_char == 'B')
+      color = BLACK;
+    else if (player_char == 'W')
+      color = WHITE;
+    else
+      return {-1, -1, EMPTY}; // Not a B or W move node
 
+    if (sgf_move_node[2] == '[' && sgf_move_node[5] == ']') {
+      char col_char = sgf_move_node[3];
+      char row_char = sgf_move_node[4];
+      if (col_char >= 'a' && col_char <= 's' && row_char >= 'a' &&
+          row_char <= 's') {
+        return {row_char - 'a', col_char - 'a', color};
+      }
+    }
+    return {-1, -1, EMPTY}; // Parsing failed
+  };
   while (true) {
     std::string current_step_info = "Step " + std::to_string(game_step_counter);
     cv::setWindowTitle(main_display_window_name,
@@ -780,6 +806,7 @@ void tournamentModeWorkflow(const std::string &game_name_final_prefix) {
 
     std::string current_step_sgf_content_full = "";
     if (processing_ok) {
+      int last_move_row = -1, last_move_col = -1, last_move_color = EMPTY;
       std::string step_snapshot_path =
           game_folder_path + "/" + std::to_string(game_step_counter) + ".jpg";
       if (!cv::imwrite(step_snapshot_path, current_raw_frame)) {
@@ -846,6 +873,8 @@ void tournamentModeWorkflow(const std::string &game_name_final_prefix) {
             main_sgf_appender << "\n" << move_made;
             std::cout << "  Appended move: " << move_made << " to "
                       << main_sgf_path << std::endl;
+            std::tie(last_move_row, last_move_col, last_move_color) =
+                parseLastMoveInfo(move_made);
           } else { /* ... handle error or no move ... */
           }
           main_sgf_appender.close();
@@ -855,7 +884,9 @@ void tournamentModeWorkflow(const std::string &game_name_final_prefix) {
 
       // Draw the new simulated board for the main display
       drawSimulatedGoBoard(current_step_sgf_content_full,
-                           simulated_board_display_image, canvas_size_px);
+                           simulated_board_display_image, game_step_counter,
+                           last_move_row, last_move_col, last_move_color,
+                           canvas_size_px);
     }
     // If processing was not OK, simulated_board_display_image already shows an
     // error message
@@ -901,7 +932,7 @@ void tournamentModeWorkflow(const std::string &game_name_final_prefix) {
             << game_folder_path << std::endl;
 }
 
-void drawSimulatedBoardWorkflow(const std::string &sgf_file_path) { 
+void drawSimulatedBoardWorkflow(const std::string &sgf_file_path) {
   std::cout << "Starting Draw Simulated Board Workflow..." << std::endl;
   std::cout << "  SGF File: " << sgf_file_path << std::endl;
 
