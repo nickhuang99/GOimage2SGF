@@ -205,4 +205,9 @@ void drawSimulatedGoBoard(
     int last_move_color = EMPTY, // EMPTY, BLACK, or WHITE for the last move
     int canvas_size_px = 760     // Default canvas size
 );
+
+bool detectFourCornersGoBoard(
+    const cv::Mat &input_image,
+    std::vector<cv::Point2f> &detected_corners_tl_tr_br_bl);
+
 #endif // UTILITY_H

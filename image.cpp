@@ -369,23 +369,25 @@ CalibrationData loadCalibrationData(const std::string &config_path) {
       data.device_path = config_map["DevicePath"];
       data.device_path_loaded = true;
       if (bDebug)
-        std::cout << "  Debug: Loaded DevicePath: "
-                  << data.device_path << std::endl;
+        std::cout << "  Debug: Loaded DevicePath: " << data.device_path
+                  << std::endl;
     } else {
       if (bDebug)
         std::cerr << "  Warning: DevicePath missing from config." << std::endl;
     }
     // Parse Dimensions (as in your file)
-     if (config_map.count("ImageWidth") && config_map.count("ImageHeight")) {
-      data.image_width = std::stoi(config_map["ImageWidth"]); // Store in new distinct fields
+    if (config_map.count("ImageWidth") && config_map.count("ImageHeight")) {
+      data.image_width =
+          std::stoi(config_map["ImageWidth"]); // Store in new distinct fields
       data.image_height = std::stoi(config_map["ImageHeight"]);
       data.dimensions_loaded = true;
       if (bDebug)
-        std::cout << "  Debug: Loaded Dimensions at Calib: " << data.image_width << "x"
-                  << data.image_height << std::endl;
+        std::cout << "  Debug: Loaded Dimensions at Calib: " << data.image_width
+                  << "x" << data.image_height << std::endl;
     } else {
       if (bDebug)
-        std::cerr << "  Warning: ImageWidth or ImageHeight missing from config." << std::endl;
+        std::cerr << "  Warning: ImageWidth or ImageHeight missing from config."
+                  << std::endl;
     }
 
     // Parse Corners (_PX) (as in your file)
@@ -1544,11 +1546,11 @@ void processGoBoard(
   );
   // The imshow for "Direct Classification Result" is now inside
   // performDirectClassification if bDebug
-  
- if (bDebug) {    
+
+  if (bDebug) {
     imshow("board_with_stones_out (Final)", board_with_stones_out);
     cv::waitKey(0);
-  } 
+  }
 }
 
 void drawSimulatedGoBoard(
@@ -1821,4 +1823,271 @@ void drawSimulatedGoBoard(
                 << last_move_col << ") color " << last_move_color << std::endl;
     }
   }
+}
+static std::vector<cv::Point2f>
+getStoneCandidateCenters(const cv::Mat &image_for_size_ref,
+                         const std::vector<std::vector<cv::Point>> &contours,
+                         double min_area_ratio, double max_area_ratio,
+                         double min_circularity) {
+
+  std::vector<cv::Point2f> centers;
+  if (contours.empty()) {
+    return centers;
+  }
+
+  double image_area =
+      static_cast<double>(image_for_size_ref.rows * image_for_size_ref.cols);
+  double min_abs_area = image_area * min_area_ratio;
+  double max_abs_area = image_area * max_area_ratio;
+
+  if (bDebug) {
+    std::cout << "    getCandidateCenters: Image Area=" << image_area
+              << ", MinStoneArea=" << min_abs_area
+              << ", MaxStoneArea=" << max_abs_area << std::endl;
+  }
+
+  for (const auto &contour : contours) {
+    double area = cv::contourArea(contour);
+    if (area < min_abs_area || area > max_abs_area) {
+      if (bDebug && area > 10)
+        std::cout << "      Contour rejected by area: " << area << std::endl;
+      continue;
+    }
+
+    if (contour.size() < 5) {
+      if (bDebug)
+        std::cout << "      Contour rejected by insufficient points: "
+                  << contour.size() << std::endl;
+      continue;
+    }
+
+    double perimeter = cv::arcLength(contour, true);
+    if (perimeter < 1.0)
+      continue;
+
+    double circularity = (4 * CV_PI * area) / (perimeter * perimeter);
+    if (circularity < min_circularity) {
+      if (bDebug)
+        std::cout << "      Contour rejected by circularity: " << circularity
+                  << " (Area: " << area << ")" << std::endl;
+      continue;
+    }
+
+    cv::Moments M = cv::moments(contour);
+    if (M.m00 > 0) {
+      cv::Point2f center(static_cast<float>(M.m10 / M.m00),
+                         static_cast<float>(M.m01 / M.m00));
+      centers.push_back(center);
+      if (bDebug)
+        std::cout << "      Contour accepted: Center=" << center
+                  << ", Area=" << area << ", Circ=" << circularity << std::endl;
+    }
+  }
+  return centers;
+}
+
+// detectFourCornersGoBoard function with heuristic lines removed
+// Output order for detected_corners_tl_tr_br_bl: TL, TR, BR, BL
+bool detectFourCornersGoBoard(
+    const cv::Mat &input_bgr_image,
+    std::vector<cv::Point2f> &detected_corners_tl_tr_br_bl) {
+  if (input_bgr_image.empty()) {
+    std::cerr << "Error (detectFourCornersGoBoard): Input image is empty."
+              << std::endl;
+    return false;
+  }
+
+  detected_corners_tl_tr_br_bl.clear();
+
+  cv::Mat image_lab;
+  cv::cvtColor(input_bgr_image, image_lab, cv::COLOR_BGR2Lab);
+
+  cv::Scalar lab_black_lower(0, 100, 100);
+  cv::Scalar lab_black_upper(70, 150, 150);
+  cv::Scalar lab_white_lower(190, 100, 100);
+  cv::Scalar lab_white_upper(255, 150, 150);
+
+  if (bDebug) {
+    std::cout << "Debug (detectFourCornersGoBoard): Using Lab ranges:"
+              << std::endl;
+    std::cout << "  Black Lower: " << lab_black_lower
+              << " Upper: " << lab_black_upper << std::endl;
+    std::cout << "  White Lower: " << lab_white_lower
+              << " Upper: " << lab_white_upper << std::endl;
+  }
+
+  cv::Mat black_mask, white_mask;
+  cv::inRange(image_lab, lab_black_lower, lab_black_upper, black_mask);
+  cv::inRange(image_lab, lab_white_lower, lab_white_upper, white_mask);
+
+  cv::Mat kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 5));
+  cv::morphologyEx(black_mask, black_mask, cv::MORPH_OPEN, kernel,
+                   cv::Point(-1, -1), 1);
+  cv::morphologyEx(black_mask, black_mask, cv::MORPH_CLOSE, kernel,
+                   cv::Point(-1, -1), 2);
+  cv::morphologyEx(white_mask, white_mask, cv::MORPH_OPEN, kernel,
+                   cv::Point(-1, -1), 1);
+  cv::morphologyEx(white_mask, white_mask, cv::MORPH_CLOSE, kernel,
+                   cv::Point(-1, -1), 2);
+
+  if (bDebug) {
+    cv::imshow("Black Mask (detectFourCorners)", black_mask);
+    cv::imshow("White Mask (detectFourCorners)", white_mask);
+  }
+
+  std::vector<std::vector<cv::Point>> black_contours, white_contours;
+  cv::findContours(black_mask, black_contours, cv::RETR_EXTERNAL,
+                   cv::CHAIN_APPROX_SIMPLE);
+  cv::findContours(white_mask, white_contours, cv::RETR_EXTERNAL,
+                   cv::CHAIN_APPROX_SIMPLE);
+
+  if (bDebug) {
+    std::cout << "  Found " << black_contours.size() << " raw black contours, "
+              << white_contours.size() << " raw white contours." << std::endl;
+  }
+
+  double min_stone_area_ratio = 1.0 / 3000.0;
+  double max_stone_area_ratio = 1.0 / 300.0;
+  double min_stone_circularity = 0.70;
+
+  std::vector<cv::Point2f> black_centers = getStoneCandidateCenters(
+      input_bgr_image, black_contours, min_stone_area_ratio,
+      max_stone_area_ratio, min_stone_circularity);
+  std::vector<cv::Point2f> white_centers = getStoneCandidateCenters(
+      input_bgr_image, white_contours, min_stone_area_ratio,
+      max_stone_area_ratio, min_stone_circularity);
+
+  if (bDebug) {
+    std::cout << "  Found " << black_centers.size()
+              << " filtered black candidates, " << white_centers.size()
+              << " filtered white candidates." << std::endl;
+    cv::Mat debug_draw = input_bgr_image.clone();
+    for (const auto &pt : black_centers)
+      cv::circle(debug_draw, pt, 5, cv::Scalar(0, 0, 150), -1);
+    for (const auto &pt : white_centers)
+      cv::circle(debug_draw, pt, 5, cv::Scalar(150, 0, 0), -1);
+    cv::imshow("Filtered Stone Candidates", debug_draw);
+  }
+
+  if (black_centers.size() < 2 || white_centers.size() < 2) {
+    std::cerr << "Error (detectFourCornersGoBoard): Not enough black ("
+              << black_centers.size() << ") or white (" << white_centers.size()
+              << ") stone candidates found." << std::endl;
+    return false;
+  }
+
+  cv::Point2f tl_pt(-1, -1), tr_pt(-1, -1), br_pt(-1, -1), bl_pt(-1, -1);
+  float min_dist_tl = std::numeric_limits<float>::max();
+  float min_dist_tr = std::numeric_limits<float>::max();
+  float min_dist_br = std::numeric_limits<float>::max();
+  float min_dist_bl = std::numeric_limits<float>::max();
+
+  int img_h = input_bgr_image.rows;
+  int img_w = input_bgr_image.cols;
+
+  // Top-Left (Black)
+  for (const auto &pt : black_centers) {
+    if (pt.x < img_w * 0.5 && pt.y < img_h * 0.5) {
+      float dist = pt.x * pt.x + pt.y * pt.y;
+      if (dist < min_dist_tl) {
+        min_dist_tl = dist;
+        tl_pt = pt;
+      }
+    }
+  }
+
+  // Top-Right (White)
+  for (const auto &pt : white_centers) {
+    if (pt.x >= img_w * 0.5 && pt.y < img_h * 0.5) {
+      float dist = (img_w - pt.x) * (img_w - pt.x) + pt.y * pt.y;
+      if (dist < min_dist_tr) {
+        min_dist_tr = dist;
+        tr_pt = pt;
+      }
+    }
+  }
+
+  // Bottom-Left (Black)
+  for (const auto &pt : black_centers) {
+    if (pt.x < img_w * 0.5 && pt.y >= img_h * 0.5) {
+      // REMOVED: if (tl_pt.x > 0 && std::abs(pt.x - tl_pt.x) < x_step_heuristic
+      // && std::abs(pt.y - tl_pt.y) < y_step_heuristic) continue;
+      if (pt == tl_pt && tl_pt.x >= 0)
+        continue; // Ensure it's not the same as TL if TL was found
+      float dist = pt.x * pt.x + (img_h - pt.y) * (img_h - pt.y);
+      if (dist < min_dist_bl) {
+        min_dist_bl = dist;
+        bl_pt = pt;
+      }
+    }
+  }
+
+  // Bottom-Right (White)
+  for (const auto &pt : white_centers) {
+    if (pt.x >= img_w * 0.5 && pt.y >= img_h * 0.5) {
+      // REMOVED: if (tr_pt.x > 0 && std::abs(pt.x - tr_pt.x) < x_step_heuristic
+      // && std::abs(pt.y - tr_pt.y) < y_step_heuristic) continue;
+      if (pt == tr_pt && tr_pt.x >= 0)
+        continue; // Ensure it's not the same as TR if TR was found
+      float dist =
+          (img_w - pt.x) * (img_w - pt.x) + (img_h - pt.y) * (img_h - pt.y);
+      if (dist < min_dist_br) {
+        min_dist_br = dist;
+        br_pt = pt;
+      }
+    }
+  }
+
+  if (tl_pt.x < 0 || tr_pt.x < 0 || bl_pt.x < 0 || br_pt.x < 0) {
+    std::cerr << "Error (detectFourCornersGoBoard): Failed to identify all "
+                 "four distinct corner stones using quadrant heuristic."
+              << std::endl;
+    if (bDebug) {
+      std::cout << "  TL: " << tl_pt << " TR: " << tr_pt << " BL: " << bl_pt
+                << " BR: " << br_pt << std::endl;
+    }
+    return false;
+  }
+
+  // A simple distinctness check: ensure no two points are identical.
+  // This is a basic check; more robust would be minimum distance.
+  if (tl_pt == bl_pt || tr_pt == br_pt) {
+    std::cerr << "Error (detectFourCornersGoBoard): Detected corner stones are "
+                 "not distinct (e.g., TL same as BL)."
+              << std::endl;
+    if (bDebug) {
+      std::cout << "  TL: " << tl_pt << " TR: " << tr_pt << " BL: " << bl_pt
+                << " BR: " << br_pt << std::endl;
+    }
+    return false;
+  }
+
+  detected_corners_tl_tr_br_bl.push_back(tl_pt);
+  detected_corners_tl_tr_br_bl.push_back(tr_pt);
+  detected_corners_tl_tr_br_bl.push_back(br_pt);
+  detected_corners_tl_tr_br_bl.push_back(bl_pt);
+
+  if (bDebug) {
+    cv::Mat final_detection_img = input_bgr_image.clone();
+    cv::circle(final_detection_img, tl_pt, 10, cv::Scalar(0, 0, 255), 2);
+    cv::putText(final_detection_img, "TL", tl_pt + cv::Point2f(5, 0),
+                cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 0, 255), 1);
+    cv::circle(final_detection_img, tr_pt, 10, cv::Scalar(255, 0, 0), 2);
+    cv::putText(final_detection_img, "TR", tr_pt + cv::Point2f(5, 0),
+                cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 0, 0), 1);
+    cv::circle(final_detection_img, br_pt, 10, cv::Scalar(255, 0, 255), 2);
+    cv::putText(final_detection_img, "BR", br_pt + cv::Point2f(5, 0),
+                cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 0, 255), 1);
+    cv::circle(final_detection_img, bl_pt, 10, cv::Scalar(0, 255, 255), 2);
+    cv::putText(final_detection_img, "BL", bl_pt + cv::Point2f(5, 0),
+                cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 255), 1);
+    cv::imshow("Auto-Detected Corners", final_detection_img);
+  }
+
+  std::cout << "  Successfully auto-detected four candidate corner stones."
+            << std::endl;
+  // Placeholder for further validation steps you mentioned (positional, color
+  // uniqueness etc.) For now, if 4 distinct points are found in quadrants,
+  // return true.
+  return true;
 }
