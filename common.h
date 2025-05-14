@@ -194,7 +194,15 @@ int calculateAdaptiveSampleRadius(float board_pixel_width,
 
 std::vector<cv::Point2f> getBoardCornersCorrected(int width, int height);
 
-void drawSimulatedGoBoard(const std::string &sgf_content_str,
-                          cv::Mat &output_image, int pixel_sz);
-
+void drawSimulatedGoBoard(
+    const std::string
+        &current_board_sgf_str, // SGF for the complete current board state
+    cv::Mat &output_image,
+    int last_move_number = 0, // Current move number (1-indexed for display); 0
+                              // if no specific last move
+    int last_move_row = -1,   // 0-18, row of the last move
+    int last_move_col = -1,   // 0-18, col of the last move
+    int last_move_color = EMPTY, // EMPTY, BLACK, or WHITE for the last move
+    int canvas_size_px = 760     // Default canvas size
+);
 #endif // UTILITY_H
