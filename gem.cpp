@@ -657,11 +657,61 @@ static bool setupCalibrationFromConfig() {
 
   return true;
 }
-void tournamentModeWorkflow(const std::string &game_name_final_prefix) {
-  // Assuming setupCalibrationFromConfig() might have been called in main() or
-  // here if needed For this function, we'll use g_device_path, g_capture_width,
-  // g_capture_height as they are.
 
+static void debugAndShowUserIdenticalBoardState(
+    const cv::Mat &raw_frame,
+    const cv::Mat
+        &previous_processed_board_display, // The display of the previous state
+    const cv::Mat &current_processed_board_display, // The display of the
+                                                    // current (identical) state
+    int step_num,
+    const std::string
+        &window_name // To potentially display messages or new images
+) {
+  std::cout << "  DEBUG_INFO: Board state for step " << step_num
+            << " is identical to the previous step." << std::endl;
+  std::cout << "  User may have forgotten to make a move, or processGoBoard "
+               "failed to detect a change."
+            << std::endl;
+  std::cout << "  Displaying current processed board. Press 'N' to try "
+               "capturing for this step again, or 'ESC' to exit."
+            << std::endl;
+
+  // For now, this function will just print. You can expand it to show images in
+  // new windows or overlay messages on the existing 'snapshot_window_name'.
+  // Example:
+  // cv::Mat combined_display;
+  // if (!previous_processed_board_display.empty() &&
+  // !current_processed_board_display.empty()) {
+  //    cv::hconcat(previous_processed_board_display,
+  //    current_processed_board_display, combined_display); cv::imshow("Debug:
+  //    Prev vs Current (Identical)", combined_display);
+  // } else {
+  //    cv::imshow("Debug: Current Processed (Identical to Prev)",
+  //    current_processed_board_display.empty() ? raw_frame :
+  //    current_processed_board_display);
+  // }
+  // cv::waitKey(1); // Give a moment for display
+}
+
+static bool compareBoardStates(const cv::Mat &board1, const cv::Mat &board2) {
+  if (board1.empty() && board2.empty())
+    return true;
+  if (board1.empty() || board2.empty())
+    return false;
+  if (board1.rows != board2.rows || board1.cols != board2.cols ||
+      board1.type() != board2.type()) {
+    return false; // Different dimensions or types
+  }
+  cv::Mat diff;
+  cv::compare(board1, board2, diff,
+              cv::CMP_NE); // Stores non-zero if elements are different
+  return cv::countNonZero(diff) == 0;
+}
+
+void tournamentModeWorkflow(const std::string &game_name_final_prefix) {
+  // ... (initial setup: couts, folder creation, window creation as in your
+  // version) ...
   std::cout << "Starting Tournament Mode (with Last Move Highlight)..."
             << std::endl;
   std::cout << "  Game Name Prefix: " << game_name_final_prefix << std::endl;
@@ -671,9 +721,7 @@ void tournamentModeWorkflow(const std::string &game_name_final_prefix) {
   std::string base_share_path = "./share/";
   std::string game_folder_path = base_share_path + game_name_final_prefix;
 
-  if (!createOrClearGameFolder(
-          game_folder_path,
-          bDebug)) { // Ensure this function is defined in gem.cpp
+  if (!createOrClearGameFolder(game_folder_path, bDebug)) {
     return;
   }
 
@@ -684,6 +732,9 @@ void tournamentModeWorkflow(const std::string &game_name_final_prefix) {
   cv::Mat current_raw_frame;
   cv::Mat simulated_board_display_image;
   cv::Mat processed_camera_capture_display_debug;
+  cv::Mat
+      previous_processed_camera_capture_display_debug; // To show in
+                                                       // debugAndShowUserIdenticalBoardState
 
   std::string main_display_window_name =
       "Go Tournament: " + game_name_final_prefix + " (Simulated Board)";
@@ -693,40 +744,31 @@ void tournamentModeWorkflow(const std::string &game_name_final_prefix) {
   if (bDebug) {
     cv::namedWindow(debug_capture_window_name, cv::WINDOW_AUTOSIZE);
     cv::moveWindow(main_display_window_name, 50, 50);
-    // Ensure canvas_size_px is defined, e.g., static const int canvas_size_px =
-    // 760;
     cv::moveWindow(debug_capture_window_name, 50 + canvas_size_px + 20, 50);
   }
 
-  // Lambda to parse the primary move from an SGF move string (e.g., ";B[dp]")
-  // Returns: row (0-18), col (0-18), color (BLACK/WHITE). Returns (-1,-1,EMPTY)
-  // on failure or non-B/W move.
   auto parseSgfMoveNode =
       [](const std::string &sgf_move_node_str) -> std::tuple<int, int, int> {
+    // ... (your parseSgfMoveNode lambda implementation from the uploaded
+    // gem.cpp) ...
     if (sgf_move_node_str.length() < 5 || sgf_move_node_str[0] != ';') {
       return {-1, -1, EMPTY};
     }
-
     char player_char = sgf_move_node_str[1];
     int stone_color = EMPTY;
-
     if (player_char == 'B')
       stone_color = BLACK;
     else if (player_char == 'W')
       stone_color = WHITE;
     else
       return {-1, -1, EMPTY};
-
     size_t open_bracket = sgf_move_node_str.find('[', 2);
     size_t close_bracket = sgf_move_node_str.find(']', open_bracket + 1);
-
     if (open_bracket != std::string::npos &&
         close_bracket != std::string::npos &&
         (close_bracket == open_bracket + 3)) {
-
       char col_sgf = sgf_move_node_str[open_bracket + 1];
       char row_sgf = sgf_move_node_str[open_bracket + 2];
-
       if (col_sgf >= 'a' && col_sgf <= 's' && row_sgf >= 'a' &&
           row_sgf <= 's') {
         return {row_sgf - 'a', col_sgf - 'a', stone_color};
@@ -735,8 +777,7 @@ void tournamentModeWorkflow(const std::string &game_name_final_prefix) {
     return {-1, -1, EMPTY};
   };
 
-  std::string accumulated_tournament_sgf_content =
-      ""; // To store the SGF content as it's built
+  std::string accumulated_tournament_sgf_content = "";
 
   while (true) {
     std::string current_step_info_str =
@@ -751,6 +792,7 @@ void tournamentModeWorkflow(const std::string &game_name_final_prefix) {
     }
 
     if (!captureFrame(g_device_path, current_raw_frame)) {
+      // ... (error handling for captureFrame as in your provided code) ...
       std::cerr << "Error: Failed to capture frame for "
                 << current_step_info_str << ". Retrying in 1s..." << std::endl;
       if (simulated_board_display_image.empty())
@@ -766,14 +808,22 @@ void tournamentModeWorkflow(const std::string &game_name_final_prefix) {
       continue;
     }
 
-    if (bDebug) { /* ... debug display of raw capture ... */
+    if (bDebug && !current_raw_frame.empty()) {
+      cv::Mat temp_raw_display = current_raw_frame.clone();
+      cv::putText(temp_raw_display, "Raw Capture: " + current_step_info_str,
+                  cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 0.7,
+                  cv::Scalar(255, 255, 0), 2);
+      cv::imshow(debug_capture_window_name,
+                 temp_raw_display); // Show raw in debug window
+      cv::waitKey(1);
     }
 
     std::cout << "Processing " << current_step_info_str << "..." << std::endl;
-    cv::Mat temp_display_processing;
-    if (!simulated_board_display_image.empty() && game_step_counter > 0) {
+    cv::Mat temp_display_processing; // For showing "Processing..." message
+    if (!simulated_board_display_image.empty() &&
+        game_step_counter > 0) { // If not first step, use last simulated board
       temp_display_processing = simulated_board_display_image.clone();
-    } else {
+    } else { // First step or if simulated board is empty, use current raw frame
       temp_display_processing = current_raw_frame.clone();
     }
     cv::putText(temp_display_processing,
@@ -785,35 +835,82 @@ void tournamentModeWorkflow(const std::string &game_name_final_prefix) {
 
     cv::Mat current_board_state_matrix_local;
     std::vector<cv::Point2f> intersections;
-    bool processing_ok = true;
+    bool processing_ok = true; // Assume OK initially for this attempt
     try {
       processGoBoard(current_raw_frame, current_board_state_matrix_local,
                      processed_camera_capture_display_debug, intersections);
-      if (bDebug) {
+      if (bDebug && !processed_camera_capture_display_debug.empty()) {
         cv::imshow(debug_capture_window_name,
                    processed_camera_capture_display_debug);
       }
+
+      // *** YOUR NEW LOGIC INSERTION POINT ***
+      if (!previous_board_state_matrix.empty() &&
+          compareBoardStates(previous_board_state_matrix,
+                             current_board_state_matrix_local)) {
+        std::cout << "  WARNING: No change detected from previous step "
+                  << (game_step_counter - 1) << " to current step "
+                  << game_step_counter << "." << std::endl;
+        std::cout << "  This could be due to: " << std::endl;
+        std::cout << "    1. User forgot to make a move before pressing 'N'."
+                  << std::endl;
+        std::cout << "    2. processGoBoard failed to detect the new move "
+                     "(check lighting, calibration, stone contrast)."
+                  << std::endl;
+
+        processing_ok =
+            false; // Mark this attempt as not fully OK for SGF update
+
+        // Call your conceptual debug/user feedback function
+        debugAndShowUserIdenticalBoardState(
+            current_raw_frame,
+            previous_processed_camera_capture_display_debug, // Display from
+                                                             // previous
+                                                             // successful step
+            processed_camera_capture_display_debug, // Display from current
+                                                    // (identical) step
+            game_step_counter, main_display_window_name);
+        // The main loop will then show the
+        // processed_camera_capture_display_debug (if bDebug) or the
+        // simulated_board_display_image (which might be from the previous step
+        // or an error state) and wait for 'N' or 'ESC'. If 'N',
+        // game_step_counter will NOT increment due to processing_ok = false.
+      }
+      // *** END OF YOUR NEW LOGIC INSERTION POINT ***
+
     } catch (const std::exception &e) {
       std::cerr << "Error processing board for " << current_step_info_str
                 << ": " << e.what() << std::endl;
       processing_ok = false;
+      // Display error on the main simulated board window (or raw frame if first
+      // step)
       if (simulated_board_display_image.empty())
         simulated_board_display_image =
-            cv::Mat::zeros(cv::Size(canvas_size_px, canvas_size_px), CV_8UC3);
-      cv::Mat error_display = simulated_board_display_image.clone();
-      cv::putText(error_display, "Processing Error! " + current_step_info_str,
+            current_raw_frame.clone(); // Fallback to raw
+      cv::Mat error_display_on_main = simulated_board_display_image.clone();
+      cv::putText(error_display_on_main,
+                  "Processing Error! " + current_step_info_str,
                   cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 0.7,
                   cv::Scalar(0, 0, 255), 2);
-      cv::putText(error_display, "Press 'N' for next, 'ESC' to exit.",
+      cv::putText(error_display_on_main, "Press 'N' for next, 'ESC' to exit.",
                   cv::Point(10, 60), cv::FONT_HERSHEY_SIMPLEX, 0.5,
                   cv::Scalar(0, 0, 255), 1);
-      cv::imshow(main_display_window_name, error_display);
+      cv::imshow(main_display_window_name, error_display_on_main);
+      if (bDebug && !processed_camera_capture_display_debug.empty())
+        cv::imshow(debug_capture_window_name,
+                   processed_camera_capture_display_debug);
+      else if (bDebug)
+        cv::imshow(debug_capture_window_name,
+                   current_raw_frame); // Show raw if processing failed early
     }
 
-    std::string current_step_sgf_content_full =
-        ""; // SGF of the current board state (AB/AW format)
+    std::string current_step_sgf_content_full = "";
+    int last_move_r_to_highlight = -1, last_move_c_to_highlight = -1,
+        last_move_clr_to_highlight = EMPTY;
+    int move_number_for_stone_label = 0;
 
-    if (processing_ok) {
+    if (processing_ok) { // Only proceed with SGF generation if processing_ok is
+                         // still true
       std::string step_snapshot_path =
           game_folder_path + "/" + std::to_string(game_step_counter) + ".jpg";
       if (!cv::imwrite(step_snapshot_path,
@@ -836,6 +933,7 @@ void tournamentModeWorkflow(const std::string &game_name_final_prefix) {
       }
 
       if (previous_board_state_matrix.empty()) {
+        // ... (Logic for initializing main_sgf_path as in your version) ...
         std::ofstream tournament_sgf_out(main_sgf_path, std::ios::trunc);
         if (!tournament_sgf_out.is_open()) {
           THROWGEMERROR("Failed to open SGF for initial write: " +
@@ -857,50 +955,82 @@ void tournamentModeWorkflow(const std::string &game_name_final_prefix) {
               std::to_string(game_step_counter) + "]";
         }
         tournament_sgf_out << content_for_tournament_start;
-        accumulated_tournament_sgf_content =
-            content_for_tournament_start; // Store for drawing
+        accumulated_tournament_sgf_content = content_for_tournament_start;
         std::cout << "  Initialized " << main_sgf_path
                   << " with content from step " << game_step_counter
                   << std::endl;
         tournament_sgf_out.close();
+        move_number_for_stone_label = 0;
       } else {
-        std::ofstream main_sgf_appender(main_sgf_path, std::ios::app);
-        if (!main_sgf_appender.is_open()) {
-          std::cerr
-              << "CRITICAL ERROR: Failed to open main SGF for appending move: "
-              << main_sgf_path << std::endl;
-        } else {
-          std::string move_made_sgf_node = determineSGFMove(
+        std::string move_made_sgf_node = "";
+        try {
+          move_made_sgf_node = determineSGFMove(
               previous_board_state_matrix, current_board_state_matrix_local);
-          if (!move_made_sgf_node.empty() &&
-              move_made_sgf_node.find("ERROR") == std::string::npos) {
+        } catch (const GEMError &e_sgf) {
+          std::string error_what = e_sgf.what();
+          if (error_what.find("ERROR: Invalid move detected!") !=
+              std::string::npos) {
+            std::cout << "  No change detected (determineSGFMove threw error "
+                         "for identical states). No SGF move appended."
+                      << std::endl;
+          } else {
+            throw;
+          } // Re-throw other GEMErrors
+        }
+
+        if (!move_made_sgf_node.empty()) {
+          std::ofstream main_sgf_appender(main_sgf_path, std::ios::app);
+          if (!main_sgf_appender.is_open()) {
+            std::cerr << "CRITICAL ERROR: Failed to open main SGF for "
+                         "appending move: "
+                      << main_sgf_path << std::endl;
+          } else {
             main_sgf_appender << "\n" << move_made_sgf_node;
-            accumulated_tournament_sgf_content +=
-                "\n" + move_made_sgf_node; // Append to in-memory version
+            accumulated_tournament_sgf_content += "\n" + move_made_sgf_node;
             std::cout << "  Appended move: " << move_made_sgf_node << " to "
                       << main_sgf_path << std::endl;
-          } else { /* ... handle error or no move ... */
+            std::tie(last_move_r_to_highlight, last_move_c_to_highlight,
+                     last_move_clr_to_highlight) =
+                parseSgfMoveNode(move_made_sgf_node);
+            move_number_for_stone_label = game_step_counter;
+            main_sgf_appender.close();
           }
-          main_sgf_appender.close();
+        } else {
+          std::cout << "  No valid move node generated by determineSGFMove. "
+                       "Nothing appended to main SGF."
+                    << std::endl;
+          last_move_r_to_highlight = -1;
+          last_move_c_to_highlight = -1;
+          last_move_clr_to_highlight = EMPTY;
+          move_number_for_stone_label = 0;
         }
       }
       previous_board_state_matrix = current_board_state_matrix_local.clone();
+      previous_processed_camera_capture_display_debug =
+          processed_camera_capture_display_debug
+              .clone(); // Save for next iteration's debug
 
-      // Use the accumulated SGF content for drawing, which represents the
-      // tournament.sgf state The game_step_counter is the number of B/W moves
-      // made after setup (0 for setup itself)
-      drawSimulatedGoBoard(accumulated_tournament_sgf_content +
-                               ")", // Add closing paren for valid parsing by
-                                    // drawSimulatedGoBoard
-                           game_step_counter, // display_up_to_move_idx
-                           simulated_board_display_image,
-                           game_step_counter, // highlight_this_move_idx
+      std::string sgf_for_drawing = accumulated_tournament_sgf_content;
+      if (!sgf_for_drawing.empty() && sgf_for_drawing.find('(') == 0) {
+        sgf_for_drawing += ")";
+      } else if (sgf_for_drawing.empty() &&
+                 !current_step_sgf_content_full.empty()) {
+        sgf_for_drawing = current_step_sgf_content_full;
+      }
+      drawSimulatedGoBoard(sgf_for_drawing, game_step_counter,
+                           simulated_board_display_image, game_step_counter,
                            canvas_size_px);
     }
+    // If processing_ok is false, simulated_board_display_image might show an
+    // error or the previous state. We need to ensure it shows something
+    // relevant to the current situation. If processing_ok was false due to
+    // identical board state, the debugAndShowUser... function was called. If it
+    // was false due to processGoBoard exception, an error message was put on
+    // simulated_board_display_image.
 
     cv::putText(simulated_board_display_image,
                 current_step_info_str +
-                    (processing_ok ? ". Ready. " : ". Error. ") +
+                    (processing_ok ? ". Ready. " : ". Error/No Change. ") +
                     "N: Next, ESC: Exit.",
                 cv::Point(10, simulated_board_display_image.rows > 15
                                   ? simulated_board_display_image.rows - 15
@@ -910,11 +1040,15 @@ void tournamentModeWorkflow(const std::string &game_name_final_prefix) {
                 1, cv::LINE_AA);
     cv::imshow(main_display_window_name, simulated_board_display_image);
 
-    if (bDebug && processing_ok) {
-      cv::imshow(debug_capture_window_name,
-                 processed_camera_capture_display_debug);
-    } else if (bDebug && !processing_ok) {
-      cv::imshow(debug_capture_window_name, current_raw_frame);
+    // Ensure debug window shows the latest processed (or raw if error)
+    if (bDebug) {
+      if (processing_ok && !processed_camera_capture_display_debug.empty()) {
+        cv::imshow(debug_capture_window_name,
+                   processed_camera_capture_display_debug);
+      } else if (!current_raw_frame.empty()) { // Show raw if processing failed
+                                               // or was skipped
+        cv::imshow(debug_capture_window_name, current_raw_frame);
+      }
     }
 
     int key_input = cv::waitKey(0);
@@ -924,12 +1058,16 @@ void tournamentModeWorkflow(const std::string &game_name_final_prefix) {
                 << "." << std::endl;
       break;
     } else if (key_input == 'n' || key_input == 'N') {
-      if (processing_ok) {
+      if (processing_ok) { // Only advance game_step_counter if the current step
+                           // was successfully processed AND saved
         game_step_counter++;
       } else {
-        std::cout << "  Processing error in current step. Press N to try "
-                     "capturing again for step "
-                  << game_step_counter << " or ESC to exit." << std::endl;
+        std::cout << "  Current step " << game_step_counter
+                  << " had an issue (no change or processing error). Press 'N' "
+                     "to re-capture for this step, or 'ESC' to exit."
+                  << std::endl;
+        // Do not increment game_step_counter, so the next loop iteration
+        // retries the current step.
       }
     } else {
       if (bDebug)
@@ -938,14 +1076,13 @@ void tournamentModeWorkflow(const std::string &game_name_final_prefix) {
     }
   }
 
-  if (!previous_board_state_matrix.empty()) {
+  // ... (final SGF closing parenthesis and destroyAllWindows as in your
+  // version) ...
+  if (!previous_board_state_matrix.empty() ||
+      !accumulated_tournament_sgf_content
+           .empty()) { // Check if any SGF content was generated
     std::ofstream main_sgf_final_stream(main_sgf_path, std::ios::app);
     if (main_sgf_final_stream.is_open()) {
-      // Check if main_sgf_path already ends with ')', if not, add it.
-      // This is a bit tricky as accumulated_tournament_sgf_content doesn't have
-      // the final ')' until here. The initial write for step 0 already removed
-      // the ')' from current_step_sgf_content_full. So, we just need to append
-      // one final ')' here.
       main_sgf_final_stream << "\n)" << std::endl;
       main_sgf_final_stream.close();
       std::cout << "  Finalized main tournament SGF: " << main_sgf_path
@@ -1417,7 +1554,7 @@ int main(int argc, char *argv[]) {
       probeVideoDevicesWorkflow();
     } else if (run_calibration) {
       calibrationWorkflow(run_interactive_calibration);
-    } else if (!setupCalibrationFromConfig()){
+    } else if (!setupCalibrationFromConfig()) {
       THROWGEMERROR("setupCalibrationFromConfig failed");
     } else if (run_test_calibration) {
       testCalibrationConfigWorkflow();
