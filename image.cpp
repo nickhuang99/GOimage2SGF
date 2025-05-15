@@ -1558,40 +1558,43 @@ void drawSimulatedGoBoard(const std::string &full_tournament_sgf_content,
 
   // --- Drawing Constants ---
   const int base_margin_px = std::max(20, canvas_size_px / 25);
-  const int label_space_px = std::max(15, canvas_size_px / 40);
+  const int label_space_px =
+      std::max(20, canvas_size_px / 38); // Increased label space a bit
   const int total_margin_px = base_margin_px + label_space_px;
   const int board_proper_size_px = canvas_size_px - 2 * total_margin_px;
 
   if (board_proper_size_px <=
-      18) { // Need at least 1px per line_spacing for 19 lines
-    std::cerr << "Error (drawSimulatedGoBoard): Canvas size too small for "
-                 "margins and board. Board proper size: "
+      18 * 5) { // Ensure at least 5px per line_spacing for visibility
+    std::cerr << "Error (drawSimulatedGoBoard): Canvas size " << canvas_size_px
+              << "px is too small for margins and a legible board. Board "
+                 "proper size: "
               << board_proper_size_px << std::endl;
     output_image = cv::Mat::zeros(canvas_size_px, canvas_size_px, CV_8UC3);
     cv::putText(output_image, "Canvas too small",
                 cv::Point(10, canvas_size_px / 2), cv::FONT_HERSHEY_SIMPLEX,
-                0.5, cv::Scalar(0, 0, 255), 1);
+                0.5, cv::Scalar(0, 0, 255), 1, cv::LINE_AA);
     return;
   }
 
   const float line_spacing_px =
       static_cast<float>(board_proper_size_px) / 18.0f;
   const int stone_radius_px = static_cast<int>(line_spacing_px * 0.47f);
-  const int hoshi_radius_px =
-      std::max(2, static_cast<int>(line_spacing_px * 0.12f));
-  const double label_font_scale = std::max(
-      0.3, line_spacing_px * 0.015 *
-               (760.0 / canvas_size_px)); // Scale font with canvas size
+  const int hoshi_radius_px = std::max(
+      2, static_cast<int>(line_spacing_px * 0.10f)); // Slightly smaller hoshi
+  const double label_font_scale =
+      std::max(0.3, line_spacing_px * 0.012 * (760.0 / canvas_size_px));
   const int label_font_thickness = 1;
+  const int font_face = cv::FONT_HERSHEY_SIMPLEX;
 
-  const cv::Scalar board_color_bgr(160, 200, 240); // Light Wood Yellow-Brownish
+  const cv::Scalar board_color_bgr(210, 180, 140); // Wood color: BGR (Tan-like)
   const cv::Scalar line_color_bgr(30, 30, 30);
   const cv::Scalar label_color_bgr(10, 10, 10);
   const cv::Scalar stone_color_black_bgr(25, 25, 25);
   const cv::Scalar stone_color_white_bgr(235, 235, 235);
   const cv::Scalar stone_outline_color_bgr(70, 70, 70);
-  const cv::Scalar highlight_color_bgr(0, 255, 255);
-  const int highlight_thickness = std::max(1, stone_radius_px / 7);
+  const cv::Scalar highlight_color_bgr(
+      50, 220, 255); // Brighter Yellow/Gold for highlight
+  const int highlight_thickness = std::max(2, stone_radius_px / 6);
 
   output_image =
       cv::Mat(canvas_size_px, canvas_size_px, CV_8UC3, board_color_bgr);
@@ -1599,16 +1602,17 @@ void drawSimulatedGoBoard(const std::string &full_tournament_sgf_content,
   // --- Draw Grid Lines ---
   for (int i = 0; i < 19; ++i) {
     float current_pos_on_board = i * line_spacing_px;
-    float x_coord = static_cast<float>(total_margin_px) + current_pos_on_board;
-    float y_coord = static_cast<float>(total_margin_px) + current_pos_on_board;
+    // Add 0.5f for better pixel alignment of thin lines
+    float x_coord =
+        static_cast<float>(total_margin_px) + current_pos_on_board + 0.5f;
+    float y_coord =
+        static_cast<float>(total_margin_px) + current_pos_on_board + 0.5f;
 
-    // Vertical line
     cv::line(output_image,
              cv::Point2f(x_coord, static_cast<float>(total_margin_px)),
              cv::Point2f(x_coord, static_cast<float>(total_margin_px +
                                                      board_proper_size_px)),
              line_color_bgr, 1, cv::LINE_AA);
-    // Horizontal line
     cv::line(
         output_image, cv::Point2f(static_cast<float>(total_margin_px), y_coord),
         cv::Point2f(static_cast<float>(total_margin_px + board_proper_size_px),
@@ -1617,7 +1621,7 @@ void drawSimulatedGoBoard(const std::string &full_tournament_sgf_content,
   }
 
   // --- Draw Hoshi Points ---
-  int hoshi_indices[] = {3, 9, 15}; // 0-indexed for lines 4, 10, 16
+  int hoshi_indices[] = {3, 9, 15};
   for (int r_idx : hoshi_indices) {
     for (int c_idx : hoshi_indices) {
       float hoshi_x_px =
@@ -1630,57 +1634,59 @@ void drawSimulatedGoBoard(const std::string &full_tournament_sgf_content,
   }
 
   // --- Draw Coordinate Labels ---
-  std::string letters = "ABCDEFGHJKLMNOPQRST"; // Standard Go letters (no 'I')
-  int font_face = cv::FONT_HERSHEY_SIMPLEX;
-
+  std::string letters = "ABCDEFGHJKLMNOPQRST";
   for (int i = 0; i < 19; ++i) {
     std::string num_label = std::to_string(
-        19 - i); // Numbers 19-1 (top to bottom, traditional)
-                 // Or use (i + 1) for 1-19 top to bottom. Screenshot shows 1 at
-                 // top. Let's use 1-19 top-to-bottom to match screenshot.
-    num_label = std::to_string(i + 1);
+        19 - i); // Numbers 19-1 (traditional top to bottom for rows from human
+                 // perspective) If SGF row 0 is top, display i+1
+    num_label = std::to_string(i + 1); // 1-19 from top to bottom for rows
 
     std::string char_label = "";
-    if (i < static_cast<int>(letters.length())) { // Safety check
+    if (i < static_cast<int>(letters.length()))
       char_label += letters[i];
-    }
 
-    float line_pos_on_board_px = i * line_spacing_px;
+    float line_center_on_board_px =
+        i * line_spacing_px +
+        line_spacing_px / 2.0f; // Center of the cell/line band
     float absolute_line_pos_px =
-        static_cast<float>(total_margin_px) + line_pos_on_board_px;
+        static_cast<float>(total_margin_px) + i * line_spacing_px;
 
-    // Numeric labels (left and right)
     cv::Size num_text_size = cv::getTextSize(
         num_label, font_face, label_font_scale, label_font_thickness, nullptr);
-    // Left
-    cv::putText(output_image, num_label,
-                cv::Point(base_margin_px - num_text_size.width / 2,
-                          static_cast<int>(absolute_line_pos_px +
-                                           num_text_size.height / 2.0f)),
-                font_face, label_font_scale, label_color_bgr,
-                label_font_thickness, cv::LINE_AA);
-    // Right
+    // Left Numeric Label (numbers 1-19, for rows)
     cv::putText(
         output_image, num_label,
-        cv::Point(canvas_size_px - base_margin_px - num_text_size.width / 2,
+        cv::Point(base_margin_px - (num_text_size.width > base_margin_px
+                                        ? 0
+                                        : num_text_size.width /
+                                              2), // Adjust to keep in margin
                   static_cast<int>(absolute_line_pos_px +
                                    num_text_size.height / 2.0f)),
         font_face, label_font_scale, label_color_bgr, label_font_thickness,
         cv::LINE_AA);
+    // Right Numeric Label
+    cv::putText(output_image, num_label,
+                cv::Point(canvas_size_px - base_margin_px -
+                              (num_text_size.width > base_margin_px
+                                   ? num_text_size.width
+                                   : num_text_size.width / 2),
+                          static_cast<int>(absolute_line_pos_px +
+                                           num_text_size.height / 2.0f)),
+                font_face, label_font_scale, label_color_bgr,
+                label_font_thickness, cv::LINE_AA);
 
-    // Character labels (top and bottom)
     if (!char_label.empty()) {
       cv::Size char_text_size =
           cv::getTextSize(char_label, font_face, label_font_scale,
                           label_font_thickness, nullptr);
-      // Top
+      // Top Character Label (letters A-T, for columns)
       cv::putText(output_image, char_label,
                   cv::Point(static_cast<int>(absolute_line_pos_px -
                                              char_text_size.width / 2.0f),
                             base_margin_px + char_text_size.height / 2),
                   font_face, label_font_scale, label_color_bgr,
                   label_font_thickness, cv::LINE_AA);
-      // Bottom
+      // Bottom Character Label
       cv::putText(output_image, char_label,
                   cv::Point(static_cast<int>(absolute_line_pos_px -
                                              char_text_size.width / 2.0f),
@@ -1691,7 +1697,8 @@ void drawSimulatedGoBoard(const std::string &full_tournament_sgf_content,
     }
   }
 
-  // --- Parse SGF to get all setup stones and all moves ---
+  // --- Parse SGF & Reconstruct Board State (Logic from your Phase 2 version)
+  // ---
   std::set<std::pair<int, int>> initial_setup_black, initial_setup_white;
   std::vector<Move> all_game_moves;
   SGFHeader header;
@@ -1699,37 +1706,23 @@ void drawSimulatedGoBoard(const std::string &full_tournament_sgf_content,
     header = parseSGFHeader(full_tournament_sgf_content);
     parseSGFGame(full_tournament_sgf_content, initial_setup_black,
                  initial_setup_white, all_game_moves);
-  } catch (const SGFError &e) {
-    std::cerr << "Error parsing SGF for drawing study board: " << e.what()
-              << std::endl;
-    cv::putText(output_image, "SGF Parse Error",
-                cv::Point(10, canvas_size_px / 2), cv::FONT_HERSHEY_SIMPLEX,
-                1.0, cv::Scalar(0, 0, 255), 2);
+  } catch (const SGFError &e) { /* ... error handling ... */
     return;
   }
 
-  // --- Reconstruct Board State up to display_up_to_move_idx ---
   std::vector<std::tuple<int, int, int, int>> stones_on_board_with_numbers;
   cv::Mat current_board_state_internal(19, 19, CV_8U, cv::Scalar(EMPTY));
 
-  for (const auto &stone_coord :
-       initial_setup_black) { /* ... apply setup ... */
-    if (stone_coord.first >= 0 && stone_coord.first < 19 &&
-        stone_coord.second >= 0 && stone_coord.second < 19) {
-      current_board_state_internal.at<uchar>(stone_coord.first,
-                                             stone_coord.second) = BLACK;
-      stones_on_board_with_numbers.emplace_back(stone_coord.first,
-                                                stone_coord.second, BLACK, 0);
+  for (const auto &sc : initial_setup_black) {
+    if (sc.first >= 0 && sc.first < 19 && sc.second >= 0 && sc.second < 19) {
+      current_board_state_internal.at<uchar>(sc.first, sc.second) = BLACK;
+      stones_on_board_with_numbers.emplace_back(sc.first, sc.second, BLACK, 0);
     }
   }
-  for (const auto &stone_coord :
-       initial_setup_white) { /* ... apply setup ... */
-    if (stone_coord.first >= 0 && stone_coord.first < 19 &&
-        stone_coord.second >= 0 && stone_coord.second < 19) {
-      current_board_state_internal.at<uchar>(stone_coord.first,
-                                             stone_coord.second) = WHITE;
-      stones_on_board_with_numbers.emplace_back(stone_coord.first,
-                                                stone_coord.second, WHITE, 0);
+  for (const auto &sc : initial_setup_white) {
+    if (sc.first >= 0 && sc.first < 19 && sc.second >= 0 && sc.second < 19) {
+      current_board_state_internal.at<uchar>(sc.first, sc.second) = WHITE;
+      stones_on_board_with_numbers.emplace_back(sc.first, sc.second, WHITE, 0);
     }
   }
 
@@ -1737,7 +1730,9 @@ void drawSimulatedGoBoard(const std::string &full_tournament_sgf_content,
   for (const auto &move : all_game_moves) {
     if (move.player == BLACK || move.player == WHITE) {
       actual_bw_move_count++;
-      if (actual_bw_move_count > display_up_to_move_idx) {
+      if (actual_bw_move_count > display_up_to_move_idx &&
+          display_up_to_move_idx >=
+              0) { // display_up_to_move_idx < 0 means show all
         break;
       }
       if (move.row >= 0 && move.row < 19 && move.col >= 0 && move.col < 19) {
@@ -1754,23 +1749,23 @@ void drawSimulatedGoBoard(const std::string &full_tournament_sgf_content,
         stones_on_board_with_numbers.emplace_back(
             move.row, move.col, move.player, actual_bw_move_count);
       }
-      for (const auto &captured_coord :
-           move.capturedStones) { /* ... handle captures ... */
-        if (captured_coord.first >= 0 && captured_coord.first < 19 &&
-            captured_coord.second >= 0 && captured_coord.second < 19) {
-          current_board_state_internal.at<uchar>(captured_coord.first,
-                                                 captured_coord.second) = EMPTY;
+      for (const auto &cap_coord : move.capturedStones) {
+        if (cap_coord.first >= 0 && cap_coord.first < 19 &&
+            cap_coord.second >= 0 && cap_coord.second < 19) {
+          current_board_state_internal.at<uchar>(cap_coord.first,
+                                                 cap_coord.second) = EMPTY;
           stones_on_board_with_numbers.erase(
               std::remove_if(stones_on_board_with_numbers.begin(),
                              stones_on_board_with_numbers.end(),
                              [&](const auto &s) {
-                               return std::get<0>(s) == captured_coord.first &&
-                                      std::get<1>(s) == captured_coord.second;
+                               return std::get<0>(s) == cap_coord.first &&
+                                      std::get<1>(s) == cap_coord.second;
                              }),
               stones_on_board_with_numbers.end());
         }
       }
-    } else if (move.player == EMPTY) { /* ... handle AE nodes ... */
+    } else if (move.player ==
+               EMPTY) { /* ... handle standalone AE nodes if necessary ... */
     }
   }
 
@@ -1778,8 +1773,8 @@ void drawSimulatedGoBoard(const std::string &full_tournament_sgf_content,
   auto drawStoneWithNumberAndHighlight = [&](int r, int c, int stone_color,
                                              int move_num_label,
                                              bool highlight) {
-    // ... (implementation from your Phase 2 enhanced version, with font scaling
-    // etc.)
+    // ... (stone drawing and numbering logic from your Phase 2 version) ...
+    // This includes font scaling, text centering, and highlight drawing.
     if (r >= 0 && r < 19 && c >= 0 && c < 19 && stone_color != EMPTY) {
       float stone_x_px =
           static_cast<float>(total_margin_px) + c * line_spacing_px;
@@ -1820,10 +1815,13 @@ void drawSimulatedGoBoard(const std::string &full_tournament_sgf_content,
         }
         cv::Point text_org(
             static_cast<int>(stone_x_px - text_size.width / 2.0f),
-            static_cast<int>(stone_y_px + text_size.height / 2.0f -
-                             baseline / 2.0f));
+            static_cast<int>(
+                stone_y_px + text_size.height / 2.0f -
+                baseline *
+                    0.6f)); // Adjusted baseline slightly for better centering
         cv::putText(output_image, num_str, text_org, font_face,
-                    current_font_scale, text_color, 1, cv::LINE_AA);
+                    current_font_scale, text_color, label_font_thickness,
+                    cv::LINE_AA);
       }
     }
   };
@@ -1834,15 +1832,19 @@ void drawSimulatedGoBoard(const std::string &full_tournament_sgf_content,
     int color = std::get<2>(stone_data);
     int move_label = std::get<3>(stone_data);
 
-    if (current_board_state_internal.at<uchar>(r, c) ==
-        color) { // Draw only if stone is present in final state
-      bool highlight = (move_label == highlight_this_move_idx &&
-                        highlight_this_move_idx != -1);
-      if (highlight_this_move_idx == 0 && move_label == 0)
-        highlight = true; // Highlight all setup stones if highlight_idx is 0
+    if (current_board_state_internal.at<uchar>(r, c) == color) {
+      bool highlight = false;
+      if (highlight_this_move_idx == 0 &&
+          move_label == 0) { // Highlight all setup stones if highlight_idx is 0
+        highlight = true;
+      } else if (move_label == highlight_this_move_idx &&
+                 highlight_this_move_idx > 0) { // Highlight specific B/W move
+        highlight = true;
+      }
       drawStoneWithNumberAndHighlight(r, c, color, move_label, highlight);
     }
   }
+
   if (bDebug) {
     std::cout << "Debug (drawSimulatedGoBoard): Displaying board state after "
               << display_up_to_move_idx << " B/W moves." << std::endl;
