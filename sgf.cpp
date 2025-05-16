@@ -26,14 +26,14 @@ static void debugPrint(const Mat& before_board_state, const Mat& next_board_stat
   }
 }
 
-// Function to determine the SGF move between two board states
-string determineSGFMove(const Mat &before_board_state,
-                        const Mat &next_board_state) {
-  // 1. Find the differences between the two board states.
-  vector<Point> black_diff_add;
-  vector<Point> white_diff_add;
-  vector<Point> black_diff_remove;
-  vector<Point> white_diff_remove;
+
+
+static void calculateSgfDiff(const Mat &before_board_state,
+                             const Mat &next_board_state,
+                             vector<Point> &black_diff_add,
+                             vector<Point> &white_diff_add,
+                             vector<Point> &black_diff_remove,
+                             vector<Point> &white_diff_remove) {
 
   for (int row = 0; row < 19; ++row) {
     for (int col = 0; col < 19; ++col) {
@@ -41,22 +41,26 @@ string determineSGFMove(const Mat &before_board_state,
       int next_stone = next_board_state.at<uchar>(row, col);
 
       if (before_stone != next_stone) {
-        if (next_stone == 1) {                       // Black stone added
+        if (next_stone == BLACK) {                   // Black stone added
           black_diff_add.push_back(Point(col, row)); // Store as (x, y)
-        } else if (next_stone == 2) {                // White stone added
+        } else if (next_stone == WHITE) {            // White stone added
           white_diff_add.push_back(Point(col, row));
-        } else if (before_stone == 1) { // Black stone removed
+        } else if (before_stone == BLACK) { // Black stone removed
           black_diff_remove.push_back(Point(col, row));
-        } else if (before_stone == 2) { // White stone removed
+        } else if (before_stone == WHITE) { // White stone removed
           white_diff_remove.push_back(Point(col, row));
         }
       }
     }
   }
+}
 
-  // 2. Analyze the differences to determine the move.
+static string generateSgfFromDiff(const vector<Point> &black_diff_add,
+                                  const vector<Point> &white_diff_add,
+                                  const vector<Point> &black_diff_remove,
+                                  const vector<Point> &white_diff_remove) {
   string sgf_move = "";
-  if (black_diff_add.size() == 1 && white_diff_add.size() == 0) {
+  if (black_diff_add.size() == BLACK && white_diff_add.size() == EMPTY) {
     // Black played a stone.
     char sgf_col = 'a' + black_diff_add[0].x;
     char sgf_row = 'a' + black_diff_add[0].y;
@@ -69,7 +73,7 @@ string determineSGFMove(const Mat &before_board_state,
           "AE[" + string(1, sgf_col_remove) + string(1, sgf_row_remove) + "]";
     }
 
-  } else if (white_diff_add.size() == 1 && black_diff_add.size() == 0) {
+  } else if (white_diff_add.size() == BLACK && black_diff_add.size() == EMPTY) {
     // White played a stone.
     char sgf_col = 'a' + white_diff_add[0].x;
     char sgf_row = 'a' + white_diff_add[0].y;
@@ -82,12 +86,45 @@ string determineSGFMove(const Mat &before_board_state,
           "AE[" + string(1, sgf_col_remove) + string(1, sgf_row_remove) + "]";
     }
   } else {
-    if (bDebug) {
-      debugPrint(before_board_state, next_board_state);
-    }
-    THROWGEMERROR("ERROR: Invalid move detected!");
+    cout << "impossible to have both black and white stones added at same time"
+         << endl;
   }
   return sgf_move;
+}
+
+bool validateSGgfMove(const Mat &before_board_state,
+                           const Mat &next_board_state, int prevColor) {
+  vector<Point> black_diff_add;
+  vector<Point> white_diff_add;
+  vector<Point> black_diff_remove;
+  vector<Point> white_diff_remove;
+  calculateSgfDiff(before_board_state, next_board_state, black_diff_add,
+                   white_diff_add, black_diff_remove, white_diff_remove);
+  bool black_move_valid = black_diff_add.empty() &&
+                          white_diff_add.size() == 1 &&
+                          white_diff_remove.empty(); // no suidcide
+  bool white_move_valid = black_diff_add.size() == 1 &&
+                          white_diff_add.empty() &&
+                          black_diff_remove.empty(); // no suidcide
+
+  bool valid = (prevColor == BLACK && black_move_valid) ||
+               (prevColor == WHITE && white_move_valid) ||
+               (prevColor == EMPTY && (black_move_valid || white_move_valid));  
+  return valid;
+}
+
+// Function to determine the SGF move between two board states
+string determineSGFMove(const Mat &before_board_state,
+                        const Mat &next_board_state) {
+  // 1. Find the differences between the two board states.
+  vector<Point> black_diff_add;
+  vector<Point> white_diff_add;
+  vector<Point> black_diff_remove;
+  vector<Point> white_diff_remove;
+  calculateSgfDiff(before_board_state, next_board_state, black_diff_add,
+                   white_diff_add, black_diff_remove, white_diff_remove);
+  return generateSgfFromDiff(black_diff_add, white_diff_add, black_diff_remove,
+                             white_diff_remove);
 }
 
 // Function to generate SGF for the current board state

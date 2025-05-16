@@ -161,6 +161,10 @@ void parseSGFGame(const std::string &sgfContent,
                   std::set<std::pair<int, int>> &setupWhite,
                   std::vector<Move> &moves);
 SGFHeader parseSGFHeader(const std::string &sgf_content);
+
+bool validateSGgfMove(const cv::Mat &before_board_state,
+                      const cv::Mat &next_board_state, int preColor);
+
 std::vector<VideoDeviceInfo> probeVideoDevices(int max_devices = 256);
 
 bool captureFrame(const std::string &device_path, cv::Mat &frame);
