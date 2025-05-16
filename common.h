@@ -216,5 +216,11 @@ bool processAndSaveCalibration(
 bool detectFourCornersGoBoard(
     const cv::Mat &input_image,
     std::vector<cv::Point2f> &detected_corners_tl_tr_br_bl);
-
+bool detectColoredRoundShape(
+    const cv::Mat &inputImage, // BGR image
+    const cv::Rect &regionOfInterest,
+    int expectedColor, // Use BLACK or WHITE macros
+    cv::Point2f &detectedCenter, float &detectedRadius,
+    // Optional: Pass calibration data if color ranges should come from there
+    const CalibrationData *calibData = nullptr);
 #endif // UTILITY_H

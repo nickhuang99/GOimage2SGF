@@ -2121,3 +2121,206 @@ bool detectFourCornersGoBoard(
   // return true.
   return true;
 }
+
+// Utility function to detect a single colored round shape in a region
+bool detectColoredRoundShape(
+    const cv::Mat &inputBgrImage, const cv::Rect &regionOfInterest,
+    int expectedColor, // Use BLACK or WHITE macros
+    cv::Point2f &detectedCenter, float &detectedRadius,
+    const CalibrationData *calibData) { // Optional calibData for color ranges
+
+  if (inputBgrImage.empty()) {
+    if (bDebug)
+      std::cerr << "Error (detectColoredRoundShape): Input BGR image is empty."
+                << std::endl;
+    return false;
+  }
+
+  // Ensure ROI is within image bounds
+  cv::Rect roi =
+      regionOfInterest & cv::Rect(0, 0, inputBgrImage.cols, inputBgrImage.rows);
+  if (roi.width <= 0 || roi.height <= 0) {
+    if (bDebug)
+      std::cerr << "Error (detectColoredRoundShape): Region of interest is "
+                   "invalid or outside image bounds."
+                << std::endl;
+    return false;
+  }
+
+  cv::Mat roiImageBgr = inputBgrImage(roi);
+  cv::Mat roiImageLab;
+  cv::cvtColor(roiImageBgr, roiImageLab, cv::COLOR_BGR2Lab);
+
+  cv::Mat colorMask;
+  // Define default Lab color ranges (these could be refined or made
+  // configurable) These are similar to detectFourCornersGoBoard but could be
+  // more specific if needed Or, if calibData is provided, one could derive
+  // ranges from calibData.lab_tl, calibData.lab_tr etc. For now, using fixed
+  // general ranges:
+  cv::Scalar labLower, labUpper;
+
+  if (expectedColor == BLACK) {
+    // More restrictive L channel for black if possible, but depends on
+    // lighting. From detectFourCornersGoBoard:
+    labLower = cv::Scalar(0, 100, 100);  // L, a, b
+    labUpper = cv::Scalar(70, 150, 150); // L, a, b
+    // If using calibData, could try to create a tighter range around the
+    // average black: if (calibData && calibData->colors_loaded) {
+    //     cv::Vec3f avgBlack = (calibData->lab_tl + calibData->lab_bl) * 0.5f;
+    //     float l_tolerance = 30, ab_tolerance = 25;
+    //     labLower = cv::Scalar(std::max(0.f, avgBlack[0] - l_tolerance),
+    //     std::max(0.f, avgBlack[1] - ab_tolerance), std::max(0.f, avgBlack[2]
+    //     - ab_tolerance)); labUpper = cv::Scalar(std::min(255.f, avgBlack[0] +
+    //     l_tolerance), std::min(255.f, avgBlack[1] + ab_tolerance),
+    //     std::min(255.f, avgBlack[2] + ab_tolerance));
+    // }
+  } else if (expectedColor == WHITE) {
+    // From detectFourCornersGoBoard:
+    labLower = cv::Scalar(190, 100, 100); // L, a, b
+    labUpper = cv::Scalar(255, 150, 150); // L, a, b
+    // if (calibData && calibData->colors_loaded) {
+    //     cv::Vec3f avgWhite = (calibData->lab_tr + calibData->lab_br) * 0.5f;
+    //     float l_tolerance = 35, ab_tolerance = 25; // White might have higher
+    //     L variance labLower = cv::Scalar(std::max(0.f, avgWhite[0] -
+    //     l_tolerance), std::max(0.f, avgWhite[1] - ab_tolerance),
+    //     std::max(0.f, avgWhite[2] - ab_tolerance)); labUpper =
+    //     cv::Scalar(std::min(255.f, avgWhite[0] + l_tolerance),
+    //     std::min(255.f, avgWhite[1] + ab_tolerance), std::min(255.f,
+    //     avgWhite[2] + ab_tolerance));
+    // }
+  } else {
+    if (bDebug)
+      std::cerr << "Error (detectColoredRoundShape): Invalid expectedColor."
+                << std::endl;
+    return false;
+  }
+
+  if (bDebug) {
+    std::cout << "Debug (detectColoredRoundShape): Color: "
+              << (expectedColor == BLACK ? "BLACK" : "WHITE")
+              << ", Lab Lower: " << labLower << ", Lab Upper: " << labUpper
+              << std::endl;
+  }
+
+  cv::inRange(roiImageLab, labLower, labUpper, colorMask);
+
+  // Morphological operations to clean up the mask
+  cv::Mat kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 5));
+  cv::morphologyEx(colorMask, colorMask, cv::MORPH_OPEN, kernel,
+                   cv::Point(-1, -1), 1);
+  cv::morphologyEx(colorMask, colorMask, cv::MORPH_CLOSE, kernel,
+                   cv::Point(-1, -1), 2); // More closing
+
+  if (bDebug) {
+    cv::imshow("Color Mask (detectColoredRoundShape ROI)", colorMask);
+  }
+
+  std::vector<std::vector<cv::Point>> contours;
+  cv::findContours(colorMask, contours, cv::RETR_EXTERNAL,
+                   cv::CHAIN_APPROX_SIMPLE);
+
+  if (bDebug) {
+    std::cout << "Debug (detectColoredRoundShape): Found " << contours.size()
+              << " raw contours in ROI." << std::endl;
+    cv::Mat contourDrawing = roiImageBgr.clone();
+    cv::drawContours(contourDrawing, contours, -1, cv::Scalar(0, 255, 0), 1);
+    cv::imshow("All Contours in ROI (detectColoredRoundShape)", contourDrawing);
+  }
+
+  if (contours.empty()) {
+    return false;
+  }
+
+  // Filter contours and find the best candidate (e.g., largest valid one)
+  // These thresholds might need to be dynamic based on stone size / camera
+  // distance For a known calibration setup, they might be more fixed. Let's use
+  // relative area to ROI size as an example, and a circularity threshold.
+  double roiArea = static_cast<double>(roi.width * roi.height);
+  double minStoneAreaInRoi =
+      roiArea * 0.01; // Stone should be at least 1% of ROI area
+  double maxStoneAreaInRoi =
+      roiArea * 0.30;           // Stone shouldn't be more than 30% of ROI area
+  double minCircularity = 0.75; // Stricter circularity for a single stone
+
+  if (bDebug) {
+    std::cout << "Debug (detectColoredRoundShape): ROI Area=" << roiArea
+              << ", MinStoneAreaInRoi=" << minStoneAreaInRoi
+              << ", MaxStoneAreaInRoi=" << maxStoneAreaInRoi << std::endl;
+  }
+
+  std::vector<cv::Point> bestContour;
+  float bestContourScore =
+      0.0f; // Could be area, or circularity, or combination
+
+  for (const auto &contour : contours) {
+    if (contour.size() < 5)
+      continue; // Need at least 5 points for fitEllipse or minEnclosingCircle
+
+    double area = cv::contourArea(contour);
+    double perimeter = cv::arcLength(contour, true);
+
+    if (area < minStoneAreaInRoi || area > maxStoneAreaInRoi) {
+      if (bDebug && area > 10)
+        std::cout << "  Contour rejected by area in ROI: " << area << std::endl;
+      continue;
+    }
+
+    if (perimeter < 1.0)
+      continue;
+    double circularity = (4 * CV_PI * area) / (perimeter * perimeter);
+
+    if (circularity < minCircularity) {
+      if (bDebug)
+        std::cout << "  Contour rejected by circularity: " << circularity
+                  << " (Area: " << area << ")" << std::endl;
+      continue;
+    }
+
+    // At this point, contour is a good candidate.
+    // If we are looking for the largest valid contour:
+    if (area > bestContourScore) { // Using area as the score
+      bestContourScore = area;
+      bestContour = contour;
+    }
+    if (bDebug)
+      std::cout << "  Contour candidate: Area=" << area
+                << ", Circ=" << circularity << std::endl;
+  }
+
+  if (!bestContour.empty()) {
+    cv::Point2f centerInRoi;
+    float radiusInRoi;
+    cv::minEnclosingCircle(bestContour, centerInRoi, radiusInRoi);
+
+    // Adjust center to be relative to the original inputImage
+    detectedCenter.x = centerInRoi.x + roi.x;
+    detectedCenter.y = centerInRoi.y + roi.y;
+    detectedRadius = radiusInRoi;
+
+    if (bDebug) {
+      std::cout
+          << "Debug (detectColoredRoundShape): Found stone. Center in ROI: "
+          << centerInRoi << ", Radius in ROI: " << radiusInRoi << std::endl;
+      std::cout << "  ==> Adjusted Center (original image): " << detectedCenter
+                << ", Radius: " << detectedRadius << std::endl;
+      cv::Mat finalDetectionImg = inputBgrImage.clone();
+      cv::rectangle(finalDetectionImg, regionOfInterest, cv::Scalar(255, 0, 0),
+                    1); // Draw ROI
+      cv::circle(finalDetectionImg, detectedCenter,
+                 static_cast<int>(detectedRadius),
+                 (expectedColor == BLACK ? cv::Scalar(0, 0, 255)
+                                         : cv::Scalar(0, 255, 255)),
+                 2);
+      cv::circle(finalDetectionImg, detectedCenter, 2, cv::Scalar(0, 255, 0),
+                 -1);
+      cv::imshow("Detected Stone (detectColoredRoundShape)", finalDetectionImg);
+    }
+    return true;
+  }
+
+  if (bDebug)
+    std::cout << "Debug (detectColoredRoundShape): No suitable stone contour "
+                 "found in ROI."
+              << std::endl;
+  return false;
+}
