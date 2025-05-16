@@ -401,7 +401,12 @@ bool saveCornerConfig(
     const cv::Point2f &bl_raw, const cv::Point2f &br_raw,
     const cv::Vec3f &lab_tl_sampled, const cv::Vec3f &lab_tr_sampled,
     const cv::Vec3f &lab_bl_sampled, const cv::Vec3f &lab_br_sampled,
-    const cv::Vec3f &avg_lab_board_sampled) {
+    const cv::Vec3f &avg_lab_board_sampled, bool enhanced_data_available,
+    const std::vector<cv::Vec3f>
+        *lab_corners_sampled_raw_enhanced, // Pointer to allow nullptr if not
+                                           // available
+    float detected_avg_stone_radius_raw    // Or individual radii
+) {
   std::ofstream outFile(filename);
   if (!outFile.is_open()) {
     std::cerr << "Error: Could not open config file for writing: " << filename
@@ -462,6 +467,49 @@ bool saveCornerConfig(
     outFile << "BL_Y_PC=" << (bl_raw.y / frame_height * 100.0f) << std::endl;
     outFile << "BR_X_PC=" << (br_raw.x / frame_width * 100.0f) << std::endl;
     outFile << "BR_Y_PC=" << (br_raw.y / frame_height * 100.0f) << std::endl;
+  }
+  if (enhanced_data_available && lab_corners_sampled_raw_enhanced &&
+      lab_corners_sampled_raw_enhanced->size() == 4) {
+    outFile
+        << "\n# Enhanced Stone Detection Data (from Raw Image, if successful)"
+        << std::endl;
+    outFile << "DETECTED_AVG_STONE_RADIUS_PX=" << detected_avg_stone_radius_raw
+            << std::endl;
+    // Ensure you have 4 colors in the vector. The order is TL, TR, BL, BR as
+    // sampled.
+    outFile << "DETECTED_TL_L=" << (*lab_corners_sampled_raw_enhanced)[0][0]
+            << std::endl;
+    outFile << "DETECTED_TL_A=" << (*lab_corners_sampled_raw_enhanced)[0][1]
+            << std::endl;
+    outFile << "DETECTED_TL_B=" << (*lab_corners_sampled_raw_enhanced)[0][2]
+            << std::endl;
+
+    outFile << "DETECTED_TR_L=" << (*lab_corners_sampled_raw_enhanced)[1][0]
+            << std::endl;
+    outFile << "DETECTED_TR_A=" << (*lab_corners_sampled_raw_enhanced)[1][1]
+            << std::endl;
+    outFile << "DETECTED_TR_B=" << (*lab_corners_sampled_raw_enhanced)[1][2]
+            << std::endl;
+
+    outFile << "DETECTED_BL_L=" << (*lab_corners_sampled_raw_enhanced)[2][0]
+            << std::endl;
+    outFile << "DETECTED_BL_A=" << (*lab_corners_sampled_raw_enhanced)[2][1]
+            << std::endl;
+    outFile << "DETECTED_BL_B=" << (*lab_corners_sampled_raw_enhanced)[2][2]
+            << std::endl;
+
+    outFile << "DETECTED_BR_L=" << (*lab_corners_sampled_raw_enhanced)[3][0]
+            << std::endl;
+    outFile << "DETECTED_BR_A=" << (*lab_corners_sampled_raw_enhanced)[3][1]
+            << std::endl;
+    outFile << "DETECTED_BR_B=" << (*lab_corners_sampled_raw_enhanced)[3][2]
+            << std::endl;
+  } else if (enhanced_data_available) {
+    // This case implies enhanced_data_available was true, but data was
+    // incomplete. Good to note this in the config or log it.
+    outFile << "\n# Enhanced Stone Detection was attempted but data was "
+               "incomplete or not provided to saveCornerConfig."
+            << std::endl;
   }
   outFile.close();
   if (!outFile) {
@@ -720,11 +768,28 @@ verifyCalibrationAfterSave(const cv::Mat &raw_image_for_verification) {
 
 bool processAndSaveCalibration(
     const cv::Mat &final_raw_bgr_for_snapshot,
-    const std::vector<cv::Point2f> &current_source_points) {
+    const std::vector<cv::Point2f> &current_source_points,
+    // --- New parameters for enhanced data ---
+    bool enhanced_detection_was_successful,
+    const std::vector<cv::Vec3f> *enhanced_lab_colors, // Pointer
+    float enhanced_avg_radius_px) {
+
   int frame_width = final_raw_bgr_for_snapshot.cols;
   int frame_height = final_raw_bgr_for_snapshot.rows;
 
-  std::cout << "Processing 'save' command..." << std::endl;
+  std::cout << "  processAndSaveCalibration: Starting..." << std::endl;
+  if (enhanced_detection_was_successful) {
+    std::cout << "    Enhanced detection data IS available." << std::endl;
+    if (enhanced_lab_colors) {
+      std::cout << "    Enhanced Avg Radius: " << enhanced_avg_radius_px
+                << std::endl;
+      // Optionally print the enhanced colors here if bDebug
+    }
+  } else {
+    std::cout << "    Enhanced detection data IS NOT available. Using standard "
+                 "sampling."
+              << std::endl;
+  }
 
   std::vector<cv::Point2f> corrected_dest_points =
       getBoardCornersCorrected(frame_width, frame_height);
@@ -732,55 +797,75 @@ bool processAndSaveCalibration(
   cv::Mat transform_matrix =
       cv::getPerspectiveTransform(current_source_points, corrected_dest_points);
 
-  // Perspective correct this final raw frame for sampling
   cv::Mat final_corrected_bgr_for_sampling;
   cv::warpPerspective(final_raw_bgr_for_snapshot,
                       final_corrected_bgr_for_sampling, transform_matrix,
                       cv::Size(frame_width, frame_height));
 
-  // Save snapshots
   cv::imwrite(CALIB_SNAPSHOT_RAW_PATH, final_raw_bgr_for_snapshot);
-  cv::imwrite(CALIB_SNAPSHOT_PATH,
-              final_corrected_bgr_for_sampling); // This is the one whose
-                                                 // colors are sampled
-  // if (bDebug)
-  //   cv::imwrite(CALIB_SNAPSHOT_DEBUG_PATH, display_raw); // OSD on raw
+  cv::imwrite(CALIB_SNAPSHOT_PATH, final_corrected_bgr_for_sampling);
   std::cout << "  Raw calibration snapshot saved to " << CALIB_SNAPSHOT_RAW_PATH
             << std::endl;
-  std::cout << "  Corrected calibration snapshot (used for color sampling) "
-               "saved to "
+  std::cout << "  Corrected calibration snapshot (used for standard color "
+               "sampling) saved to "
             << CALIB_SNAPSHOT_PATH << std::endl;
 
   cv::Mat final_corrected_lab;
   cv::cvtColor(final_corrected_bgr_for_sampling, final_corrected_lab,
                cv::COLOR_BGR2Lab);
 
-  int correct_board_width =
+  int correct_board_width_px =
       corrected_dest_points[1].x - corrected_dest_points[0].x;
-  int correct_board_height =
+  int correct_board_height_px =
       corrected_dest_points[3].y - corrected_dest_points[0].y;
-  int adaptive_radius =
-      calculateAdaptiveSampleRadius(correct_board_width, correct_board_height);
-  std::vector<cv::Vec3f> sample_data;
-  sampleDataForConfig(final_corrected_lab, corrected_dest_points,
-                      adaptive_radius, sample_data);
+  int adaptive_radius_corrected = calculateAdaptiveSampleRadius(
+      correct_board_width_px, correct_board_height_px);
 
-  // std::vector<cv::Point2f> current_source_points = {
-  //     topLeft_raw, topRight_raw, bottomRight_raw, bottomLeft_raw};
-  saveCornerConfig(CALIB_CONFIG_PATH, g_device_path, frame_width, frame_height,
-                   current_source_points[0], current_source_points[1],
-                   current_source_points[3], current_source_points[2],
-                   sample_data[0], sample_data[1], sample_data[2],
-                   sample_data[3], sample_data[4]);
-  std::cout << "Calibration complete. Configuration saved." << std::endl;
+  std::vector<cv::Vec3f>
+      standard_sample_data; // TL, TR, BL, BR, BoardAvg from corrected
+  sampleDataForConfig(final_corrected_lab, corrected_dest_points,
+                      adaptive_radius_corrected, standard_sample_data);
+
+  // Now, call saveCornerConfig, providing both standard and (if available)
+  // enhanced data
+  bool save_success = saveCornerConfig(
+      CALIB_CONFIG_PATH, g_device_path, frame_width, frame_height,
+      current_source_points[0], current_source_points[1], // TL_raw, TR_raw
+      current_source_points[3],
+      current_source_points[2], // BL_raw, BR_raw (order for saving)
+      standard_sample_data[0],
+      standard_sample_data[1], // TL_corrected_lab, TR_corrected_lab
+      standard_sample_data[2],
+      standard_sample_data[3], // BL_corrected_lab, BR_corrected_lab
+      standard_sample_data[4], // BoardAvg_corrected_lab
+      // --- Enhanced data part ---
+      enhanced_detection_was_successful, // Flag indicating if enhanced data is
+                                         // valid
+      enhanced_detection_was_successful
+          ? enhanced_lab_colors
+          : nullptr, // Pass pointer to enhanced colors or nullptr
+      enhanced_detection_was_successful ? enhanced_avg_radius_px
+                                        : -1.0f // Pass enhanced radius or -1
+  );
+
+  if (!save_success) {
+    std::cerr << "  Error: saveCornerConfig failed." << std::endl;
+    return false; // Propagate save failure
+  }
+
+  std::cout << "  Calibration data saved to " << CALIB_CONFIG_PATH << std::endl;
+
+  // Perform verification (uses the newly saved config.txt)
   bool verification_passed =
       verifyCalibrationAfterSave(final_raw_bgr_for_snapshot);
   if (verification_passed) {
-    std::cout << "  Calibration VERIFIED successfully! Corner stones match "
-                 "expected."
-              << std::endl;
+    std::cout
+        << "  Calibration VERIFIED successfully! Corner stones match expected."
+        << std::endl;
+  } else {
+    std::cout << "  Calibration VERIFICATION FAILED after saving!" << std::endl;
   }
-  return verification_passed;
+  return verification_passed; // Return status of verification
 }
 
 // --- SIMPLIFIED Main Calibration Function ---
@@ -901,8 +986,224 @@ void runInteractiveCalibration(int camera_index) {
       cv::Mat final_raw_bgr_for_snapshot =
           raw_frame.clone(); // The raw frame corresponding to the current
                              // good preview
-      if (processAndSaveCalibration(final_raw_bgr_for_snapshot,
-                                    current_source_points)) {
+
+      // --- BEGIN NEW INTEGRATION ---
+      bool enhanced_detection_successful = true;
+      std::vector<cv::Point2f> detected_stone_centers(4);
+      std::vector<float> detected_stone_radii(4);
+      std::vector<cv::Vec3f> new_sampled_lab_colors(4); // TL, TR, BL, BR
+      float average_detected_radius = 0.0f;
+      int detected_stones_count = 0;
+
+      // Define ROIs around the manually set corners (topLeft_raw, etc.)
+      // Calculate approximate grid spacing based on current_source_points
+      // to define ROI size.
+      // current_source_points are {topLeft_raw, topRight_raw, bottomRight_raw,
+      // bottomLeft_raw}
+
+      std::vector<cv::Point2f> current_source_points = {
+          topLeft_raw, topRight_raw, bottomRight_raw, bottomLeft_raw};
+
+      // Estimate grid spacing (can be rough for ROI definition)
+      float avg_dx =
+          ((current_source_points[1].x - current_source_points[0].x) +
+           (current_source_points[2].x - current_source_points[3].x)) /
+          2.0f / 18.0f;
+      float avg_dy =
+          ((current_source_points[3].y - current_source_points[0].y) +
+           (current_source_points[2].y - current_source_points[1].y)) /
+          2.0f / 18.0f;
+      float roi_half_width =
+          std::max(avg_dx, avg_dy) *
+          1.5f; // e.g., 1.5x grid spacing for ROI half-width/height
+
+      cv::Point2f detected_center;
+      float detected_radius;
+
+      // Corner 0: TL (Black)
+      cv::Rect roi_tl(
+          std::max(0, static_cast<int>(topLeft_raw.x - roi_half_width)),
+          std::max(0, static_cast<int>(topLeft_raw.y - roi_half_width)),
+          static_cast<int>(roi_half_width * 2),
+          static_cast<int>(roi_half_width * 2));
+      roi_tl &= cv::Rect(0, 0, frame_width,
+                         frame_height); // Ensure ROI is within image bounds
+
+      if (detectColoredRoundShape(final_raw_bgr_for_snapshot, roi_tl, BLACK,
+                                  detected_center, detected_radius)) {
+        detected_stone_centers[0] = detected_center;
+        detected_stone_radii[0] = detected_radius;
+        average_detected_radius += detected_radius;
+        detected_stones_count++;
+        if (bDebug)
+          cv::circle(display_raw, detected_center,
+                     static_cast<int>(detected_radius), cv::Scalar(0, 255, 0),
+                     2); // Green circle on success
+      } else {
+        enhanced_detection_successful = false;
+        if (bDebug)
+          cv::rectangle(display_raw, roi_tl, cv::Scalar(0, 0, 255),
+                        1); // Red ROI on failure
+        std::cout << "  Warning: Failed to detect TL black stone via "
+                     "detectColoredRoundShape."
+                  << std::endl;
+      }
+
+      // Corner 1: TR (White)
+      cv::Rect roi_tr(
+          std::max(0, static_cast<int>(topRight_raw.x - roi_half_width)),
+          std::max(0, static_cast<int>(topRight_raw.y - roi_half_width)),
+          static_cast<int>(roi_half_width * 2),
+          static_cast<int>(roi_half_width * 2));
+      roi_tr &= cv::Rect(0, 0, frame_width, frame_height);
+      if (detectColoredRoundShape(final_raw_bgr_for_snapshot, roi_tr, WHITE,
+                                  detected_center, detected_radius)) {
+        detected_stone_centers[1] = detected_center;
+        detected_stone_radii[1] = detected_radius;
+        average_detected_radius += detected_radius;
+        detected_stones_count++;
+        if (bDebug)
+          cv::circle(display_raw, detected_center,
+                     static_cast<int>(detected_radius), cv::Scalar(0, 255, 0),
+                     2);
+      } else {
+        enhanced_detection_successful = false;
+        if (bDebug)
+          cv::rectangle(display_raw, roi_tr, cv::Scalar(0, 0, 255), 1);
+        std::cout << "  Warning: Failed to detect TR white stone via "
+                     "detectColoredRoundShape."
+                  << std::endl;
+      }
+
+      // Corner 2: BL (Black) - Note: current_source_points[3] is BL
+      cv::Rect roi_bl(
+          std::max(0, static_cast<int>(bottomLeft_raw.x - roi_half_width)),
+          std::max(0, static_cast<int>(bottomLeft_raw.y - roi_half_width)),
+          static_cast<int>(roi_half_width * 2),
+          static_cast<int>(roi_half_width * 2));
+      roi_bl &= cv::Rect(0, 0, frame_width, frame_height);
+      if (detectColoredRoundShape(final_raw_bgr_for_snapshot, roi_bl, BLACK,
+                                  detected_center, detected_radius)) {
+        detected_stone_centers[2] = detected_center; // Store as BL
+        detected_stone_radii[2] = detected_radius;
+        average_detected_radius += detected_radius;
+        detected_stones_count++;
+        if (bDebug)
+          cv::circle(display_raw, detected_center,
+                     static_cast<int>(detected_radius), cv::Scalar(0, 255, 0),
+                     2);
+      } else {
+        enhanced_detection_successful = false;
+        if (bDebug)
+          cv::rectangle(display_raw, roi_bl, cv::Scalar(0, 0, 255), 1);
+        std::cout << "  Warning: Failed to detect BL black stone via "
+                     "detectColoredRoundShape."
+                  << std::endl;
+      }
+
+      // Corner 3: BR (White) - Note: current_source_points[2] is BR
+      cv::Rect roi_br(
+          std::max(0, static_cast<int>(bottomRight_raw.x - roi_half_width)),
+          std::max(0, static_cast<int>(bottomRight_raw.y - roi_half_width)),
+          static_cast<int>(roi_half_width * 2),
+          static_cast<int>(roi_half_width * 2));
+      roi_br &= cv::Rect(0, 0, frame_width, frame_height);
+      if (detectColoredRoundShape(final_raw_bgr_for_snapshot, roi_br, WHITE,
+                                  detected_center, detected_radius)) {
+        detected_stone_centers[3] = detected_center; // Store as BR
+        detected_stone_radii[3] = detected_radius;
+        average_detected_radius += detected_radius;
+        detected_stones_count++;
+        if (bDebug)
+          cv::circle(display_raw, detected_center,
+                     static_cast<int>(detected_radius), cv::Scalar(0, 255, 0),
+                     2);
+      } else {
+        enhanced_detection_successful = false;
+        if (bDebug)
+          cv::rectangle(display_raw, roi_br, cv::Scalar(0, 0, 255), 1);
+        std::cout << "  Warning: Failed to detect BR white stone via "
+                     "detectColoredRoundShape."
+                  << std::endl;
+      }
+
+      if (bDebug) {
+        cv::imshow(
+            "Enhanced Detection Attempt",
+            display_raw); // Show the raw feed with detection circles/ROIs
+        // cv::waitKey(0); // Pause to inspect, or remove for continuous flow
+      }
+
+      if (enhanced_detection_successful && detected_stones_count == 4) {
+        std::cout << "  Enhanced stone detection successful for all 4 corners."
+                  << std::endl;
+        average_detected_radius /= 4.0f;
+        std::cout << "  Average detected stone radius (raw image): "
+                  << average_detected_radius << std::endl;
+
+        // Re-sample colors using the new detected centers and
+        // average_detected_radius This needs to be done on the *raw* image,
+        // then these points would be transformed by the perspective matrix if
+        // you need their color in the *corrected* view. OR, more simply, if
+        // your goal is to get the stone colors accurately, sample from raw.
+        // Let's assume we get Lab from raw using these precise points.
+
+        cv::Mat raw_lab_for_sampling;
+        cv::cvtColor(final_raw_bgr_for_snapshot, raw_lab_for_sampling,
+                     cv::COLOR_BGR2Lab);
+
+        new_sampled_lab_colors[0] = getAverageLab(
+            raw_lab_for_sampling, detected_stone_centers[0],
+            static_cast<int>(detected_stone_radii[0])); // TL Black
+        new_sampled_lab_colors[1] = getAverageLab(
+            raw_lab_for_sampling, detected_stone_centers[1],
+            static_cast<int>(detected_stone_radii[1])); // TR White
+        new_sampled_lab_colors[2] = getAverageLab(
+            raw_lab_for_sampling, detected_stone_centers[2],
+            static_cast<int>(detected_stone_radii[2])); // BL Black
+        new_sampled_lab_colors[3] = getAverageLab(
+            raw_lab_for_sampling, detected_stone_centers[3],
+            static_cast<int>(detected_stone_radii[3])); // BR White
+
+        if (bDebug) {
+          std::cout << "  Resampled TL (Black) Lab: "
+                    << new_sampled_lab_colors[0] << std::endl;
+          std::cout << "  Resampled TR (White) Lab: "
+                    << new_sampled_lab_colors[1] << std::endl;
+          std::cout << "  Resampled BL (Black) Lab: "
+                    << new_sampled_lab_colors[2] << std::endl;
+          std::cout << "  Resampled BR (White) Lab: "
+                    << new_sampled_lab_colors[3] << std::endl;
+        }
+        // You would then potentially pass these new_sampled_lab_colors and
+        // average_detected_radius to an updated processAndSaveCalibration or
+        // saveCornerConfig. For now, let's just log and proceed with original
+        // if this fails. The original processAndSaveCalibration will use its
+        // own color sampling. To truly use this, processAndSaveCalibration
+        // would need to be modified.
+      } else {
+        std::cout << "  Enhanced stone detection failed or incomplete ("
+                  << detected_stones_count
+                  << "/4). Using standard calibration save." << std::endl;
+      }
+      // --- END NEW INTEGRATION ---
+
+      // if (processAndSaveCalibration(final_raw_bgr_for_snapshot,
+      // current_source_points)) {
+      //  If processAndSaveCalibration is modified to take
+      //  new_sampled_lab_colors and avg_radius:
+      if (processAndSaveCalibration(
+              final_raw_bgr_for_snapshot,
+              current_source_points, // The manually set corners
+              enhanced_detection_successful &&
+                  (detected_stones_count ==
+                   4), // True if all 4 stones detected well
+              (enhanced_detection_successful && (detected_stones_count == 4))
+                  ? &new_sampled_lab_colors
+                  : nullptr,
+              (enhanced_detection_successful && (detected_stones_count == 4))
+                  ? average_detected_radius
+                  : -1.0f)) {
         break; // Original behavior: exit calibration loop on save
       } else {
         std::cout << "  Calibration VERIFICATION FAILED! Detected corner "
@@ -924,84 +1225,94 @@ void runInteractiveCalibration(int camera_index) {
         // saveCornerConfig conditional on verification. For now, save and
         // warn.
       }
-    }
-  }
-  cap.release();
-  cv::destroyAllWindows();
-}
-
-void runCaptureCalibration(int camera_index) {
-  cv::VideoCapture cap;
-  cap.open(camera_index, cv::CAP_V4L2); // Try V4L2 first
-  if (!cap.isOpened()) {
-    if (bDebug)
-      std::cout
-          << "Debug: Opening with CAP_V4L2 failed, trying default backend."
-          << std::endl;
-    cap.open(camera_index); // Fallback to default
-    if (!cap.isOpened()) {
-      THROWGEMERROR("OpenCV failed to open camera index " +
-                    Num2Str(camera_index).str());
-    }
-  }
-  std::cout << "Opened Camera Index: " << camera_index
-            << " for Interactive Calibration." << std::endl;
-
-  if (!trySetCameraResolution(cap, g_capture_width, g_capture_height, true)) {    
-    std::string err = "cannot set capture frame size of ";
-    err += Num2Str(g_capture_width).str() + "x" + Num2Str(g_capture_height).str();
-    THROWGEMERROR(err);
-  }
-
-  cv::namedWindow(WINDOW_RAW_FEED, cv::WINDOW_AUTOSIZE);
-  cv::moveWindow(WINDOW_RAW_FEED, 0, 0);
-
-  cv::Mat raw_frame;
-
-  // Define destination points for the corrected preview
-
-  while (true) {
-    if (!cap.read(raw_frame) || raw_frame.empty()) {
-      std::cerr << "Error: Could not read frame from camera." << std::endl;
-      cv::waitKey(100);
-      continue; // Prevent tight loop on error
-    }
-
-    cv::Mat input_image = raw_frame.clone();
-
-    cv::imshow(WINDOW_RAW_FEED, input_image);
-    int key_action_type = cv::waitKey(30);
-    if (key_action_type == 27) { // ESC
-      std::cout << "Calibration cancelled by user." << std::endl;
-      break;
-    } else if (key_action_type == 's') {
-      std::cout << "Processing 'save' command..." << std::endl;
-      std::vector<cv::Point2f> detected_corners;
-      if (detectFourCornersGoBoard(input_image, detected_corners)) {
-        if (processAndSaveCalibration(input_image, detected_corners)) {
-          cout << "calibration succeed!" << endl;
-          break;
-        } else {
-          std::cout << "  Calibration VERIFICATION FAILED! Detected corner "
-                       "stones do not match expected."
-                    << std::endl;
-          std::cout << "  ADVICE: Please check stone placement (Black at TL & "
-                       "BL, White at TR & BR),"
-                    << std::endl;
-          std::cout << "          lighting conditions, and ensure corners are "
-                       "accurately marked."
-                    << std::endl;
-          std::cout << "          Consider re-adjusting and saving again, or "
-                       "exiting (ESC) to retry later."
-                    << std::endl;
-        }
-      } else {
-        cout << "detectFourCornersGoBoard failed please place two black stone "
-                "at corner of TL BL "
-             << "and two white stones at TR BR" << endl;
       }
     }
+    cap.release();
+    cv::destroyAllWindows();
   }
-  cap.release();
-  cv::destroyAllWindows();
-}
+
+  void runCaptureCalibration(int camera_index) {
+    cv::VideoCapture cap;
+    cap.open(camera_index, cv::CAP_V4L2); // Try V4L2 first
+    if (!cap.isOpened()) {
+      if (bDebug)
+        std::cout
+            << "Debug: Opening with CAP_V4L2 failed, trying default backend."
+            << std::endl;
+      cap.open(camera_index); // Fallback to default
+      if (!cap.isOpened()) {
+        THROWGEMERROR("OpenCV failed to open camera index " +
+                      Num2Str(camera_index).str());
+      }
+    }
+    std::cout << "Opened Camera Index: " << camera_index
+              << " for Interactive Calibration." << std::endl;
+
+    if (!trySetCameraResolution(cap, g_capture_width, g_capture_height, true)) {
+      std::string err = "cannot set capture frame size of ";
+      err += Num2Str(g_capture_width).str() + "x" +
+             Num2Str(g_capture_height).str();
+      THROWGEMERROR(err);
+    }
+
+    cv::namedWindow(WINDOW_RAW_FEED, cv::WINDOW_AUTOSIZE);
+    cv::moveWindow(WINDOW_RAW_FEED, 0, 0);
+
+    cv::Mat raw_frame;
+
+    // Define destination points for the corrected preview
+
+    while (true) {
+      if (!cap.read(raw_frame) || raw_frame.empty()) {
+        std::cerr << "Error: Could not read frame from camera." << std::endl;
+        cv::waitKey(100);
+        continue; // Prevent tight loop on error
+      }
+
+      cv::Mat input_image = raw_frame.clone();
+
+      cv::imshow(WINDOW_RAW_FEED, input_image);
+      int key_action_type = cv::waitKey(30);
+      if (key_action_type == 27) { // ESC
+        std::cout << "Calibration cancelled by user." << std::endl;
+        break;
+      } else if (key_action_type == 's') {
+        std::cout << "Processing 'save' command..." << std::endl;
+        std::vector<cv::Point2f> detected_corners;
+        if (detectFourCornersGoBoard(input_image, detected_corners)) {
+          if (processAndSaveCalibration(
+                  input_image,      // This is the raw snapshot
+                  detected_corners, // Corners from detectFourCornersGoBoard
+                  false,            // enhanced_detection_was_successful
+                  nullptr,          // enhanced_lab_colors
+                  -1.0f             // enhanced_avg_radius_px
+                  )) {
+            cout << "calibration succeed!" << endl;
+            break;
+          } else {
+            std::cout << "  Calibration VERIFICATION FAILED! Detected corner "
+                         "stones do not match expected."
+                      << std::endl;
+            std::cout
+                << "  ADVICE: Please check stone placement (Black at TL & "
+                   "BL, White at TR & BR),"
+                << std::endl;
+            std::cout
+                << "          lighting conditions, and ensure corners are "
+                   "accurately marked."
+                << std::endl;
+            std::cout << "          Consider re-adjusting and saving again, or "
+                         "exiting (ESC) to retry later."
+                      << std::endl;
+          }
+        } else {
+          cout
+              << "detectFourCornersGoBoard failed please place two black stone "
+                 "at corner of TL BL "
+              << "and two white stones at TR BR" << endl;
+        }
+      }
+    }
+    cap.release();
+    cv::destroyAllWindows();
+  }
