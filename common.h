@@ -1,6 +1,8 @@
 #ifndef UTILITY_H
 #define UTILITY_H
 
+#include <charconv>
+#include <cstring>
 #include <linux/videodev2.h>
 #include <map>
 #include <opencv2/core/types.hpp> // For cv::Point2f
@@ -11,14 +13,12 @@
 #include <string>
 #include <tuple>
 #include <vector>
-#include <cstring>
-#include <charconv>
-
 
 extern bool bDebug;
 extern int g_capture_width;
 extern int g_capture_height;
 extern std::string g_device_path;
+extern float g_calibrated_stone_radius_px;
 
 extern const std::string CALIB_CONFIG_PATH;
 extern const std::string CALIB_SNAPSHOT_PATH;
@@ -108,23 +108,35 @@ struct VideoDeviceInfo {
 // --- Struct to hold all calibration data ---
 struct CalibrationData {
   std::vector<cv::Point2f> corners; // TL, TR, BR, BL order
+  // Standard colors (sampled from corrected image at ideal grid points)
   cv::Vec3f lab_tl = {-1.0f, -1.0f, -1.0f};
   cv::Vec3f lab_tr = {-1.0f, -1.0f, -1.0f};
   cv::Vec3f lab_bl = {-1.0f, -1.0f, -1.0f};
   cv::Vec3f lab_br = {-1.0f, -1.0f, -1.0f};
-  cv::Vec3f lab_board_avg = {-1.0f, -1.0f, -1.0f}; 
+  cv::Vec3f lab_board_avg = {-1.0f, -1.0f, -1.0f};
 
-  // --- MODIFIED/CLARIFIED ---
-  std::string device_path;       // Device path string (e.g., "/dev/video0")
-  int image_width = 0;           // Frame width at time of calibration
-  int image_height = 0;          // Frame height at time of calibration
+  std::string device_path;
+  int image_width = 0;
+  int image_height = 0;
 
   bool corners_loaded = false;
-  bool colors_loaded = false; 
-  bool board_color_loaded = false; 
-  bool dimensions_loaded = false;           // Covers image_width_at_calibration, image_height_at_calibration
-  bool device_path_loaded = false;          // NEW flag for device_path_at_calibration
+  bool colors_loaded = false; // For standard lab_tl, lab_tr etc.
+  bool board_color_loaded = false;
+  bool dimensions_loaded = false;
+  bool device_path_loaded = false;
+
+  // --- Enhanced Detection Data (from CORRECTED image) ---
+  float detected_avg_stone_radius_corrected_px = -1.0f;
+  bool detected_radius_loaded = false;
+
+  cv::Vec3f enhanced_lab_tl_corrected = {-1.0f, -1.0f, -1.0f};
+  cv::Vec3f enhanced_lab_tr_corrected = {-1.0f, -1.0f, -1.0f};
+  cv::Vec3f enhanced_lab_bl_corrected = {-1.0f, -1.0f, -1.0f};
+  cv::Vec3f enhanced_lab_br_corrected = {-1.0f, -1.0f, -1.0f};
+  bool enhanced_colors_loaded =
+      false; // For the 'enhanced_lab_*_corrected' colors
 };
+
 // Structure to represent a single move, including captured stones
 struct Move {
   int player; // 1 for Black, 2 for White, 0 for remove

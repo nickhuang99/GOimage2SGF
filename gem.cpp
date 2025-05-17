@@ -30,6 +30,7 @@ int g_capture_width = 640;            // Default capture width
 int g_capture_height = 480;           // Default capture height
 std::string g_default_game_name_prefix = "tournament";
 std::string g_device_path = "/dev/video0";
+float g_calibrated_stone_radius_px = -1.0f; 
 
 static const std::string Default_Go_Board_Window_Title = "Simulated Go Board";
 static const int canvas_size_px = 760;
@@ -610,7 +611,11 @@ static bool setupCalibrationFromConfig() {
                   "board average) in " +
                   CALIB_CONFIG_PATH + ". Please run calibration first.");
   }
-
+  if (data.detected_radius_loaded &&
+      data.detected_avg_stone_radius_corrected_px != -1.0f) {
+    g_calibrated_stone_radius_px =
+        data.detected_avg_stone_radius_corrected_px;
+  }
   // Store original command-line specified values (or defaults)
   std::string original_g_device_path = g_device_path;
   int original_g_capture_width = g_capture_width;
