@@ -989,6 +989,7 @@ void runInteractiveCalibration(int camera_index) {
 
       // --- BEGIN NEW INTEGRATION ---
       bool enhanced_detection_successful = true;
+      bool enhanced_detection_debug = true;
       std::vector<cv::Point2f> detected_stone_centers(4);
       std::vector<float> detected_stone_radii(4);
       std::vector<cv::Vec3f> new_sampled_lab_colors(4); // TL, TR, BL, BR
@@ -1035,13 +1036,13 @@ void runInteractiveCalibration(int camera_index) {
         detected_stone_radii[0] = detected_radius;
         average_detected_radius += detected_radius;
         detected_stones_count++;
-        if (bDebug)
+        if (bDebug || enhanced_detection_debug)
           cv::circle(display_raw, detected_center,
                      static_cast<int>(detected_radius), cv::Scalar(0, 255, 0),
                      2); // Green circle on success
       } else {
         enhanced_detection_successful = false;
-        if (bDebug)
+        if (bDebug || enhanced_detection_debug)
           cv::rectangle(display_raw, roi_tl, cv::Scalar(0, 0, 255),
                         1); // Red ROI on failure
         std::cout << "  Warning: Failed to detect TL black stone via "
@@ -1062,13 +1063,13 @@ void runInteractiveCalibration(int camera_index) {
         detected_stone_radii[1] = detected_radius;
         average_detected_radius += detected_radius;
         detected_stones_count++;
-        if (bDebug)
+        if (bDebug || enhanced_detection_debug)
           cv::circle(display_raw, detected_center,
                      static_cast<int>(detected_radius), cv::Scalar(0, 255, 0),
                      2);
       } else {
         enhanced_detection_successful = false;
-        if (bDebug)
+        if (bDebug || enhanced_detection_debug)
           cv::rectangle(display_raw, roi_tr, cv::Scalar(0, 0, 255), 1);
         std::cout << "  Warning: Failed to detect TR white stone via "
                      "detectColoredRoundShape."
@@ -1088,13 +1089,13 @@ void runInteractiveCalibration(int camera_index) {
         detected_stone_radii[2] = detected_radius;
         average_detected_radius += detected_radius;
         detected_stones_count++;
-        if (bDebug)
+        if (bDebug || enhanced_detection_debug)
           cv::circle(display_raw, detected_center,
                      static_cast<int>(detected_radius), cv::Scalar(0, 255, 0),
                      2);
       } else {
         enhanced_detection_successful = false;
-        if (bDebug)
+        if (bDebug || enhanced_detection_debug)
           cv::rectangle(display_raw, roi_bl, cv::Scalar(0, 0, 255), 1);
         std::cout << "  Warning: Failed to detect BL black stone via "
                      "detectColoredRoundShape."
@@ -1114,13 +1115,13 @@ void runInteractiveCalibration(int camera_index) {
         detected_stone_radii[3] = detected_radius;
         average_detected_radius += detected_radius;
         detected_stones_count++;
-        if (bDebug)
+        if (bDebug || enhanced_detection_debug)
           cv::circle(display_raw, detected_center,
                      static_cast<int>(detected_radius), cv::Scalar(0, 255, 0),
                      2);
       } else {
         enhanced_detection_successful = false;
-        if (bDebug)
+        if (bDebug || enhanced_detection_debug)
           cv::rectangle(display_raw, roi_br, cv::Scalar(0, 0, 255), 1);
         std::cout << "  Warning: Failed to detect BR white stone via "
                      "detectColoredRoundShape."
@@ -1165,7 +1166,7 @@ void runInteractiveCalibration(int camera_index) {
             raw_lab_for_sampling, detected_stone_centers[3],
             static_cast<int>(detected_stone_radii[3])); // BR White
 
-        if (bDebug) {
+        if (bDebug || enhanced_detection_debug) {
           std::cout << "  Resampled TL (Black) Lab: "
                     << new_sampled_lab_colors[0] << std::endl;
           std::cout << "  Resampled TR (White) Lab: "
