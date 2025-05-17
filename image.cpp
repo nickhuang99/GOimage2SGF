@@ -325,16 +325,16 @@ static bool loadCornersFromConfig(const std::string &config_path,
 }
 
 CalibrationData loadCalibrationData(const std::string &config_path) {
-  CalibrationData data; // Initialize a local CalibrationData struct
+  CalibrationData data;  
   std::ifstream configFile(config_path);
 
-  // Reset all flags to false initially for this load operation
   data.corners_loaded = false;
-  data.colors_loaded = false; // This refers to standard TL/TR/BL/BR colors
+  data.colors_loaded = false; // This is for standard colors: data.lab_tl etc.
   data.board_color_loaded = false;
   data.dimensions_loaded = false;
   data.device_path_loaded = false;
-  data.detected_radius_loaded = false;
+  data.detected_radius_loaded =
+      false; // For DETECTED_AVG_STONE_RADIUS_CORRECTED_PX
   data.enhanced_colors_loaded = false; // For DETECTED_TL_L etc.
 
   if (!configFile.is_open()) {
@@ -377,14 +377,18 @@ CalibrationData loadCalibrationData(const std::string &config_path) {
   }
   configFile.close();
 
-  auto parseFloat = [&](const std::string &key, const std::string &val_str) {
+  auto parseFloat = [&](const std::string &key, const std::string &val_str,
+                        bool &success_flag) {
     try {
-      return std::stof(val_str);
+      float val = std::stof(val_str);
+      success_flag = true;
+      return val;
     } catch (const std::exception &e) {
       if (bDebug)
         std::cerr << "  Warning: Could not parse float for key '" << key
                   << "', value '" << val_str << "'. Error: " << e.what()
                   << std::endl;
+      success_flag = false;
       return -1.0f; // Indicate error
     }
   };
@@ -396,168 +400,199 @@ CalibrationData loadCalibrationData(const std::string &config_path) {
       data.device_path_loaded = !data.device_path.empty();
       if (bDebug && data.device_path_loaded)
         std::cout << "  Loaded DevicePath: " << data.device_path << std::endl;
+    } else { /* ... warning ... */
     }
 
     // Image Dimensions
     if (config_map.count("ImageWidth") && config_map.count("ImageHeight")) {
-      data.image_width = std::stoi(config_map["ImageWidth"]);
-      data.image_height = std::stoi(config_map["ImageHeight"]);
-      data.dimensions_loaded = (data.image_width > 0 && data.image_height > 0);
+      bool w_ok, h_ok;
+      data.image_width = static_cast<int>(
+          parseFloat("ImageWidth", config_map["ImageWidth"], w_ok));
+      data.image_height = static_cast<int>(
+          parseFloat("ImageHeight", config_map["ImageHeight"], h_ok));
+      data.dimensions_loaded =
+          (w_ok && h_ok && data.image_width > 0 && data.image_height > 0);
       if (bDebug && data.dimensions_loaded)
         std::cout << "  Loaded Dimensions at Calib: " << data.image_width << "x"
                   << data.image_height << std::endl;
+    } else { /* ... warning ... */
     }
 
     // Raw Corner Coordinates (Pixel)
-    if (config_map.count("TL_X_PX") && config_map.count("TL_Y_PX") &&
-        config_map.count("TR_X_PX") && config_map.count("TR_Y_PX") &&
-        config_map.count("BL_X_PX") && config_map.count("BL_Y_PX") &&
-        config_map.count("BR_X_PX") && config_map.count("BR_Y_PX")) {
-      cv::Point2f tl(parseFloat("TL_X_PX", config_map["TL_X_PX"]),
-                     parseFloat("TL_Y_PX", config_map["TL_Y_PX"]));
-      cv::Point2f tr(parseFloat("TR_X_PX", config_map["TR_X_PX"]),
-                     parseFloat("TR_Y_PX", config_map["TR_Y_PX"]));
-      cv::Point2f bl(parseFloat("BL_X_PX", config_map["BL_X_PX"]),
-                     parseFloat("BL_Y_PX", config_map["BL_Y_PX"]));
-      cv::Point2f br(parseFloat("BR_X_PX", config_map["BR_X_PX"]),
-                     parseFloat("BR_Y_PX", config_map["BR_Y_PX"]));
-      if (tl.x >= 0 && tr.x >= 0 && bl.x >= 0 && br.x >= 0) { // Basic check
-        data.corners = {tl, tr, br, bl}; // Standard order: TL, TR, BR, BL
+    bool all_corners_ok = true;
+    if (config_map.count("TL_X_PX") &&
+        /* ... all 8 corner keys ... */ config_map.count("BR_Y_PX")) {
+      cv::Point2f tl(
+          parseFloat("TL_X_PX", config_map["TL_X_PX"], all_corners_ok),
+          parseFloat("TL_Y_PX", config_map["TL_Y_PX"], all_corners_ok));
+      cv::Point2f tr(
+          parseFloat("TR_X_PX", config_map["TR_X_PX"], all_corners_ok),
+          parseFloat("TR_Y_PX", config_map["TR_Y_PX"], all_corners_ok));
+      cv::Point2f bl(
+          parseFloat("BL_X_PX", config_map["BL_X_PX"], all_corners_ok),
+          parseFloat("BL_Y_PX", config_map["BL_Y_PX"], all_corners_ok));
+      cv::Point2f br(
+          parseFloat("BR_X_PX", config_map["BR_X_PX"], all_corners_ok),
+          parseFloat("BR_Y_PX", config_map["BR_Y_PX"], all_corners_ok));
+      if (all_corners_ok && tl.x >= 0 && tr.x >= 0 && bl.x >= 0 &&
+          br.x >= 0) { // Basic check
+        data.corners = {tl, tr, br, bl};
         data.corners_loaded = true;
         if (bDebug)
           std::cout << "  Loaded Raw Corners (PX): TL" << tl << " TR" << tr
                     << " BR" << br << " BL" << bl << std::endl;
+      } else {
+        data.corners_loaded = false;
       }
+    } else {
+      data.corners_loaded = false; /* ... warning ... */
     }
 
     // Standard Sampled Lab Colors (from corrected image, ideal grid points)
-    // Assuming keys like STD_TL_L, STD_TL_A, STD_TL_B, etc.
-    if (config_map.count("STD_TL_L") && config_map.count("STD_TR_L") &&
-        config_map.count("STD_BL_L") && config_map.count("STD_BR_L") &&
-        config_map.count("STD_BOARD_L_AVG")) { // Check one from each group
-      data.lab_tl[0] = parseFloat("STD_TL_L", config_map["STD_TL_L"]);
-      data.lab_tl[1] = parseFloat("STD_TL_A", config_map["STD_TL_A"]);
-      data.lab_tl[2] = parseFloat("STD_TL_B", config_map["STD_TL_B"]);
-      data.lab_tr[0] = parseFloat("STD_TR_L", config_map["STD_TR_L"]);
-      data.lab_tr[1] = parseFloat("STD_TR_A", config_map["STD_TR_A"]);
-      data.lab_tr[2] = parseFloat("STD_TR_B", config_map["STD_TR_B"]);
-      data.lab_bl[0] = parseFloat("STD_BL_L", config_map["STD_BL_L"]);
-      data.lab_bl[1] = parseFloat("STD_BL_A", config_map["STD_BL_A"]);
-      data.lab_bl[2] = parseFloat("STD_BL_B", config_map["STD_BL_B"]);
-      data.lab_br[0] = parseFloat("STD_BR_L", config_map["STD_BR_L"]);
-      data.lab_br[1] = parseFloat("STD_BR_A", config_map["STD_BR_A"]);
-      data.lab_br[2] = parseFloat("STD_BR_B", config_map["STD_BR_B"]);
-      data.colors_loaded = true; // For standard corner stone colors
-
-      data.lab_board_avg[0] =
-          parseFloat("STD_BOARD_L_AVG", config_map["STD_BOARD_L_AVG"]);
-      data.lab_board_avg[1] =
-          parseFloat("STD_BOARD_A_AVG", config_map["STD_BOARD_A_AVG"]);
-      data.lab_board_avg[2] =
-          parseFloat("STD_BOARD_B_AVG", config_map["STD_BOARD_B_AVG"]);
-      data.board_color_loaded = true;
-
-      if (bDebug) {
-        std::cout << std::fixed << std::setprecision(1);
-        std::cout << "  Loaded STD_TL_Lab: " << data.lab_tl
-                  << ", STD_TR_Lab: " << data.lab_tr
-                  << ", STD_BL_Lab: " << data.lab_bl
-                  << ", STD_BR_Lab: " << data.lab_br << std::endl;
-        std::cout << "  Loaded STD_BOARD_AVG_Lab: " << data.lab_board_avg
-                  << std::endl;
+    bool std_colors_ok = true;
+    if (config_map.count("STD_TL_L") && config_map.count("STD_TL_A") &&
+        config_map.count("STD_TL_B") && config_map.count("STD_TR_L") &&
+        config_map.count("STD_TR_A") && config_map.count("STD_TR_B") &&
+        config_map.count("STD_BL_L") && config_map.count("STD_BL_A") &&
+        config_map.count("STD_BL_B") && config_map.count("STD_BR_L") &&
+        config_map.count("STD_BR_A") && config_map.count("STD_BR_B")) {
+      data.lab_tl[0] =
+          parseFloat("STD_TL_L", config_map["STD_TL_L"], std_colors_ok);
+      data.lab_tl[1] =
+          parseFloat("STD_TL_A", config_map["STD_TL_A"], std_colors_ok);
+      data.lab_tl[2] =
+          parseFloat("STD_TL_B", config_map["STD_TL_B"], std_colors_ok);
+      data.lab_tr[0] =
+          parseFloat("STD_TR_L", config_map["STD_TR_L"], std_colors_ok);
+      data.lab_tr[1] =
+          parseFloat("STD_TR_A", config_map["STD_TR_A"], std_colors_ok);
+      data.lab_tr[2] =
+          parseFloat("STD_TR_B", config_map["STD_TR_B"], std_colors_ok);
+      data.lab_bl[0] =
+          parseFloat("STD_BL_L", config_map["STD_BL_L"], std_colors_ok);
+      data.lab_bl[1] =
+          parseFloat("STD_BL_A", config_map["STD_BL_A"], std_colors_ok);
+      data.lab_bl[2] =
+          parseFloat("STD_BL_B", config_map["STD_BL_B"], std_colors_ok);
+      data.lab_br[0] =
+          parseFloat("STD_BR_L", config_map["STD_BR_L"], std_colors_ok);
+      data.lab_br[1] =
+          parseFloat("STD_BR_A", config_map["STD_BR_A"], std_colors_ok);
+      data.lab_br[2] =
+          parseFloat("STD_BR_B", config_map["STD_BR_B"], std_colors_ok);
+      data.colors_loaded = std_colors_ok;
+      if (bDebug && data.colors_loaded) { /* ... debug print ... */
       }
+    } else {
+      if (bDebug)
+        std::cerr << "  Warning: One or more STANDARD corner Lab color keys "
+                     "(STD_L/A/B) missing."
+                  << std::endl;
+      data.colors_loaded = false;
+    }
+
+    // Standard Average Board Color
+    bool std_board_color_ok = true;
+    if (config_map.count("STD_BOARD_L_AVG") &&
+        config_map.count("STD_BOARD_A_AVG") &&
+        config_map.count("STD_BOARD_B_AVG")) {
+      data.lab_board_avg[0] = parseFloat(
+          "STD_BOARD_L_AVG", config_map["STD_BOARD_L_AVG"], std_board_color_ok);
+      data.lab_board_avg[1] = parseFloat(
+          "STD_BOARD_A_AVG", config_map["STD_BOARD_A_AVG"], std_board_color_ok);
+      data.lab_board_avg[2] = parseFloat(
+          "STD_BOARD_B_AVG", config_map["STD_BOARD_B_AVG"], std_board_color_ok);
+      data.board_color_loaded = std_board_color_ok;
+      if (bDebug && data.board_color_loaded) { /* ... debug print ... */
+      }
+    } else {
+      if (bDebug)
+        std::cerr << "  Warning: Standard Average Board Lab color keys "
+                     "(STD_BOARD_L/A/B_AVG) missing."
+                  << std::endl;
+      data.board_color_loaded = false;
     }
 
     // --- Enhanced Detection Data ---
     if (config_map.count("DETECTED_AVG_STONE_RADIUS_CORRECTED_PX")) {
-      data.detected_avg_stone_radius_corrected_px =
-          parseFloat("DETECTED_AVG_STONE_RADIUS_CORRECTED_PX",
-                     config_map["DETECTED_AVG_STONE_RADIUS_CORRECTED_PX"]);
-      if (data.detected_avg_stone_radius_corrected_px > 0) {
+      bool radius_ok;
+      data.detected_avg_stone_radius_corrected_px = parseFloat(
+          "DETECTED_AVG_STONE_RADIUS_CORRECTED_PX",
+          config_map["DETECTED_AVG_STONE_RADIUS_CORRECTED_PX"], radius_ok);
+      if (radius_ok && data.detected_avg_stone_radius_corrected_px > 0) {
         data.detected_radius_loaded = true;
         if (bDebug)
           std::cout << "  Loaded DETECTED_AVG_STONE_RADIUS_CORRECTED_PX: "
                     << data.detected_avg_stone_radius_corrected_px << std::endl;
       } else {
-        if (bDebug)
+        if (bDebug && radius_ok)
           std::cerr << "  Warning: DETECTED_AVG_STONE_RADIUS_CORRECTED_PX is "
                        "present but invalid (<=0)."
                     << std::endl;
-        data.detected_avg_stone_radius_corrected_px = -1.0f; // Reset
+        else if (bDebug && !radius_ok)
+          std::cerr << "  Warning: DETECTED_AVG_STONE_RADIUS_CORRECTED_PX "
+                       "failed to parse."
+                    << std::endl;
+        data.detected_avg_stone_radius_corrected_px = -1.0f;
+        data.detected_radius_loaded = false;
       }
     }
 
-    // Load DETECTED corner colors (if they exist)
-    bool all_enhanced_colors_present = config_map.count("DETECTED_TL_L") &&
-                                       config_map.count("DETECTED_TL_A") &&
-                                       config_map.count("DETECTED_TL_B") &&
-                                       config_map.count("DETECTED_TR_L") &&
-                                       config_map.count("DETECTED_TR_A") &&
-                                       config_map.count("DETECTED_TR_B") &&
-                                       config_map.count("DETECTED_BL_L") &&
-                                       config_map.count("DETECTED_BL_A") &&
-                                       config_map.count("DETECTED_BL_B") &&
-                                       config_map.count("DETECTED_BR_L") &&
-                                       config_map.count("DETECTED_BR_A") &&
-                                       config_map.count("DETECTED_BR_B");
+    bool all_enhanced_colors_parsed_ok = true;
+    bool any_enhanced_color_key_present = false;
+    const char *enhanced_keys[][3] = {
+        {"DETECTED_TL_L", "DETECTED_TL_A", "DETECTED_TL_B"},
+        {"DETECTED_TR_L", "DETECTED_TR_A", "DETECTED_TR_B"},
+        {"DETECTED_BL_L", "DETECTED_BL_A", "DETECTED_BL_B"},
+        {"DETECTED_BR_L", "DETECTED_BR_A", "DETECTED_BR_B"}};
+    cv::Vec3f *enhanced_targets[] = {
+        &data.enhanced_lab_tl_corrected, &data.enhanced_lab_tr_corrected,
+        &data.enhanced_lab_bl_corrected, &data.enhanced_lab_br_corrected};
 
-    if (all_enhanced_colors_present) {
-      data.enhanced_lab_tl_corrected[0] =
-          parseFloat("DETECTED_TL_L", config_map["DETECTED_TL_L"]);
-      data.enhanced_lab_tl_corrected[1] =
-          parseFloat("DETECTED_TL_A", config_map["DETECTED_TL_A"]);
-      data.enhanced_lab_tl_corrected[2] =
-          parseFloat("DETECTED_TL_B", config_map["DETECTED_TL_B"]);
+    for (int i = 0; i < 4; ++i) {
+      if (config_map.count(enhanced_keys[i][0]) ||
+          config_map.count(enhanced_keys[i][1]) ||
+          config_map.count(enhanced_keys[i][2])) {
+        any_enhanced_color_key_present = true;
+      }
+      if (config_map.count(enhanced_keys[i][0]) &&
+          config_map.count(enhanced_keys[i][1]) &&
+          config_map.count(enhanced_keys[i][2])) {
+        bool l_ok, a_ok, b_ok;
+        (*enhanced_targets[i])[0] = parseFloat(
+            enhanced_keys[i][0], config_map[enhanced_keys[i][0]], l_ok);
+        (*enhanced_targets[i])[1] = parseFloat(
+            enhanced_keys[i][1], config_map[enhanced_keys[i][1]], a_ok);
+        (*enhanced_targets[i])[2] = parseFloat(
+            enhanced_keys[i][2], config_map[enhanced_keys[i][2]], b_ok);
+        if (!l_ok || !a_ok || !b_ok)
+          all_enhanced_colors_parsed_ok = false;
+      } else {
+        all_enhanced_colors_parsed_ok =
+            false; // Missing one of L,A,B for this corner
+      }
+    }
 
-      data.enhanced_lab_tr_corrected[0] =
-          parseFloat("DETECTED_TR_L", config_map["DETECTED_TR_L"]);
-      data.enhanced_lab_tr_corrected[1] =
-          parseFloat("DETECTED_TR_A", config_map["DETECTED_TR_A"]);
-      data.enhanced_lab_tr_corrected[2] =
-          parseFloat("DETECTED_TR_B", config_map["DETECTED_TR_B"]);
-
-      data.enhanced_lab_bl_corrected[0] =
-          parseFloat("DETECTED_BL_L", config_map["DETECTED_BL_L"]);
-      data.enhanced_lab_bl_corrected[1] =
-          parseFloat("DETECTED_BL_A", config_map["DETECTED_BL_A"]);
-      data.enhanced_lab_bl_corrected[2] =
-          parseFloat("DETECTED_BL_B", config_map["DETECTED_BL_B"]);
-
-      data.enhanced_lab_br_corrected[0] =
-          parseFloat("DETECTED_BR_L", config_map["DETECTED_BR_L"]);
-      data.enhanced_lab_br_corrected[1] =
-          parseFloat("DETECTED_BR_A", config_map["DETECTED_BR_A"]);
-      data.enhanced_lab_br_corrected[2] =
-          parseFloat("DETECTED_BR_B", config_map["DETECTED_BR_B"]);
+    if (all_enhanced_colors_parsed_ok) {
       data.enhanced_colors_loaded = true;
-      if (bDebug) {
-        std::cout << "  Loaded DETECTED_TL_Lab: "
-                  << data.enhanced_lab_tl_corrected << std::endl;
-        std::cout << "  Loaded DETECTED_TR_Lab: "
-                  << data.enhanced_lab_tr_corrected << std::endl;
-        std::cout << "  Loaded DETECTED_BL_Lab: "
-                  << data.enhanced_lab_bl_corrected << std::endl;
-        std::cout << "  Loaded DETECTED_BR_Lab: "
-                  << data.enhanced_lab_br_corrected << std::endl;
+      if (bDebug) { /* ... debug print for enhanced colors ... */
       }
     } else {
-      if (config_map.count(
-              "DETECTED_TL_L")) { // If any DETECTED color key exists, it
-                                  // implies an attempt was made
-        if (bDebug)
-          std::cerr << "  Warning: One or more DETECTED_ corner Lab color keys "
-                       "(L/A/B) missing."
-                    << std::endl;
+      data.enhanced_colors_loaded = false;
+      if (any_enhanced_color_key_present &&
+          bDebug) { // Only warn if some keys were there but not all
+        std::cerr
+            << "  Warning: One or more DETECTED_ corner Lab color keys were "
+               "missing or failed to parse. Enhanced colors not loaded."
+            << std::endl;
       }
     }
 
-  } catch (const std::exception &e) { // Catches stoi, stof errors
-                                      // (invalid_argument, out_of_range)
+  } catch (const std::exception &e) {
     std::cerr
         << "Error (loadCalibrationData): Exception while parsing config file '"
         << config_path << "': " << e.what() << std::endl;
-    // Reset flags if parsing failed critically
-    data = CalibrationData(); // Re-initialize to default state
+    data = CalibrationData(); // Reset to default
   }
   return data;
 }
@@ -2329,7 +2364,7 @@ bool detectColoredRoundShape(
       roiArea * 0.01; // Stone should be at least 1% of ROI area
   double maxStoneAreaInRoi =
       roiArea * 0.30;           // Stone shouldn't be more than 30% of ROI area
-  double minCircularity = 0.75; // Stricter circularity for a single stone
+  double minCircularity = 0.60; // Stricter circularity for a single stone
 
   if (bDebug) {
     std::cout << "Debug (detectColoredRoundShape): ROI Area=" << roiArea
