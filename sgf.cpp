@@ -110,10 +110,13 @@ bool validateSGgfMove(const Mat &before_board_state,
   bool white_move_valid = black_diff_add.size() == 1 &&
                           white_diff_add.empty() &&
                           black_diff_remove.empty(); // no suidcide
+  bool empty_move_valid =
+      (!black_diff_add.empty() || !white_diff_add.empty()) &&
+      (black_diff_remove.empty() && white_diff_remove.empty());
 
   bool valid = (prevColor == BLACK && black_move_valid) ||
                (prevColor == WHITE && white_move_valid) ||
-               (prevColor == EMPTY && (black_move_valid || white_move_valid));  
+               (prevColor == EMPTY && empty_move_valid);  
   return valid;
 }
 
