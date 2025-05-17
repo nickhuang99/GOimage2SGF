@@ -245,17 +245,13 @@ bool saveCornerConfig(
     int frame_width, int frame_height, const cv::Point2f &tl_raw,
     const cv::Point2f &tr_raw, const cv::Point2f &bl_raw,
     const cv::Point2f &br_raw,
-    const cv::Vec3f
-        &lab_tl_sampled_corrected, // Original sampling from corrected
-    const cv::Vec3f &lab_tr_sampled_corrected,
-    const cv::Vec3f &lab_bl_sampled_corrected,
-    const cv::Vec3f &lab_br_sampled_corrected,
-    const cv::Vec3f &avg_lab_board_sampled,
-    // --- New parameters for enhanced detection data ---
-    bool enhanced_data_available,
+    const cv::Vec3f &lab_tl_sampled, // These are standard if enhanced is false
+    const cv::Vec3f &lab_tr_sampled, const cv::Vec3f &lab_bl_sampled,
+    const cv::Vec3f &lab_br_sampled, const cv::Vec3f &avg_lab_board_sampled,
+    bool enhanced_data_available, // Correctly named from common.h
     const std::vector<cv::Vec3f>
-        *lab_corners_sampled_raw_enhanced, // Pointer to allow nullptr if not
-                                           // available
+        *lab_corners_sampled_raw_enhanced, // This should be
+                                           // enhanced_lab_colors_corrected
     float detected_avg_stone_radius_raw    // Or individual radii
 );
 

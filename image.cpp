@@ -449,44 +449,61 @@ CalibrationData loadCalibrationData(const std::string &config_path) {
     }
 
     // Standard Sampled Lab Colors (from corrected image, ideal grid points)
-    bool std_colors_ok = true;
+    bool std_tl_ok = false, std_tr_ok = false, std_bl_ok = false,
+         std_br_ok = false;
     if (config_map.count("STD_TL_L") && config_map.count("STD_TL_A") &&
-        config_map.count("STD_TL_B") && config_map.count("STD_TR_L") &&
-        config_map.count("STD_TR_A") && config_map.count("STD_TR_B") &&
-        config_map.count("STD_BL_L") && config_map.count("STD_BL_A") &&
-        config_map.count("STD_BL_B") && config_map.count("STD_BR_L") &&
-        config_map.count("STD_BR_A") && config_map.count("STD_BR_B")) {
+        config_map.count("STD_TL_B")) {
       data.lab_tl[0] =
-          parseFloat("STD_TL_L", config_map["STD_TL_L"], std_colors_ok);
-      data.lab_tl[1] =
-          parseFloat("STD_TL_A", config_map["STD_TL_A"], std_colors_ok);
-      data.lab_tl[2] =
-          parseFloat("STD_TL_B", config_map["STD_TL_B"], std_colors_ok);
+          parseFloat("STD_TL_L", config_map["STD_TL_L"], std_tl_ok);
+      if (std_tl_ok)
+        data.lab_tl[1] =
+            parseFloat("STD_TL_A", config_map["STD_TL_A"], std_tl_ok);
+      if (std_tl_ok)
+        data.lab_tl[2] =
+            parseFloat("STD_TL_B", config_map["STD_TL_B"], std_tl_ok);
+    }
+    if (config_map.count("STD_TR_L") && config_map.count("STD_TR_A") &&
+        config_map.count("STD_TR_B")) {
       data.lab_tr[0] =
-          parseFloat("STD_TR_L", config_map["STD_TR_L"], std_colors_ok);
-      data.lab_tr[1] =
-          parseFloat("STD_TR_A", config_map["STD_TR_A"], std_colors_ok);
-      data.lab_tr[2] =
-          parseFloat("STD_TR_B", config_map["STD_TR_B"], std_colors_ok);
+          parseFloat("STD_TR_L", config_map["STD_TR_L"], std_tr_ok);
+      if (std_tr_ok)
+        data.lab_tr[1] =
+            parseFloat("STD_TR_A", config_map["STD_TR_A"], std_tr_ok);
+      if (std_tr_ok)
+        data.lab_tr[2] =
+            parseFloat("STD_TR_B", config_map["STD_TR_B"], std_tr_ok);
+    }
+    if (config_map.count("STD_BL_L") && config_map.count("STD_BL_A") &&
+        config_map.count("STD_BL_B")) {
       data.lab_bl[0] =
-          parseFloat("STD_BL_L", config_map["STD_BL_L"], std_colors_ok);
-      data.lab_bl[1] =
-          parseFloat("STD_BL_A", config_map["STD_BL_A"], std_colors_ok);
-      data.lab_bl[2] =
-          parseFloat("STD_BL_B", config_map["STD_BL_B"], std_colors_ok);
+          parseFloat("STD_BL_L", config_map["STD_BL_L"], std_bl_ok);
+      if (std_bl_ok)
+        data.lab_bl[1] =
+            parseFloat("STD_BL_A", config_map["STD_BL_A"], std_bl_ok);
+      if (std_bl_ok)
+        data.lab_bl[2] =
+            parseFloat("STD_BL_B", config_map["STD_BL_B"], std_bl_ok);
+    }
+    if (config_map.count("STD_BR_L") && config_map.count("STD_BR_A") &&
+        config_map.count("STD_BR_B")) {
       data.lab_br[0] =
-          parseFloat("STD_BR_L", config_map["STD_BR_L"], std_colors_ok);
-      data.lab_br[1] =
-          parseFloat("STD_BR_A", config_map["STD_BR_A"], std_colors_ok);
-      data.lab_br[2] =
-          parseFloat("STD_BR_B", config_map["STD_BR_B"], std_colors_ok);
-      data.colors_loaded = std_colors_ok;
-      if (bDebug && data.colors_loaded) { /* ... debug print ... */
-      }
+          parseFloat("STD_BR_L", config_map["STD_BR_L"], std_br_ok);
+      if (std_br_ok)
+        data.lab_br[1] =
+            parseFloat("STD_BR_A", config_map["STD_BR_A"], std_br_ok);
+      if (std_br_ok)
+        data.lab_br[2] =
+            parseFloat("STD_BR_B", config_map["STD_BR_B"], std_br_ok);
+    }
+
+    if (std_tl_ok && std_tr_ok && std_bl_ok && std_br_ok) {
+      data.colors_loaded = true;
+      if (bDebug)
+        std::cout << "  Loaded All Standard Corner Labs" << std::endl;
     } else {
       if (bDebug)
         std::cerr << "  Warning: One or more STANDARD corner Lab color keys "
-                     "(STD_L/A/B) missing."
+                     "(STD_L/A/B) missing or failed to parse."
                   << std::endl;
       data.colors_loaded = false;
     }
@@ -498,13 +515,18 @@ CalibrationData loadCalibrationData(const std::string &config_path) {
         config_map.count("STD_BOARD_B_AVG")) {
       data.lab_board_avg[0] = parseFloat(
           "STD_BOARD_L_AVG", config_map["STD_BOARD_L_AVG"], std_board_color_ok);
-      data.lab_board_avg[1] = parseFloat(
-          "STD_BOARD_A_AVG", config_map["STD_BOARD_A_AVG"], std_board_color_ok);
-      data.lab_board_avg[2] = parseFloat(
-          "STD_BOARD_B_AVG", config_map["STD_BOARD_B_AVG"], std_board_color_ok);
+      if (std_board_color_ok)
+        data.lab_board_avg[1] =
+            parseFloat("STD_BOARD_A_AVG", config_map["STD_BOARD_A_AVG"],
+                       std_board_color_ok);
+      if (std_board_color_ok)
+        data.lab_board_avg[2] =
+            parseFloat("STD_BOARD_B_AVG", config_map["STD_BOARD_B_AVG"],
+                       std_board_color_ok);
       data.board_color_loaded = std_board_color_ok;
-      if (bDebug && data.board_color_loaded) { /* ... debug print ... */
-      }
+      if (bDebug && data.board_color_loaded)
+        std::cout << "  Loaded Standard Board Avg Lab: " << data.lab_board_avg
+                  << std::endl;
     } else {
       if (bDebug)
         std::cerr << "  Warning: Standard Average Board Lab color keys "

@@ -612,7 +612,7 @@ static bool setupCalibrationFromConfig() {
                   CALIB_CONFIG_PATH + ". Please run calibration first.");
   }
   if (data.detected_radius_loaded &&
-      data.detected_avg_stone_radius_corrected_px != -1.0f) {
+      data.detected_avg_stone_radius_corrected_px > 0.0f) {
     g_calibrated_stone_radius_px =
         data.detected_avg_stone_radius_corrected_px;
   }
