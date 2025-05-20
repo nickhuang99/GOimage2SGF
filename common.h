@@ -1,6 +1,8 @@
 #ifndef UTILITY_H
 #define UTILITY_H
 
+#include <charconv>
+#include <cstring>
 #include <linux/videodev2.h>
 #include <map>
 #include <opencv2/core/types.hpp> // For cv::Point2f
@@ -11,9 +13,6 @@
 #include <string>
 #include <tuple>
 #include <vector>
-#include <cstring>
-#include <charconv>
-
 
 extern bool bDebug;
 extern int g_capture_width;
@@ -112,18 +111,19 @@ struct CalibrationData {
   cv::Vec3f lab_tr = {-1.0f, -1.0f, -1.0f};
   cv::Vec3f lab_bl = {-1.0f, -1.0f, -1.0f};
   cv::Vec3f lab_br = {-1.0f, -1.0f, -1.0f};
-  cv::Vec3f lab_board_avg = {-1.0f, -1.0f, -1.0f}; 
+  cv::Vec3f lab_board_avg = {-1.0f, -1.0f, -1.0f};
 
   // --- MODIFIED/CLARIFIED ---
-  std::string device_path;       // Device path string (e.g., "/dev/video0")
-  int image_width = 0;           // Frame width at time of calibration
-  int image_height = 0;          // Frame height at time of calibration
+  std::string device_path; // Device path string (e.g., "/dev/video0")
+  int image_width = 0;     // Frame width at time of calibration
+  int image_height = 0;    // Frame height at time of calibration
 
   bool corners_loaded = false;
-  bool colors_loaded = false; 
-  bool board_color_loaded = false; 
-  bool dimensions_loaded = false;           // Covers image_width_at_calibration, image_height_at_calibration
-  bool device_path_loaded = false;          // NEW flag for device_path_at_calibration
+  bool colors_loaded = false;
+  bool board_color_loaded = false;
+  bool dimensions_loaded =
+      false; // Covers image_width_at_calibration, image_height_at_calibration
+  bool device_path_loaded = false; // NEW flag for device_path_at_calibration
 };
 // Structure to represent a single move, including captured stones
 struct Move {

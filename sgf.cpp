@@ -1,32 +1,31 @@
-#include <cmath>
-#include <numeric>
-#include <opencv2/opencv.hpp>
-#include <vector>
+#include "common.h"
 #include <algorithm>
+#include <cmath>
 #include <fstream>
 #include <iomanip>
 #include <iostream>
 #include <limits>
 #include <map>
+#include <numeric>
+#include <opencv2/opencv.hpp>
 #include <regex> // Include the regex library
 #include <set>
-#include "common.h"
+#include <vector>
 
 using namespace std;
 using namespace cv;
 
-static void debugPrint(const Mat& before_board_state, const Mat& next_board_state) {
-  for (int row = 0; row < 19; ++row) {   
+static void debugPrint(const Mat &before_board_state,
+                       const Mat &next_board_state) {
+  for (int row = 0; row < 19; ++row) {
     for (int col = 0; col < 19; ++col) {
       int before_stone = before_board_state.at<uchar>(row, col);
       int next_stone = next_board_state.at<uchar>(row, col);
-      cout << before_stone << "(" << next_stone << ") ";    
+      cout << before_stone << "(" << next_stone << ") ";
     }
     cout << endl;
   }
 }
-
-
 
 static void calculateSgfDiff(const Mat &before_board_state,
                              const Mat &next_board_state,
@@ -97,7 +96,7 @@ static string generateSgfFromDiff(const vector<Point> &black_diff_add,
 }
 
 bool validateSGgfMove(const Mat &before_board_state,
-                           const Mat &next_board_state, int prevColor) {
+                      const Mat &next_board_state, int prevColor) {
   vector<Point> black_diff_add;
   vector<Point> white_diff_add;
   vector<Point> black_diff_remove;
@@ -116,7 +115,7 @@ bool validateSGgfMove(const Mat &before_board_state,
 
   bool valid = (prevColor == BLACK && black_move_valid) ||
                (prevColor == WHITE && white_move_valid) ||
-               (prevColor == EMPTY && empty_move_valid);  
+               (prevColor == EMPTY && empty_move_valid);
   return valid;
 }
 
@@ -146,7 +145,7 @@ string generateSGF(const Mat &board_state,
   if (bDebug) {
     for (int row = 0; row < 19; ++row) {
       for (int col = 0; col < 19; ++col) {
-        cout << static_cast<int>(board_state.at<uchar>(row, col)) << ",";     
+        cout << static_cast<int>(board_state.at<uchar>(row, col)) << ",";
       }
       cout << endl;
     }

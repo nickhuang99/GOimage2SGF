@@ -847,8 +847,8 @@ void tournamentModeWorkflow(const std::string &game_name_final_prefix) {
 
       // *** YOUR NEW LOGIC INSERTION POINT ***
       if (!validateSGgfMove(previous_board_state_matrix,
-                           current_board_state_matrix_local,
-                           previous_move_color)) {
+                            current_board_state_matrix_local,
+                            previous_move_color)) {
         std::cout << "  WARNING: No change detected from previous step "
                   << (game_step_counter - 1) << " to current step "
                   << game_step_counter << "." << std::endl;
