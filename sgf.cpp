@@ -37,8 +37,12 @@ static void calculateSgfDiff(const Mat &before_board_state,
 
   for (int row = 0; row < 19; ++row) {
     for (int col = 0; col < 19; ++col) {
-      int before_stone = before_board_state.at<uchar>(row, col);
-      int next_stone = next_board_state.at<uchar>(row, col);
+      int before_stone = before_board_state.empty()
+                             ? EMPTY
+                             : before_board_state.at<uchar>(row, col);
+      int next_stone = next_board_state.empty()
+                           ? EMPTY
+                           : next_board_state.at<uchar>(row, col);
 
       if (before_stone != next_stone) {
         if (next_stone == BLACK) {                   // Black stone added
@@ -106,10 +110,13 @@ bool validateSGgfMove(const Mat &before_board_state,
   bool white_move_valid = black_diff_add.size() == 1 &&
                           white_diff_add.empty() &&
                           black_diff_remove.empty(); // no suidcide
+  bool empty_move_valid =
+      (!black_diff_add.empty() || !white_diff_add.empty()) &&
+      (black_diff_remove.empty() && white_diff_remove.empty());
 
   bool valid = (prevColor == BLACK && black_move_valid) ||
                (prevColor == WHITE && white_move_valid) ||
-               (prevColor == EMPTY && (black_move_valid || white_move_valid));  
+               (prevColor == EMPTY && empty_move_valid);  
   return valid;
 }
 
