@@ -389,7 +389,9 @@ void calibrationWorkflow(bool bInteractive) {
   if (bInteractive) {
     runInteractiveCalibration(camera_index);
   } else {
-    runCaptureCalibration(camera_index);
+    cout << "Starting AUTOMATED calibration using snapshot: "
+         << CALIB_SNAPSHOT_PATH << endl;
+    runCaptureCalibration();
   }
 
   cout << "Calibration workflow finished." << endl;

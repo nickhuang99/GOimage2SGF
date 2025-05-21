@@ -179,7 +179,7 @@ cv::Mat correctPerspective(const cv::Mat &image);
 
 // Declare the function to display webcam feed (defined in snapshot.cpp)
 void runInteractiveCalibration(int camera_index);
-void runCaptureCalibration(int camera_index);
+void runCaptureCalibration();
 
 bool trySetCameraResolution(
     cv::VideoCapture &cap, int desired_width, int desired_height,

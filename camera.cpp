@@ -1231,85 +1231,78 @@ void runInteractiveCalibration(int camera_index) {
   cv::destroyAllWindows();
 }
 
-void runCaptureCalibration(int camera_index) {
-  cv::VideoCapture cap;
-  cap.open(camera_index, cv::CAP_V4L2); // Try V4L2 first
-  if (!cap.isOpened()) {
-    if (bDebug)
+void runCaptureCalibration() {
+  std::cout << "Starting Capture Calibration (from " << CALIB_SNAPSHOT_PATH
+            << ")..." << std::endl;
+
+  cv::Mat raw_frame = cv::imread(CALIB_SNAPSHOT_PATH);
+  if (raw_frame.empty()) {
+    THROWGEMERROR("Failed to load snapshot image for calibration: " +
+                  CALIB_SNAPSHOT_PATH);
+  }
+
+  std::cout << "  Loaded image: " << CALIB_SNAPSHOT_PATH << " ("
+            << raw_frame.cols << "x" << raw_frame.rows << ")" << std::endl;
+
+  if (bDebug) {
+    cv::imshow("Calibration Input Snapshot", raw_frame);
+    cv::waitKey(
+        100); // Show for a moment if debug is on, then proceed automatically
+  }
+
+  std::cout << "  Attempting to auto-detect corners and save calibration..."
+            << std::endl;
+  std::vector<cv::Point2f> detected_corners;
+
+  if (detectFourCornersGoBoard(raw_frame, detected_corners)) {
+    if (processAndSaveCalibration(
+            raw_frame,        // This is the loaded snapshot
+            detected_corners, // Corners from detectFourCornersGoBoard
+            false, // enhanced_detection_was_successful (not implemented in this
+                   // auto path yet)
+            nullptr, // enhanced_lab_colors (not implemented)
+            -1.0f    // enhanced_avg_radius_px (not implemented)
+            )) {
       std::cout
-          << "Debug: Opening with CAP_V4L2 failed, trying default backend."
+          << "  Auto-calibration from snapshot SUCCEEDED and was VERIFIED!"
           << std::endl;
-    cap.open(camera_index); // Fallback to default
-    if (!cap.isOpened()) {
-      THROWGEMERROR("OpenCV failed to open camera index " +
-                    Num2Str(camera_index).str());
+    } else {
+      std::cout << "  Auto-calibration from snapshot VERIFICATION FAILED! "
+                   "Detected corner stones might not match expected."
+                << std::endl;
+      std::cout << "  ADVICE: Please check the snapshot image ("
+                << CALIB_SNAPSHOT_PATH << ")," << std::endl;
+      std::cout << "          ensure it has Black stones at TL & BL, White at "
+                   "TR & BR,"
+                << std::endl;
+      std::cout << "          and good lighting conditions." << std::endl;
+      std::cout << "          You might need to re-run interactive calibration "
+                   "(-B) to get a good snapshot."
+                << std::endl;
+      // Note: Unlike interactive mode, this is a one-shot attempt.
+      // If it fails, it fails. User needs to ensure snapshot.jpg is good.
     }
+  } else {
+    std::cout << "  detectFourCornersGoBoard FAILED on " << CALIB_SNAPSHOT_PATH
+              << "." << std::endl;
+    std::cout
+        << "  Please ensure the image contains a clear view of the board with:"
+        << std::endl;
+    std::cout << "    - Two BLACK stones at Top-Left & Bottom-Left corners."
+              << std::endl;
+    std::cout << "    - Two WHITE stones at Top-Right & Bottom-Right corners."
+              << std::endl;
+    std::cout << "  Consider using interactive calibration (-B) to set up "
+                 "manually and save a good snapshot."
+              << std::endl;
   }
-  std::cout << "Opened Camera Index: " << camera_index
-            << " for Interactive Calibration." << std::endl;
 
-  if (!trySetCameraResolution(cap, g_capture_width, g_capture_height, true)) {
-    std::string err = "cannot set capture frame size of ";
-    err +=
-        Num2Str(g_capture_width).str() + "x" + Num2Str(g_capture_height).str();
-    THROWGEMERROR(err);
+  if (bDebug) {
+    // If there was an intermediate display from detectFourCornersGoBoard or
+    // processAndSaveCalibration, user would have seen it. We can add a final
+    // waitKey here if needed. cv::waitKey(0);
   }
-
-  cv::namedWindow(WINDOW_RAW_FEED, cv::WINDOW_AUTOSIZE);
-  cv::moveWindow(WINDOW_RAW_FEED, 0, 0);
-
-  cv::Mat raw_frame;
-
-  // Define destination points for the corrected preview
-
-  while (true) {
-    if (!cap.read(raw_frame) || raw_frame.empty()) {
-      std::cerr << "Error: Could not read frame from camera." << std::endl;
-      cv::waitKey(100);
-      continue; // Prevent tight loop on error
-    }
-
-    cv::Mat input_image = raw_frame.clone();
-
-    cv::imshow(WINDOW_RAW_FEED, input_image);
-    int key_action_type = cv::waitKey(30);
-    if (key_action_type == 27) { // ESC
-      std::cout << "Calibration cancelled by user." << std::endl;
-      break;
-    } else if (key_action_type == 's') {
-      std::cout << "Processing 'save' command..." << std::endl;
-      std::vector<cv::Point2f> detected_corners;
-      if (detectFourCornersGoBoard(input_image, detected_corners)) {
-        if (processAndSaveCalibration(
-                input_image,      // This is the raw snapshot
-                detected_corners, // Corners from detectFourCornersGoBoard
-                false,            // enhanced_detection_was_successful
-                nullptr,          // enhanced_lab_colors
-                -1.0f             // enhanced_avg_radius_px
-                )) {
-          cout << "calibration succeed!" << endl;
-          break;
-        } else {
-          std::cout << "  Calibration VERIFICATION FAILED! Detected corner "
-                       "stones do not match expected."
-                    << std::endl;
-          std::cout << "  ADVICE: Please check stone placement (Black at TL & "
-                       "BL, White at TR & BR),"
-                    << std::endl;
-          std::cout << "          lighting conditions, and ensure corners are "
-                       "accurately marked."
-                    << std::endl;
-          std::cout << "          Consider re-adjusting and saving again, or "
-                       "exiting (ESC) to retry later."
-                    << std::endl;
-        }
-      } else {
-        cout << "detectFourCornersGoBoard failed please place two black stone "
-                "at corner of TL BL "
-             << "and two white stones at TR BR" << endl;
-      }
-    }
-  }
-  cap.release();
-  cv::destroyAllWindows();
+  cv::destroyAllWindows(); // Clean up any windows opened by helpers if bDebug
+                           // was on.
+  std::cout << "Capture Calibration (from snapshot) Finished." << std::endl;
 }
