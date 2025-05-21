@@ -839,8 +839,8 @@ bool processAndSaveCalibration(
       standard_sample_data[3], // BL_corrected_lab, BR_corrected_lab
       standard_sample_data[4], // BoardAvg_corrected_lab
       // --- Enhanced data part ---
-      false, // Flag indicating if enhanced data is
-             // valid
+      false,   // Flag indicating if enhanced data is
+               // valid
       nullptr, // Pass pointer to enhanced colors or nullptr
       -1.0f    // Pass enhanced radius or -1
   );
@@ -983,10 +983,6 @@ void runInteractiveCalibration(int camera_index) {
       cv::Mat final_raw_bgr_for_snapshot =
           raw_frame.clone(); // The raw frame corresponding to the current
                              // good preview
-
-      // if (processAndSaveCalibration(final_raw_bgr_for_snapshot,
-      // current_source_points)) {
-      //  If processAndSaveCalibration is modified to take
       //  new_sampled_lab_colors and avg_radius:
       if (processAndSaveCalibration(
               final_raw_bgr_for_snapshot,
@@ -1020,16 +1016,16 @@ void runInteractiveCalibration(int camera_index) {
 }
 
 void runCaptureCalibration() {
-  std::cout << "Starting Capture Calibration (from " << CALIB_SNAPSHOT_RAW_PATH
+  std::cout << "Starting Capture Calibration (from " << CALIB_SNAPSHOT_PATH
             << ")..." << std::endl;
 
-  cv::Mat raw_frame = cv::imread(CALIB_SNAPSHOT_RAW_PATH);
+  cv::Mat raw_frame = cv::imread(CALIB_SNAPSHOT_PATH);
   if (raw_frame.empty()) {
     THROWGEMERROR("Failed to load snapshot image for calibration: " +
-                  CALIB_SNAPSHOT_RAW_PATH);
+                  CALIB_SNAPSHOT_PATH);
   }
 
-  std::cout << "  Loaded image: " << CALIB_SNAPSHOT_RAW_PATH << " ("
+  std::cout << "  Loaded image: " << CALIB_SNAPSHOT_PATH << " ("
             << raw_frame.cols << "x" << raw_frame.rows << ")" << std::endl;
 
   if (bDebug) {
