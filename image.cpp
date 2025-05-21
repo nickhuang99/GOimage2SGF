@@ -2213,12 +2213,12 @@ bool detectFourCornersGoBoard(
   int correct_board_width_px = dst_points[1].x - dst_points[0].x;
   int correct_board_height_px = dst_points[3].y - dst_points[0].y;
   int roi_half_width =
-      2.0f * calculateAdaptiveSampleRadius(correct_board_width_px,
+      2.5f * calculateAdaptiveSampleRadius(correct_board_width_px,
                                            correct_board_height_px);
 
   // Default Lab tolerances from previous version
   const float L_TOLERANCE_STONE = 35.0f;
-  const float AB_TOLERANCE_STONE = 30.0f;
+  const float AB_TOLERANCE_STONE = 10.0f;
 
   cv::Point2f temp_center;
   float temp_radius;
