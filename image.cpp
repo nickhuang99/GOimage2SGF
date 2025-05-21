@@ -2171,6 +2171,7 @@ bool detectFourCornersGoBoard(
   // ... (Initial checks, load calib_data, dimension check, perspective
   // transform - as in your current image.cpp) ...
   found_corrected_centers.clear();
+  found_corrected_centers.resize(4);
 
   if (input_bgr_image.empty()) {
     std::cerr << "Error (detectFourCornersGoBoard): Input image is empty."
@@ -2212,7 +2213,7 @@ bool detectFourCornersGoBoard(
   int correct_board_width_px = dst_points[1].x - dst_points[0].x;
   int correct_board_height_px = dst_points[3].y - dst_points[0].y;
   int roi_half_width =
-      1.5f * calculateAdaptiveSampleRadius(correct_board_width_px,
+      2.0f * calculateAdaptiveSampleRadius(correct_board_width_px,
                                            correct_board_height_px);
 
   // Default Lab tolerances from previous version
