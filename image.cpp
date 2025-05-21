@@ -1854,6 +1854,7 @@ void drawSimulatedGoBoard(const std::string &full_tournament_sgf_content,
     }
   }
 }
+
 static std::vector<cv::Point2f>
 getStoneCandidateCenters(const cv::Mat &image_for_size_ref,
                          const std::vector<std::vector<cv::Point>> &contours,
@@ -1916,209 +1917,17 @@ getStoneCandidateCenters(const cv::Mat &image_for_size_ref,
   return centers;
 }
 
-// detectFourCornersGoBoard function with heuristic lines removed
-// Output order for detected_corners_tl_tr_br_bl: TL, TR, BR, BL
-// Output order for detected_corners_tl_tr_br_bl: TL, TR, BR, BL
-bool detectFourCornersGoBoard(
-    const cv::Mat &input_bgr_image,
-    std::vector<cv::Point2f> &detected_corners_tl_tr_br_bl) {
-  if (bDebug)
-    std::cout << "Debug (detectFourCornersGoBoard - Refined): Starting..."
-              << std::endl;
-
-  detected_corners_tl_tr_br_bl.clear();
-
-  if (input_bgr_image.empty()) {
-    std::cerr << "Error (detectFourCornersGoBoard): Input image is empty."
-              << std::endl;
-    return false;
-  }
-
-  // 1. Load Calibration Data
-  CalibrationData calib_data = loadCalibrationData(CALIB_CONFIG_PATH); //
-  if (!calib_data.corners_loaded || !calib_data.colors_loaded ||
-      !calib_data.dimensions_loaded) {
-    std::cerr << "Error (detectFourCornersGoBoard): Essential calibration data "
-                 "(corners, colors, or dimensions) not loaded from config.txt. "
-                 "Cannot perform refined detection."
-              << std::endl;
-    return false;
-  }
-
-  // 2. Verify image dimensions match config
-  if (input_bgr_image.cols != calib_data.image_width ||
-      input_bgr_image.rows != calib_data.image_height) {
-    std::cerr << "Error (detectFourCornersGoBoard): Input image dimensions ("
-              << input_bgr_image.cols << "x" << input_bgr_image.rows
-              << ") do not match calibration config dimensions ("
-              << calib_data.image_width << "x" << calib_data.image_height
-              << ")." << std::endl;
-    return false;
-  }
-
-  // 3. Perform Perspective Transformation
-  // Source points are the raw corners from the loaded calibration data
-  std::vector<cv::Point2f> src_points = calib_data.corners; // {TL, TR, BR, BL}
-
-  // Destination points for the corrected view
-  std::vector<cv::Point2f> dst_points =
-      getBoardCornersCorrected(input_bgr_image.cols, input_bgr_image.rows); //
-
-  cv::Mat transform_matrix =
-      cv::getPerspectiveTransform(src_points, dst_points);
-  cv::Mat corrected_bgr_image;
-  cv::warpPerspective(input_bgr_image, corrected_bgr_image, transform_matrix,
-                      input_bgr_image.size());
-
-  if (bDebug) {
-    cv::imshow("RefinedDetect - Corrected BGR", corrected_bgr_image);
-  }
-
-  // 4. Define ROIs and Search for Stones in Corrected Image
-  std::vector<cv::Point2f> found_corrected_centers(4);
-  bool all_found = true;
-
-  // Estimate expected stone radius in corrected image for ROI definition
-  float line_spacing_corrected =
-      (dst_points[1].x - dst_points[0].x) /
-      18.0f; // Using x-spacing from corrected TL to TR
-  float expected_stone_radius_corrected = line_spacing_corrected * 0.45f;
-  float roi_half_width = expected_stone_radius_corrected *
-                         2.5f; // ROI is ~2.5 stone radii around the ideal point
-
-  // Ideal corner points in the corrected image:
-  // dst_points[0] = Corrected TL
-  // dst_points[1] = Corrected TR
-  // dst_points[2] = Corrected BR
-  // dst_points[3] = Corrected BL
-
-  cv::Point2f temp_center;
-  float temp_radius;
-
-  // --- TL (Black) ---
-  cv::Rect roi_tl(static_cast<int>(dst_points[0].x - roi_half_width),
-                  static_cast<int>(dst_points[0].y - roi_half_width),
-                  static_cast<int>(roi_half_width * 2),
-                  static_cast<int>(roi_half_width * 2));
-  if (detectColoredRoundShape(corrected_bgr_image, roi_tl, BLACK, temp_center,
-                              temp_radius, &calib_data)) {
-    found_corrected_centers[0] = temp_center;
-  } else {
-    all_found = false;
-    if (bDebug)
-      std::cerr << "  Failed to find TL (Black) stone in corrected ROI."
-                << std::endl;
-  }
-
-  // --- TR (White) ---
-  cv::Rect roi_tr(static_cast<int>(dst_points[1].x - roi_half_width),
-                  static_cast<int>(dst_points[1].y - roi_half_width),
-                  static_cast<int>(roi_half_width * 2),
-                  static_cast<int>(roi_half_width * 2));
-  if (all_found &&
-      detectColoredRoundShape(corrected_bgr_image, roi_tr, WHITE, temp_center,
-                              temp_radius, &calib_data)) {
-    found_corrected_centers[1] = temp_center;
-  } else {
-    all_found = false;
-    if (bDebug)
-      std::cerr << "  Failed to find TR (White) stone in corrected ROI."
-                << std::endl;
-  }
-
-  // --- BR (White) ---
-  cv::Rect roi_br(static_cast<int>(dst_points[2].x - roi_half_width),
-                  static_cast<int>(dst_points[2].y - roi_half_width),
-                  static_cast<int>(roi_half_width * 2),
-                  static_cast<int>(roi_half_width * 2));
-  if (all_found &&
-      detectColoredRoundShape(corrected_bgr_image, roi_br, WHITE, temp_center,
-                              temp_radius, &calib_data)) {
-    found_corrected_centers[2] = temp_center;
-  } else {
-    all_found = false;
-    if (bDebug)
-      std::cerr << "  Failed to find BR (White) stone in corrected ROI."
-                << std::endl;
-  }
-
-  // --- BL (Black) ---
-  cv::Rect roi_bl(static_cast<int>(dst_points[3].x - roi_half_width),
-                  static_cast<int>(dst_points[3].y - roi_half_width),
-                  static_cast<int>(roi_half_width * 2),
-                  static_cast<int>(roi_half_width * 2));
-  if (all_found &&
-      detectColoredRoundShape(corrected_bgr_image, roi_bl, BLACK, temp_center,
-                              temp_radius, &calib_data)) {
-    found_corrected_centers[3] = temp_center;
-  } else {
-    all_found = false;
-    if (bDebug)
-      std::cerr << "  Failed to find BL (Black) stone in corrected ROI."
-                << std::endl;
-  }
-
-  if (all_found) {
-    // 5. Transform refined corrected centers back to raw image coordinates
-    cv::Mat inverse_transform_matrix;
-    cv::invert(transform_matrix, inverse_transform_matrix);
-    // Alternative: cv::Mat inverse_transform_matrix =
-    // cv::getPerspectiveTransform(dst_points, src_points);
-
-    std::vector<cv::Point2f> refined_raw_corners_vec;
-    cv::perspectiveTransform(found_corrected_centers, refined_raw_corners_vec,
-                             inverse_transform_matrix);
-
-    detected_corners_tl_tr_br_bl = refined_raw_corners_vec;
-
-    if (bDebug) {
-      std::cout << "  Refined detection successful. Found corrected centers: "
-                << std::endl;
-      std::cout << "    TL_corr: " << found_corrected_centers[0]
-                << " -> Raw: " << detected_corners_tl_tr_br_bl[0] << std::endl;
-      std::cout << "    TR_corr: " << found_corrected_centers[1]
-                << " -> Raw: " << detected_corners_tl_tr_br_bl[1] << std::endl;
-      std::cout << "    BR_corr: " << found_corrected_centers[2]
-                << " -> Raw: " << detected_corners_tl_tr_br_bl[2] << std::endl;
-      std::cout << "    BL_corr: " << found_corrected_centers[3]
-                << " -> Raw: " << detected_corners_tl_tr_br_bl[3] << std::endl;
-
-      cv::Mat debug_raw_img = input_bgr_image.clone();
-      cv::circle(debug_raw_img, detected_corners_tl_tr_br_bl[0], 7,
-                 cv::Scalar(0, 255, 0), 2); // TL green
-      cv::circle(debug_raw_img, detected_corners_tl_tr_br_bl[1], 7,
-                 cv::Scalar(0, 255, 0), 2); // TR green
-      cv::circle(debug_raw_img, detected_corners_tl_tr_br_bl[2], 7,
-                 cv::Scalar(0, 255, 0), 2); // BR green
-      cv::circle(debug_raw_img, detected_corners_tl_tr_br_bl[3], 7,
-                 cv::Scalar(0, 255, 0), 2); // BL green
-      cv::imshow("RefinedDetect - Final Raw Points", debug_raw_img);
-    }
-    return true;
-  } else {
-    std::cerr << "Error (detectFourCornersGoBoard - Refined): Failed to "
-                 "pinpoint all four corner stones in the corrected image using "
-                 "calibrated colors."
-              << std::endl;
-    // As a fallback, could return original config corners, or just fail.
-    // For now, fail if refinement isn't complete.
-    // detected_corners_tl_tr_br_bl = calib_data.corners; // Fallback to config
-    // corners return true; // Or return false to indicate refinement failed
-    return false;
-  }
-}
-
-// Utility function to detect a single colored round shape in a region
-// Utility function to detect a single colored round shape in a region
-bool detectColoredRoundShape(
+bool detectSpecificColoredRoundShape(
     const cv::Mat &inputBgrImage, const cv::Rect &regionOfInterest,
-    int expectedColor, // Use BLACK or WHITE macros
-    cv::Point2f &detectedCenter, float &detectedRadius,
-    const CalibrationData *calibData) { // Optional calibData for color ranges
+    const cv::Vec3f &expectedAvgLabColor, // Specific target Lab color
+    float l_tolerance,                    // Tolerance for L channel
+    float ab_tolerance,                   // Tolerance for A and B channels
+    cv::Point2f &detectedCenter, float &detectedRadius) {
 
   if (inputBgrImage.empty()) {
     if (bDebug)
-      std::cerr << "Error (detectColoredRoundShape): Input BGR image is empty."
+      std::cerr << "Error (detectSpecificColoredRoundShape): Input BGR image "
+                   "is empty."
                 << std::endl;
     return false;
   }
@@ -2127,8 +1936,8 @@ bool detectColoredRoundShape(
       regionOfInterest & cv::Rect(0, 0, inputBgrImage.cols, inputBgrImage.rows);
   if (roi.width <= 0 || roi.height <= 0) {
     if (bDebug)
-      std::cerr << "Error (detectColoredRoundShape): Region of interest is "
-                   "invalid or outside image bounds."
+      std::cerr << "Error (detectSpecificColoredRoundShape): Region of "
+                   "interest is invalid or outside image bounds."
                 << std::endl;
     return false;
   }
@@ -2138,69 +1947,21 @@ bool detectColoredRoundShape(
   cv::cvtColor(roiImageBgr, roiImageLab, cv::COLOR_BGR2Lab);
 
   cv::Mat colorMask;
-  cv::Scalar labLower, labUpper;
-
-  bool useCustomRanges = false;
-  if (calibData && calibData->colors_loaded) {
-    cv::Vec3f avgColor;
-    // These tolerances might need to be tuned or made part of CalibrationData
-    // itself if they vary a lot.
-    float l_tolerance_black = 35.0f, ab_tolerance_black = 30.0f;
-    float l_tolerance_white = 40.0f, ab_tolerance_white = 30.0f;
-
-    if (expectedColor == BLACK) {
-      avgColor = (calibData->lab_tl + calibData->lab_bl) * 0.5f;
-      labLower = cv::Scalar(std::max(0.f, avgColor[0] - l_tolerance_black),
-                            std::max(0.f, avgColor[1] - ab_tolerance_black),
-                            std::max(0.f, avgColor[2] - ab_tolerance_black));
-      labUpper = cv::Scalar(std::min(255.f, avgColor[0] + l_tolerance_black),
-                            std::min(255.f, avgColor[1] + ab_tolerance_black),
-                            std::min(255.f, avgColor[2] + ab_tolerance_black));
-      if (bDebug)
-        std::cout << "  Debug (detectColoredRoundShape): Using CALIBRATED Lab "
-                     "ranges for BLACK. Base Avg: "
-                  << avgColor << std::endl;
-      useCustomRanges = true;
-    } else if (expectedColor == WHITE) {
-      avgColor = (calibData->lab_tr + calibData->lab_br) * 0.5f;
-      labLower = cv::Scalar(std::max(0.f, avgColor[0] - l_tolerance_white),
-                            std::max(0.f, avgColor[1] - ab_tolerance_white),
-                            std::max(0.f, avgColor[2] - ab_tolerance_white));
-      labUpper = cv::Scalar(std::min(255.f, avgColor[0] + l_tolerance_white),
-                            std::min(255.f, avgColor[1] + ab_tolerance_white),
-                            std::min(255.f, avgColor[2] + ab_tolerance_white));
-      if (bDebug)
-        std::cout << "  Debug (detectColoredRoundShape): Using CALIBRATED Lab "
-                     "ranges for WHITE. Base Avg: "
-                  << avgColor << std::endl;
-      useCustomRanges = true;
-    }
-  }
-
-  if (!useCustomRanges) {
-    if (bDebug)
-      std::cout
-          << "  Debug (detectColoredRoundShape): Using DEFAULT Lab ranges."
-          << std::endl;
-    if (expectedColor == BLACK) {
-      labLower = cv::Scalar(0, 100, 100);
-      labUpper = cv::Scalar(70, 150, 150);
-    } else if (expectedColor == WHITE) {
-      labLower = cv::Scalar(190, 100, 100);
-      labUpper = cv::Scalar(255, 150, 150);
-    } else {
-      if (bDebug)
-        std::cerr << "Error (detectColoredRoundShape): Invalid expectedColor."
-                  << std::endl;
-      return false;
-    }
-  }
+  cv::Scalar labLower =
+      cv::Scalar(std::max(0.f, expectedAvgLabColor[0] - l_tolerance),
+                 std::max(0.f, expectedAvgLabColor[1] - ab_tolerance),
+                 std::max(0.f, expectedAvgLabColor[2] - ab_tolerance));
+  cv::Scalar labUpper =
+      cv::Scalar(std::min(255.f, expectedAvgLabColor[0] + l_tolerance),
+                 std::min(255.f, expectedAvgLabColor[1] + ab_tolerance),
+                 std::min(255.f, expectedAvgLabColor[2] + ab_tolerance));
 
   if (bDebug) {
-    std::cout << "Debug (detectColoredRoundShape): Color: "
-              << (expectedColor == BLACK ? "BLACK" : "WHITE")
-              << ", Lab Lower: " << labLower << ", Lab Upper: " << labUpper
-              << std::endl;
+    std::cout << "  Debug (detectSpecificColoredRoundShape): Target Lab: "
+              << expectedAvgLabColor << ", L_tol: " << l_tolerance
+              << ", AB_tol: " << ab_tolerance << std::endl;
+    std::cout << "    Calculated Lab Lower: " << labLower
+              << ", Lab Upper: " << labUpper << std::endl;
   }
 
   cv::inRange(roiImageLab, labLower, labUpper, colorMask);
@@ -2212,31 +1973,29 @@ bool detectColoredRoundShape(
                    cv::Point(-1, -1), 2);
 
   if (bDebug) {
-    cv::imshow("Color Mask (detectColoredRoundShape ROI)", colorMask);
+    cv::imshow("Color Mask (detectSpecificColoredRoundShape ROI)", colorMask);
   }
 
   std::vector<std::vector<cv::Point>> contours;
   cv::findContours(colorMask, contours, cv::RETR_EXTERNAL,
                    cv::CHAIN_APPROX_SIMPLE);
 
-  if (bDebug) {
-    std::cout << "Debug (detectColoredRoundShape): Found " << contours.size()
-              << " raw contours in ROI." << std::endl;
-    // ... (contour drawing for debug)
-  }
-
   if (contours.empty()) {
+    if (bDebug)
+      std::cout << "  Debug (detectSpecificColoredRoundShape): No contours "
+                   "found after color masking."
+                << std::endl;
     return false;
   }
 
   double roiArea = static_cast<double>(roi.width * roi.height);
-  double minStoneAreaInRoi =
-      roiArea * 0.05; // Stone should be at least 5% of ROI
-  double maxStoneAreaInRoi = roiArea * 0.60; // Stone shouldn't be more than 60%
-  double minCircularity = 0.70;              // Stricter circularity
+  // More aggressive filtering for specific stone search
+  double minStoneAreaInRoi = roiArea * 0.03;
+  double maxStoneAreaInRoi = roiArea * 0.70;
+  double minCircularity = 0.65;
 
   std::vector<cv::Point> bestContour;
-  double bestContourScore = 0.0f;
+  double bestContourScore = 0.0f; // Using area as score
 
   for (const auto &contour : contours) {
     if (contour.size() < 5)
@@ -2264,8 +2023,196 @@ bool detectColoredRoundShape(
     detectedCenter.x = centerInRoi.x + roi.x;
     detectedCenter.y = centerInRoi.y + roi.y;
     detectedRadius = radiusInRoi;
-    // ... (debug drawing as before)
+    if (bDebug)
+      std::cout << "  Debug (detectSpecificColoredRoundShape): Found specific "
+                   "stone. Center (orig img): "
+                << detectedCenter << ", Radius: " << detectedRadius
+                << std::endl;
     return true;
   }
+  if (bDebug)
+    std::cout << "  Debug (detectSpecificColoredRoundShape): No suitable "
+                 "specific stone contour found in ROI."
+              << std::endl;
   return false;
+}
+
+// Utility function to detect a single colored round shape in a region
+// Utility function to detect a single colored round shape in a region
+// Output order for detected_corners_tl_tr_br_bl: TL, TR, BR, BL
+bool detectFourCornersGoBoard(
+    const cv::Mat &input_bgr_image, // Expected to be CALIB_SNAPSHOT_RAW_PATH
+    std::vector<cv::Point2f> &detected_corners_tl_tr_br_bl) {
+  if (bDebug)
+    std::cout
+        << "Debug (detectFourCornersGoBoard - Config-Refined): Starting..."
+        << std::endl;
+
+  detected_corners_tl_tr_br_bl.clear();
+
+  if (input_bgr_image.empty()) {
+    std::cerr << "Error (detectFourCornersGoBoard): Input image is empty."
+              << std::endl;
+    return false;
+  }
+
+  // 1. Load Calibration Data
+  CalibrationData calib_data = loadCalibrationData(CALIB_CONFIG_PATH);
+  if (!calib_data.corners_loaded || !calib_data.colors_loaded ||
+      !calib_data.dimensions_loaded) {
+    std::cerr << "Error (detectFourCornersGoBoard): Essential calibration data "
+                 "(corners, colors, or dimensions) not loaded from config.txt. "
+                 "Cannot perform refined detection."
+              << std::endl;
+    return false;
+  }
+
+  // 2. Verify image dimensions match config
+  if (input_bgr_image.cols != calib_data.image_width ||
+      input_bgr_image.rows != calib_data.image_height) {
+    std::cerr << "Error (detectFourCornersGoBoard): Input image dimensions ("
+              << input_bgr_image.cols << "x" << input_bgr_image.rows
+              << ") do not match calibration config dimensions ("
+              << calib_data.image_width << "x" << calib_data.image_height
+              << ")." << std::endl;
+    return false;
+  }
+
+  // 3. Perform Perspective Transformation using RAW corners from config
+  std::vector<cv::Point2f> src_points = calib_data.corners;
+  std::vector<cv::Point2f> dst_points =
+      getBoardCornersCorrected(input_bgr_image.cols, input_bgr_image.rows);
+
+  cv::Mat transform_matrix =
+      cv::getPerspectiveTransform(src_points, dst_points);
+  cv::Mat corrected_bgr_image;
+  cv::warpPerspective(input_bgr_image, corrected_bgr_image, transform_matrix,
+                      input_bgr_image.size());
+
+  if (bDebug) {
+    cv::imshow("detectFourCornersGoBoard - Corrected BGR for stone search",
+               corrected_bgr_image);
+  }
+
+  // 4. Define ROIs and Search for Stones in Corrected Image using specific Lab
+  // targets
+  std::vector<cv::Point2f> found_corrected_centers(4);
+  bool all_found = true;
+
+  float line_spacing_corrected = (dst_points[1].x - dst_points[0].x) / 18.0f;
+  float expected_stone_radius_corrected = line_spacing_corrected * 0.45f;
+  float roi_half_width = expected_stone_radius_corrected * 2.5f;
+
+  // Define Lab tolerances (these could be tuned or made configurable)
+  const float L_TOLERANCE_STONE = 35.0f;
+  const float AB_TOLERANCE_STONE = 30.0f;
+
+  cv::Point2f temp_center;
+  float temp_radius;
+
+  // --- TL (Black) using calib_data.lab_tl ---
+  cv::Rect roi_tl(static_cast<int>(dst_points[0].x - roi_half_width),
+                  static_cast<int>(dst_points[0].y - roi_half_width),
+                  static_cast<int>(roi_half_width * 2),
+                  static_cast<int>(roi_half_width * 2));
+  if (detectSpecificColoredRoundShape(
+          corrected_bgr_image, roi_tl, calib_data.lab_tl, L_TOLERANCE_STONE,
+          AB_TOLERANCE_STONE, temp_center, temp_radius)) {
+    found_corrected_centers[0] = temp_center;
+  } else {
+    all_found = false;
+    if (bDebug)
+      std::cerr << "  Failed to find TL stone using specific Lab target: "
+                << calib_data.lab_tl << std::endl;
+  }
+
+  // --- TR (White) using calib_data.lab_tr ---
+  cv::Rect roi_tr(static_cast<int>(dst_points[1].x - roi_half_width),
+                  static_cast<int>(dst_points[1].y - roi_half_width),
+                  static_cast<int>(roi_half_width * 2),
+                  static_cast<int>(roi_half_width * 2));
+  if (all_found &&
+      detectSpecificColoredRoundShape(
+          corrected_bgr_image, roi_tr, calib_data.lab_tr, L_TOLERANCE_STONE,
+          AB_TOLERANCE_STONE, temp_center, temp_radius)) {
+    found_corrected_centers[1] = temp_center;
+  } else {
+    all_found = false;
+    if (bDebug && all_found) // Check all_found again because it might have been
+                             // set false by TL
+      std::cerr << "  Failed to find TR stone using specific Lab target: "
+                << calib_data.lab_tr << std::endl;
+  }
+
+  // --- BR (White) using calib_data.lab_br ---
+  cv::Rect roi_br(static_cast<int>(dst_points[2].x - roi_half_width),
+                  static_cast<int>(dst_points[2].y - roi_half_width),
+                  static_cast<int>(roi_half_width * 2),
+                  static_cast<int>(roi_half_width * 2));
+  if (all_found &&
+      detectSpecificColoredRoundShape(
+          corrected_bgr_image, roi_br, calib_data.lab_br, L_TOLERANCE_STONE,
+          AB_TOLERANCE_STONE, temp_center, temp_radius)) {
+    found_corrected_centers[2] = temp_center;
+  } else {
+    all_found = false;
+    if (bDebug && all_found)
+      std::cerr << "  Failed to find BR stone using specific Lab target: "
+                << calib_data.lab_br << std::endl;
+  }
+
+  // --- BL (Black) using calib_data.lab_bl ---
+  cv::Rect roi_bl(static_cast<int>(dst_points[3].x - roi_half_width),
+                  static_cast<int>(dst_points[3].y - roi_half_width),
+                  static_cast<int>(roi_half_width * 2),
+                  static_cast<int>(roi_half_width * 2));
+  if (all_found &&
+      detectSpecificColoredRoundShape(
+          corrected_bgr_image, roi_bl, calib_data.lab_bl, L_TOLERANCE_STONE,
+          AB_TOLERANCE_STONE, temp_center, temp_radius)) {
+    found_corrected_centers[3] = temp_center;
+  } else {
+    all_found = false;
+    if (bDebug && all_found)
+      std::cerr << "  Failed to find BL stone using specific Lab target: "
+                << calib_data.lab_bl << std::endl;
+  }
+
+  if (all_found) {
+    cv::Mat inverse_transform_matrix;
+    cv::invert(transform_matrix, inverse_transform_matrix);
+    cv::perspectiveTransform(found_corrected_centers,
+                             detected_corners_tl_tr_br_bl,
+                             inverse_transform_matrix);
+
+    if (bDebug) {
+      std::cout
+          << "  Refined config-guided detection successful. Raw corners (TL, "
+             "TR, BR, BL):"
+          << std::endl;
+      for (size_t i = 0; i < detected_corners_tl_tr_br_bl.size(); ++i) {
+        std::cout << "    Corner " << i << ": "
+                  << detected_corners_tl_tr_br_bl[i]
+                  << " (from corrected: " << found_corrected_centers[i] << ")"
+                  << std::endl;
+      }
+      cv::Mat debug_raw_img_final = input_bgr_image.clone();
+      cv::circle(debug_raw_img_final, detected_corners_tl_tr_br_bl[0], 7,
+                 cv::Scalar(0, 255, 0), 2); // TL
+      cv::circle(debug_raw_img_final, detected_corners_tl_tr_br_bl[1], 7,
+                 cv::Scalar(0, 255, 0), 2); // TR
+      cv::circle(debug_raw_img_final, detected_corners_tl_tr_br_bl[2], 7,
+                 cv::Scalar(0, 255, 0), 2); // BR
+      cv::circle(debug_raw_img_final, detected_corners_tl_tr_br_bl[3], 7,
+                 cv::Scalar(0, 255, 0), 2); // BL
+      cv::imshow("detectFourCornersGoBoard - Final Refined Raw Points",
+                 debug_raw_img_final);
+    }
+    return true;
+  } else {
+    std::cerr << "Error (detectFourCornersGoBoard - Config-Refined): Failed to "
+                 "pinpoint all four corner stones using specific Lab targets."
+              << std::endl;
+    return false;
+  }
 }
