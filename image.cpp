@@ -2162,7 +2162,7 @@ bool detectSpecificColoredRoundShape(
 
 bool detectFourCornersGoBoard(
     const cv::Mat &input_bgr_image, // Expected to be CALIB_SNAPSHOT_RAW_PATH
-    std::vector<cv::Point2f> &detected_corners_tl_tr_br_bl) {
+    std::vector<cv::Point2f> &found_corrected_centers) {
   if (bDebug)
     std::cout
         << "Debug (detectFourCornersGoBoard - Config-Refined): Starting..."
@@ -2170,7 +2170,7 @@ bool detectFourCornersGoBoard(
 
   // ... (Initial checks, load calib_data, dimension check, perspective
   // transform - as in your current image.cpp) ...
-  detected_corners_tl_tr_br_bl.clear();
+  found_corrected_centers.clear();
 
   if (input_bgr_image.empty()) {
     std::cerr << "Error (detectFourCornersGoBoard): Input image is empty."
@@ -2203,7 +2203,6 @@ bool detectFourCornersGoBoard(
 
   cv::Mat corrected_bgr_image = input_bgr_image.clone();
 
-  std::vector<cv::Point2f> found_corrected_centers(4);
   bool all_found = true;
 
   float line_spacing_corrected =
@@ -2346,20 +2345,18 @@ bool detectFourCornersGoBoard(
           << "  Refined config-guided detection successful. Raw corners (TL, "
              "TR, BR, BL):"
           << std::endl;
-      for (size_t i = 0; i < detected_corners_tl_tr_br_bl.size(); ++i) {
-        std::cout << "    Corner " << i << ": "
-                  << detected_corners_tl_tr_br_bl[i]
-                  << " (from corrected: " << found_corrected_centers[i] << ")"
+      for (size_t i = 0; i < found_corrected_centers.size(); ++i) {
+        std::cout << "    Corner " << i << ": " << found_corrected_centers[i]
                   << std::endl;
       }
       cv::Mat debug_raw_img_final = input_bgr_image.clone();
-      cv::circle(debug_raw_img_final, detected_corners_tl_tr_br_bl[0], 7,
+      cv::circle(debug_raw_img_final, found_corrected_centers[0], 7,
                  cv::Scalar(0, 255, 0), 2); // TL
-      cv::circle(debug_raw_img_final, detected_corners_tl_tr_br_bl[1], 7,
+      cv::circle(debug_raw_img_final, found_corrected_centers[1], 7,
                  cv::Scalar(0, 255, 0), 2); // TR
-      cv::circle(debug_raw_img_final, detected_corners_tl_tr_br_bl[2], 7,
+      cv::circle(debug_raw_img_final, found_corrected_centers[2], 7,
                  cv::Scalar(0, 255, 0), 2); // BR
-      cv::circle(debug_raw_img_final, detected_corners_tl_tr_br_bl[3], 7,
+      cv::circle(debug_raw_img_final, found_corrected_centers[3], 7,
                  cv::Scalar(0, 255, 0), 2); // BL
       cv::imshow("detectFourCornersGoBoard - Final Refined Raw Points",
                  debug_raw_img_final);
