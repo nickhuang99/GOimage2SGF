@@ -2162,7 +2162,8 @@ bool detectSpecificColoredRoundShape(
 
 bool detectFourCornersGoBoard(
     const cv::Mat &input_bgr_image, // Expected to be CALIB_SNAPSHOT_RAW_PATH
-    std::vector<cv::Point2f> &found_corrected_centers) {
+    std::vector<cv::Point2f> &found_corrected_centers,
+    std::vector<float> &found_corrected_radius) {
   if (bDebug)
     std::cout
         << "Debug (detectFourCornersGoBoard - Config-Refined): Starting..."
@@ -2172,6 +2173,8 @@ bool detectFourCornersGoBoard(
   // transform - as in your current image.cpp) ...
   found_corrected_centers.clear();
   found_corrected_centers.resize(4);
+  found_corrected_radius.clear();
+  found_corrected_radius.resize(4);
 
   if (input_bgr_image.empty()) {
     std::cerr << "Error (detectFourCornersGoBoard): Input image is empty."
@@ -2232,6 +2235,7 @@ bool detectFourCornersGoBoard(
           corrected_bgr_image, roi_tl, calib_data.lab_tl, L_TOLERANCE_STONE,
           AB_TOLERANCE_STONE, temp_center, temp_radius)) {
     found_corrected_centers[0] = temp_center;
+    found_corrected_radius[0] = temp_radius;
   } else {
     all_found = false;
     if (bDebug)
@@ -2249,6 +2253,7 @@ bool detectFourCornersGoBoard(
           corrected_bgr_image, roi_tr, calib_data.lab_tr, L_TOLERANCE_STONE,
           AB_TOLERANCE_STONE, temp_center, temp_radius)) {
     found_corrected_centers[1] = temp_center;
+    found_corrected_radius[1] = temp_radius;
   } else {
     all_found = false; // Keep this logic to ensure all_found becomes false if
                        // any step fails
@@ -2262,60 +2267,13 @@ bool detectFourCornersGoBoard(
                   static_cast<int>(dst_points[2].y - roi_half_width),
                   static_cast<int>(roi_half_width * 2),
                   static_cast<int>(roi_half_width * 2));
-
-  // ***** ADDED DEBUG FOR BR TARGET COLOR VERIFICATION *****
-  if (bDebug &&
-      all_found) { // Only sample if prior steps were okay, to avoid confusion
-    cv::Point2f ideal_br_center_corrected = dst_points[2]; // BR is index 2
-    // Use a smaller radius for sampling to be more precise on the stone
-    int sample_radius_debug =
-        std::max(1, static_cast<int>(expected_stone_radius_corrected * 0.20f));
-
-    cv::Mat corrected_lab_temp_for_br_sample;
-    cv::cvtColor(corrected_bgr_image, corrected_lab_temp_for_br_sample,
-                 cv::COLOR_BGR2Lab);
-
-    cv::Vec3f actual_br_stone_lab_sample =
-        Vec3f(-1, -1, -1); // Default to invalid
-    if (ideal_br_center_corrected.x - sample_radius_debug >= 0 &&
-        ideal_br_center_corrected.y - sample_radius_debug >= 0 &&
-        ideal_br_center_corrected.x + sample_radius_debug <
-            corrected_lab_temp_for_br_sample.cols &&
-        ideal_br_center_corrected.y + sample_radius_debug <
-            corrected_lab_temp_for_br_sample.rows) {
-      actual_br_stone_lab_sample =
-          getAverageLab(corrected_lab_temp_for_br_sample,
-                        ideal_br_center_corrected, sample_radius_debug);
-    }
-
-    std::cout << "  DEBUG_BR_COLOR_VERIFY: Config BR Lab (calib_data.lab_br): "
-              << calib_data.lab_br
-              << ", Current Sampled at ideal BR in corrected_bgr_image (radius "
-              << sample_radius_debug << "): " << actual_br_stone_lab_sample
-              << std::endl;
-
-    cv::Mat br_roi_display_for_sample_check =
-        corrected_bgr_image.clone(); // Draw on a fresh clone
-    cv::rectangle(br_roi_display_for_sample_check, roi_br,
-                  cv::Scalar(255, 0, 0),
-                  1); // Draw the actual ROI used for detection
-    cv::circle(br_roi_display_for_sample_check, ideal_br_center_corrected,
-               sample_radius_debug, cv::Scalar(0, 255, 0),
-               1); // Green circle for sampling area
-    cv::circle(br_roi_display_for_sample_check, ideal_br_center_corrected, 2,
-               cv::Scalar(0, 0, 255), -1); // Red dot for center
-    cv::imshow("BR ROI - Ideal Center Sampling Check",
-               br_roi_display_for_sample_check);
-    // cv::waitKey(0); // Add waitKey if you want to pause here specifically
-  }
-  // ***** END OF ADDED DEBUG *****
-
   if (all_found &&
       detectSpecificColoredRoundShape(
           corrected_bgr_image, roi_br, calib_data.lab_br,
           L_TOLERANCE_STONE, // Still using general tolerances for now
           AB_TOLERANCE_STONE, temp_center, temp_radius)) {
     found_corrected_centers[2] = temp_center;
+    found_corrected_radius[2] = temp_radius;
   } else {
     all_found = false;
     if (bDebug)
@@ -2333,6 +2291,7 @@ bool detectFourCornersGoBoard(
           corrected_bgr_image, roi_bl, calib_data.lab_bl, L_TOLERANCE_STONE,
           AB_TOLERANCE_STONE, temp_center, temp_radius)) {
     found_corrected_centers[3] = temp_center;
+    found_corrected_radius[3] = temp_radius;
   } else {
     all_found = false;
     if (bDebug)
@@ -2351,14 +2310,14 @@ bool detectFourCornersGoBoard(
                   << std::endl;
       }
       cv::Mat debug_raw_img_final = input_bgr_image.clone();
-      cv::circle(debug_raw_img_final, found_corrected_centers[0], 7,
-                 cv::Scalar(0, 255, 0), 2); // TL
-      cv::circle(debug_raw_img_final, found_corrected_centers[1], 7,
-                 cv::Scalar(0, 255, 0), 2); // TR
-      cv::circle(debug_raw_img_final, found_corrected_centers[2], 7,
-                 cv::Scalar(0, 255, 0), 2); // BR
-      cv::circle(debug_raw_img_final, found_corrected_centers[3], 7,
-                 cv::Scalar(0, 255, 0), 2); // BL
+      cv::circle(debug_raw_img_final, found_corrected_centers[0],
+                 found_corrected_radius[0], cv::Scalar(0, 255, 0), 2); // TL
+      cv::circle(debug_raw_img_final, found_corrected_centers[1],
+                 found_corrected_radius[1], cv::Scalar(0, 255, 0), 2); // TR
+      cv::circle(debug_raw_img_final, found_corrected_centers[2],
+                 found_corrected_radius[2], cv::Scalar(0, 255, 0), 2); // BR
+      cv::circle(debug_raw_img_final, found_corrected_centers[3],
+                 found_corrected_radius[3], cv::Scalar(0, 255, 0), 2); // BL
       cv::imshow("detectFourCornersGoBoard - Final Refined Raw Points",
                  debug_raw_img_final);
     }

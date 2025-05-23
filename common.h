@@ -220,7 +220,8 @@ bool processAndSaveCalibration(
 
 bool detectFourCornersGoBoard(
     const cv::Mat &input_image,
-    std::vector<cv::Point2f> &detected_corners_tl_tr_br_bl);
+    std::vector<cv::Point2f> &detected_corners_tl_tr_br_bl,
+    std::vector<float> &detected_radius);
 bool detectColoredRoundShape(
     const cv::Mat &inputImage, // BGR image
     const cv::Rect &regionOfInterest,

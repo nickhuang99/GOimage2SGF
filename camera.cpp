@@ -1037,8 +1037,19 @@ void runCaptureCalibration() {
   std::cout << "  Attempting to auto-detect corners and save calibration..."
             << std::endl;
   std::vector<cv::Point2f> detected_corners;
-
-  if (detectFourCornersGoBoard(raw_frame, detected_corners)) {
+  std::vector<float> detected_radius;
+  if (detectFourCornersGoBoard(raw_frame, detected_corners, detected_radius)) {
+    cv::Mat raw_frame_detected = raw_frame.clone();
+    cv::circle(raw_frame_detected, detected_corners[0], detected_radius[0],
+               cv::Scalar(0, 255, 0), 2); // TL
+    cv::circle(raw_frame_detected, detected_corners[1], detected_radius[1],
+               cv::Scalar(0, 255, 0), 2); // TR
+    cv::circle(raw_frame_detected, detected_corners[2], detected_radius[2],
+               cv::Scalar(0, 255, 0), 2); // BR
+    cv::circle(raw_frame_detected, detected_corners[3], detected_radius[3],
+               cv::Scalar(0, 255, 0), 2); // BL
+    cv::imshow("Capture Calibration - Detected", raw_frame_detected);
+    cv::waitKey(0);
     if (processAndSaveCalibration(
             raw_frame,        // This is the loaded snapshot
             detected_corners, // Corners from detectFourCornersGoBoard
