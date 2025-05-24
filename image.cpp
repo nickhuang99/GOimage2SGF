@@ -2220,7 +2220,7 @@ bool detectFourCornersGoBoard(
                                            correct_board_height_px);
 
   // Default Lab tolerances from previous version
-  const float L_TOLERANCE_STONE = 40.0f;
+  const float L_TOLERANCE_STONE = 35.0f;
   const float AB_TOLERANCE_STONE = 10.0f;
 
   cv::Point2f temp_center;
