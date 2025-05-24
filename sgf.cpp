@@ -267,65 +267,91 @@ void parseSGFGame(const string &sgfContent, set<pair<int, int>> &setupBlack,
   // Regex for parsing coordinate pairs: [a-z][a-z]
   const regex coordRegex(R"(\[([a-z]{2})\])");
 
-  // 1.  Iterate through the SGF content using a general regex for all
-  // move/setup properties.
-  const regex gamePropertyRegex(R"(;?(AB|AW|B|W|AE)((?:\[[a-z]{2}\])+))");
+  // New game property regex:
+  // Group 1: AB or AW (setup property type)
+  // Group 2: Coordinates for AB/AW (e.g., "[ab][cd]")
+  // Group 3: B or W (move player)
+  // Group 4: Move coordinate for B/W (e.g., "[ab]")
+  // Group 5: AE coordinates for captured stones (e.g., "[cd][ef]"), optional
+  const regex gamePropertyRegex(
+      R"(;(?:(AB|AW)((?:\[[a-z]{2}\])+)|(B|W)(\[[a-z]{2}\])(?:AE((?:\[[a-z]{2}\])+))?))");
+
   sregex_iterator it(sgfContent.begin(), sgfContent.end(), gamePropertyRegex);
   sregex_iterator end;
 
-  // Lambda function to process setup coordinates (AB, AW)
-  auto processSetupCoordinates = [&](const string &propertyValue,
-                                     set<pair<int, int>> &storage) {
-    sregex_iterator coordIt(propertyValue.cbegin(), propertyValue.cend(),
-                            coordRegex);
-    sregex_iterator coordEnd;
-    for (; coordIt != coordEnd; ++coordIt) {
-      smatch coordMatch = *coordIt;
-      string coordStr = coordMatch[1].str();
-      pair<int, int> coord = sgfCoordToRowCol(coordStr);
-      if (coord.first != -1 && coord.second != -1) {
-        storage.insert(coord);
-      }
-    }
-  };
-
-  // Lambda function to process move coordinates (B, W, AE)
-  auto processMoveCoordinates = [&](const string &propertyValue, int player) {
-    sregex_iterator coordIt(propertyValue.cbegin(), propertyValue.cend(),
-                            coordRegex);
-    sregex_iterator coordEnd;
-    for (; coordIt != coordEnd; ++coordIt) {
-      smatch coordMatch = *coordIt;
-      string coordStr = coordMatch[1].str();
-      pair<int, int> coord = sgfCoordToRowCol(coordStr);
-      if (coord.first != -1 && coord.second != -1) {
-        Move move;
-        move.player = player;
-        move.row = coord.first;
-        move.col = coord.second;
-        if (player == 0) { // AE
-          move.capturedStones.insert(coord);
-        }
-        moves.push_back(move);
-      }
-    }
-  };
-
   for (; it != end; ++it) {
     smatch match = *it;
-    string propertyName = match[1].str();  // "AB", "AW", "B", "W", or "AE"
-    string propertyValue = match[2].str(); // e.g., "[ab][cd]" or "[ef]"
 
-    if (propertyName == "AB") {
-      processSetupCoordinates(propertyValue, setupBlack);
-    } else if (propertyName == "AW") {
-      processSetupCoordinates(propertyValue, setupWhite);
-    } else if (propertyName == "B") {
-      processMoveCoordinates(propertyValue, 1);
-    } else if (propertyName == "W") {
-      processMoveCoordinates(propertyValue, 2);
-    } else if (propertyName == "AE") {
-      processMoveCoordinates(propertyValue, 0);
+    string setup_prop_type = match[1].str();
+
+    if (!setup_prop_type.empty()) { // Matched AB or AW (setup stones)
+      string setup_coords_str = match[2].str();
+      set<pair<int, int>> *current_setup_set = nullptr;
+      if (setup_prop_type == "AB") {
+        current_setup_set = &setupBlack;
+      } else if (setup_prop_type == "AW") {
+        current_setup_set = &setupWhite;
+      }
+
+      if (current_setup_set) {
+        sregex_iterator coordIt(setup_coords_str.cbegin(),
+                                setup_coords_str.cend(), coordRegex);
+        sregex_iterator coordEnd;
+        for (; coordIt != coordEnd; ++coordIt) {
+          smatch coordMatch = *coordIt;
+          string singleCoordSgf = coordMatch[1].str(); // e.g., "ab"
+          pair<int, int> rc = sgfCoordToRowCol(singleCoordSgf);
+          if (rc.first != -1 && rc.second != -1) {
+            current_setup_set->insert(rc);
+          }
+        }
+      }
+    } else {
+      string move_player_str = match[3].str();
+      if (!move_player_str.empty()) { // Matched B or W (player move)
+        string move_coord_str_raw = match[4].str(); // Raw, like "[ab]"
+        string ae_coords_str = match[5].str(); // Raw, like "[cd][ef]" or empty
+
+        Move current_move;
+        current_move.player = (move_player_str == "B" ? BLACK : WHITE);
+
+        // Process the main move coordinate (Group 4)
+        sregex_iterator mainMoveIt(move_coord_str_raw.cbegin(),
+                                   move_coord_str_raw.cend(), coordRegex);
+        if (mainMoveIt != sregex_iterator()) {
+          smatch mainMoveMatch = *mainMoveIt;
+          string singleCoordSgf = mainMoveMatch[1].str(); // e.g., "ab"
+          pair<int, int> rc = sgfCoordToRowCol(singleCoordSgf);
+          if (rc.first != -1 && rc.second != -1) {
+            current_move.row = rc.first;
+            current_move.col = rc.second;
+          } else {
+            // cerr << "Invalid SGF move coordinate: " << singleCoordSgf <<
+            // endl; // Optional
+            continue; // Skip this malformed move
+          }
+        } else {
+          // cerr << "Could not parse SGF move coordinate from: " <<
+          // move_coord_str_raw << endl; // Optional
+          continue; // Skip if main move coordinate is not parsable
+        }
+
+        // Process captured stones if AE part is present (Group 5)
+        if (!ae_coords_str.empty()) {
+          sregex_iterator capturedIt(ae_coords_str.cbegin(),
+                                     ae_coords_str.cend(), coordRegex);
+          sregex_iterator capturedEnd;
+          for (; capturedIt != capturedEnd; ++capturedIt) {
+            smatch capturedMatch = *capturedIt;
+            string singleCapturedSgf = capturedMatch[1].str(); // e.g., "cd"
+            pair<int, int> rc_captured = sgfCoordToRowCol(singleCapturedSgf);
+            if (rc_captured.first != -1 && rc_captured.second != -1) {
+              current_move.capturedStones.insert(rc_captured);
+            }
+          }
+        }
+        moves.push_back(current_move);
+      }
     }
   }
 }
