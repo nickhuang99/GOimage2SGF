@@ -28,6 +28,9 @@ extern const std::string CALIB_SNAPSHOT_RAW_PATH;
 #define BLACK 1
 #define EMPTY 0
 
+extern const float CALIB_L_TOLERANCE_STONE;
+extern const float CALIB_AB_TOLERANCE_STONE;
+
 // Custom exception class for GEM errors
 class GEMError : public std::runtime_error {
 public:
@@ -249,4 +252,37 @@ bool saveCornerConfig(
     float detected_avg_stone_radius_raw    // Or individual radii
 );
 
+// --- NEW Function Declarations ---
+/**
+ * @brief Calculates the Region of Interest (ROI) for a given grid intersection
+ * on a perspective-corrected board.
+ *
+ * @param target_col The target column index (0-18).
+ * @param target_row The target row index (0-18).
+ * @param corrected_image_width_px The full width of the perspective-corrected
+ * image.
+ * @param corrected_image_height_px The full height of the perspective-corrected
+ * image.
+ * @param grid_lines The number of lines on the board (e.g., 19 for a standard
+ * Go board).
+ * @return cv::Rect The calculated ROI.
+ */
+cv::Rect calculateGridIntersectionROI(int target_col, int target_row,
+                                      int corrected_image_width_px,
+                                      int corrected_image_height_px,
+                                      int grid_lines = 19);
+
+/**
+ * @brief Detects the presence and color of a stone at a specific grid position
+ * on a perspective-corrected board.
+ *
+ * @param corrected_bgr_image The perspective-corrected BGR image of the Go
+ * board.
+ * @param target_col The target column index (0-18) to check.
+ * @param target_row The target row index (0-18) to check.
+ * @param calib_data Loaded calibration data containing color references.
+ * @return int The detected stone color (BLACK, WHITE, or EMPTY).
+ */
+int detectStoneAtPosition(const cv::Mat &corrected_bgr_image, int target_col,
+                          int target_row, const CalibrationData &calib_data);
 #endif // UTILITY_H
