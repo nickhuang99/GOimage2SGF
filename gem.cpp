@@ -30,6 +30,7 @@ int g_capture_width = 640;            // Default capture width
 int g_capture_height = 480;           // Default capture height
 std::string g_default_game_name_prefix = "tournament";
 std::string g_device_path = "/dev/video0";
+const std::string g_default_input_image_path = "share/snapshot.jpg";
 
 static const std::string Default_Go_Board_Window_Title = "Simulated Go Board";
 static const int canvas_size_px = 760;
@@ -64,6 +65,12 @@ void displayHelpMessage() {
        << endl;
   cout << "  -p, --process-image <image_path>   : Process the Go board image."
        << endl;
+  cout << "  -P <col> <row>                    : Detect stone at specified "
+          "col/row (0-18)."
+       << endl; // NEW
+  cout << "      --image <image_path>          : Optional image for -P "
+          "(default: "
+       << g_default_input_image_path << ")." << endl; // NEW
   cout << "  -g, --generate-sgf <in_img> <out_sgf> : Generate SGF from image."
        << endl;
   cout << "  -v, --verify <image_path> <sgf_path> : Verify board state against "
@@ -1493,6 +1500,156 @@ void studyModeWorkflow(const std::string &game_to_study_name) {
             << std::endl;
 }
 
+void detectStonePositionWorkflow(int target_col, int target_row,
+                                 const std::string &image_path_from_arg) {
+  std::cout << "Starting Stone Detection at Position Workflow..." << std::endl;
+  if (target_col < 0 || target_col > 18 || target_row < 0 || target_row > 18) {
+    THROWGEMERROR("Invalid target column/row. Must be between 0 and 18.");
+  }
+
+  std::string image_path_to_use = image_path_from_arg;
+  if (image_path_to_use.empty()) {
+    image_path_to_use = g_default_input_image_path;
+    std::cout << "  No --image specified, using default: " << image_path_to_use
+              << std::endl;
+  } else {
+    std::cout << "  Using image: " << image_path_to_use << std::endl;
+  }
+  std::cout << "  Target position: Col=" << target_col << ", Row=" << target_row
+            << std::endl;
+
+  cv::Mat raw_image = cv::imread(image_path_to_use);
+  if (raw_image.empty()) {
+    THROWGEMERROR("Could not load image: " + image_path_to_use);
+  }
+
+  // 1. Correct Perspective
+  // Ensure calibration is set up if correctPerspective relies on it implicitly
+  // or explicitly needs it.
+  // For this workflow, we'll assume correctPerspective uses CALIB_CONFIG_PATH.
+  if (!setupCalibrationFromConfig()) { // Ensure globals like
+                                       // g_capture_width/height are set if
+                                       // needed by correctPerspective
+    // setupCalibrationFromConfig might throw, or return false.
+    // If it returns false without throwing, we should handle it.
+    std::cerr << "Warning: Could not setup calibration from config for "
+                 "perspective correction. Results may be inaccurate."
+              << std::endl;
+    // Depending on strictness, you might THROWGEMERROR here.
+  }
+  cv::Mat corrected_image = correctPerspective(raw_image);
+  if (corrected_image.empty()) {
+    THROWGEMERROR(
+        "Perspective correction failed or resulted in an empty image.");
+  }
+
+  // 2. Load Calibration Data (needed for detectStoneAtPosition)
+  CalibrationData calib_data = loadCalibrationData(CALIB_CONFIG_PATH);
+  if (!calib_data.colors_loaded || !calib_data.corners_loaded ||
+      !calib_data.dimensions_loaded) {
+    // detectStoneAtPosition might rely on dimensions from calib_data if not
+    // using corrected_image.cols/rows directly For now, detectStoneAtPosition
+    // as implemented primarily needs calib_data.lab_** for color references.
+    THROWGEMERROR("Essential calibration data (colors/corners/dimensions) not "
+                  "loaded from " +
+                  CALIB_CONFIG_PATH + ". Cannot proceed with stone detection.");
+  }
+
+  // 3. Detect Stone
+  int stone_color = detectStoneAtPosition(corrected_image, target_col,
+                                          target_row, calib_data);
+
+  // 4. Prepare for Drawing: Calculate pixel center of the target intersection
+  // This logic is similar to the start of calculateGridIntersectionROI
+  std::vector<cv::Point2f> ideal_board_corners =
+      getBoardCornersCorrected(corrected_image.cols, corrected_image.rows);
+  if (ideal_board_corners.size() != 4) {
+    THROWGEMERROR(
+        "getBoardCornersCorrected did not return 4 points for drawing.");
+  }
+  cv::Point2f board_top_left_px = ideal_board_corners[0];
+  float grid_area_width_px =
+      ideal_board_corners[1].x - ideal_board_corners[0].x;
+  float grid_area_height_px =
+      ideal_board_corners[3].y - ideal_board_corners[0].y;
+  int grid_lines = 19;
+  float avg_grid_spacing_x =
+      grid_area_width_px / static_cast<float>(grid_lines - 1);
+  float avg_grid_spacing_y =
+      grid_area_height_px / static_cast<float>(grid_lines - 1);
+
+  cv::Point2f intersection_center_px(
+      board_top_left_px.x + static_cast<float>(target_col) * avg_grid_spacing_x,
+      board_top_left_px.y +
+          static_cast<float>(target_row) * avg_grid_spacing_y);
+
+  // Determine a suitable radius for drawing the circle (e.g., ~45% of average
+  // grid spacing)
+  int draw_radius = static_cast<int>(
+      std::min(avg_grid_spacing_x, avg_grid_spacing_y) * 0.45f);
+  draw_radius = std::max(draw_radius, 5); // Minimum radius
+  int circle_thickness = 2;
+
+  // 5. Display and Draw Result
+  cv::Mat display_image = corrected_image.clone();
+  std::string result_text;
+  cv::Scalar circle_color;
+
+  switch (stone_color) {
+  case BLACK:
+    result_text = "Detected: BLACK Stone";
+    circle_color = cv::Scalar(0, 0, 0); // Black
+    cv::circle(display_image, intersection_center_px, draw_radius, circle_color,
+               circle_thickness);
+    break;
+  case WHITE:
+    result_text = "Detected: WHITE Stone";
+    circle_color = cv::Scalar(255, 255, 255); // White
+    cv::circle(display_image, intersection_center_px, draw_radius, circle_color,
+               circle_thickness);
+    break;
+  case EMPTY:
+    result_text = "Detected: EMPTY";
+    // Optionally draw a subtle marker for empty if desired, e.g., a small green
+    // dot or cross For now, just text.
+    break;
+  default:
+    result_text = "Detection Error or Unknown State";
+    break;
+  }
+
+  cv::putText(display_image, result_text, cv::Point(10, 30),
+              cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 255, 0), 2);
+  cv::putText(display_image,
+              "Col: " + std::to_string(target_col) +
+                  " Row: " + std::to_string(target_row),
+              cv::Point(10, 60), cv::FONT_HERSHEY_SIMPLEX, 0.5,
+              cv::Scalar(0, 255, 0), 1);
+
+  std::string window_title = "Stone Detection Result";
+  cv::imshow(window_title, display_image);
+  if (bDebug) {
+    cv::Rect roi_for_debug = calculateGridIntersectionROI(
+        target_col, target_row, corrected_image.cols, corrected_image.rows);
+    if (roi_for_debug.width > 0 && roi_for_debug.height > 0) {
+      roi_for_debug &=
+          cv::Rect(0, 0, corrected_image.cols, corrected_image.rows); // clamp
+      if (roi_for_debug.width > 0 && roi_for_debug.height > 0) {
+        cv::Mat roi_debug_img = corrected_image(roi_for_debug).clone();
+        cv::imshow("Debug ROI for Detection", roi_debug_img);
+      }
+    }
+  }
+  std::cout << "  " << result_text << " at (" << target_col << "," << target_row
+            << ")" << std::endl;
+  std::cout
+      << "  Displaying image. Press any key in the OpenCV window to close."
+      << std::endl;
+  cv::waitKey(0);
+  cv::destroyAllWindows();
+  std::cout << "Stone Detection Workflow Finished." << std::endl;
+}
+
 int main(int argc, char *argv[]) {
   try {
     if (argc == 1) {
@@ -1505,6 +1662,7 @@ int main(int argc, char *argv[]) {
     std::string record_sgf_output;
     std::string test_perspective_image_path; // For --test-perspective
     std::string draw_board_sgf_path_arg;     // For --draw-board
+    std::string detect_stone_image_path_arg; // For --image with -P
 
     bool run_probe_devices = false;
     bool run_calibration = false;
@@ -1513,8 +1671,12 @@ int main(int argc, char *argv[]) {
     bool run_draw_board_workflow = false; // Flag for the new workflow
     bool run_tournament_mode = false;     // Flag for new tournament mode
     bool run_study_mode = false;
+    bool run_detect_stone_position_workflow = false;  // NEW Flag
+    int detect_stone_col = -1, detect_stone_row = -1; // NEW Args for -P
 
     struct option long_options[] = {
+        {"image", required_argument, nullptr,
+         0}, // For -P's optional image path
         {"process-image", required_argument, nullptr, 'p'},
         {"generate-sgf", required_argument, nullptr, 'g'},
         {"verify", required_argument, nullptr, 'v'},
@@ -1544,7 +1706,7 @@ int main(int argc, char *argv[]) {
 
     int c;
     // Process all options in a single loop
-    while ((c = getopt_long(argc, argv, "dp:g:v:c:h:s:r:D:BbM:S:ftu",
+    while ((c = getopt_long(argc, argv, "dp:g:v:c:h:s:r:D:BbM:S:ftuP",
                             long_options, &option_index)) != -1) {
       switch (c) {
       case 'd':
@@ -1670,8 +1832,14 @@ int main(int argc, char *argv[]) {
       case 'u':
         run_study_mode = true;
         break;
+      case 'P': // NEW case for detecting stone position
+        run_detect_stone_position_workflow = true;
+        break;
       case 0: // Long-only options (val was 0)
-        if (long_options[option_index].name == std::string("game-name")) {
+        if (long_options[option_index].name == std::string("image")) {
+          detect_stone_image_path_arg = optarg; // Store path for -P
+        } else if (long_options[option_index].name ==
+                   std::string("game-name")) {
           g_default_game_name_prefix = optarg;
           if (g_default_game_name_prefix.empty()) {
             THROWGEMERROR("--game-name option requires a tournament directory "
@@ -1711,70 +1879,140 @@ int main(int argc, char *argv[]) {
       }
     }
 
-    // Workflow execution based on flags
+    // --- Workflow Execution Logic ---
+    // (Prioritize more specific/terminal workflows first)
+
     if (run_probe_devices) {
       probeVideoDevicesWorkflow();
     } else if (run_calibration) {
+      // Calibration might implicitly use setupCalibrationFromConfig or handle
+      // its own config needs
       calibrationWorkflow(run_interactive_calibration);
-    } else if (!setupCalibrationFromConfig()) {
-      THROWGEMERROR("setupCalibrationFromConfig failed");
-    } else if (run_test_calibration) {
+    } else if (
+        run_detect_stone_position_workflow) { // Check this before generic
+                                              // workflows that might also use
+                                              // setupCalibrationFromConfig
+      if (optind + 1 < argc) { // Need two positional args: col and row
+        try {
+          detect_stone_col = std::stoi(argv[optind]);
+          detect_stone_row = std::stoi(argv[optind + 1]);
+          if (detect_stone_col < 0 || detect_stone_col > 18 ||
+              detect_stone_row < 0 || detect_stone_row > 18) {
+            THROWGEMERROR("-P option col/row values must be between 0 and 18.");
+          }
+          // Use detect_stone_image_path_arg if set, otherwise it's empty and
+          // workflow will use default
+          detectStonePositionWorkflow(detect_stone_col, detect_stone_row,
+                                      detect_stone_image_path_arg);
+        } catch (const std::invalid_argument &ia) {
+          THROWGEMERROR(
+              "Invalid column/row arguments for -P option. Expected integers.");
+        } catch (const std::out_of_range &oor) {
+          THROWGEMERROR("Column/row arguments for -P option are out of range.");
+        }
+      } else {
+        THROWGEMERROR(
+            "-P option requires <col> and <row> arguments after all options.");
+      }
+    } else if (run_test_calibration) { // This might also need
+                                       // setupCalibrationFromConfig
+      if (!setupCalibrationFromConfig()) {
+        THROWGEMERROR(
+            "Calibration setup failed for --test-calibration-config.");
+      }
       testCalibrationConfigWorkflow();
     } else if (run_study_mode) {
+      if (!setupCalibrationFromConfig()) {
+        THROWGEMERROR("Calibration setup failed for study mode.");
+      }
       studyModeWorkflow(g_default_game_name_prefix);
     } else if (run_tournament_mode) {
+      if (!setupCalibrationFromConfig()) {
+        THROWGEMERROR("Calibration setup failed for tournament mode.");
+      }
       tournamentModeWorkflow(g_default_game_name_prefix);
     } else if (!snapshot_output.empty()) {
+      // Snapshot might or might not need full calib setup, depends on if it
+      // uses g_device_path/size from config. Assuming for now it can use
+      // command-line specified or defaults if CALIB_CONFIG_PATH is not strictly
+      // enforced for it. If CALIB_CONFIG_PATH values are *required* for
+      // snapshot, then setupCalibrationFromConfig() should be called.
       captureSnapshotWorkflow(snapshot_output);
     } else if (!record_sgf_output.empty()) {
+      if (!setupCalibrationFromConfig()) {
+        THROWGEMERROR("Calibration setup failed for record SGF mode.");
+      }
       recordSGFWorkflow(record_sgf_output);
     } else if (run_draw_board_workflow) {
+      // Draw board likely doesn't need camera calibration, just SGF parsing.
       drawSimulatedBoardWorkflow(draw_board_sgf_path_arg);
     } else if (!test_perspective_image_path.empty()) {
-      // Execute if no other primary workflow was triggered by a short option
-      // and test-perspective was the only major action specified.
-      // This check ensures it doesn't run if, e.g., -p was also given.
-      // A more robust way might be to ensure only one "primary workflow" flag
-      // is true.
-      bool primary_action_taken =
-          run_calibration || run_test_calibration || run_tournament_mode ||
-          !snapshot_output.empty() || !record_sgf_output.empty() ||
-          (argc > optind + 1); // Heuristic: if other positional args for
-                               // p,g,v,c were processed
-
-      // This logic for when to execute testPerspectiveTransformWorkflow might
-      // need refinement based on how you want to prioritize options. For now,
-      // if it's the *only* path remaining and was set:
-      int non_opt_args = argc - optind;
-      bool other_actions_from_getopt =
-          false; // Check if any case apart from '0' (for long-only) and
-                 // 'd'/'D'/'M'/'S' was hit. This would require more complex
-                 // flag tracking inside the loop.
-
-      // Simple approach for now: if test_perspective_image_path is set and no
-      // other *major* workflow flag is true:
-      if (!run_calibration && !run_test_calibration && !run_tournament_mode &&
-          snapshot_output.empty() && record_sgf_output.empty()) {
-        // And ensure no *other* action that consumes optarg was taken after
-        // this (e.g. -p path_for_p) This check is tricky with getopt_long as it
-        // processes in order. The most reliable way is to have a flag for
-        // test_perspective_workflow and check it here.
-        testPerspectiveTransformWorkflow(test_perspective_image_path);
+      // This is a dev tool, assume it might need calibration if
+      // correctPerspective() relies on it.
+      if (!setupCalibrationFromConfig()) {
+        THROWGEMERROR("Calibration setup failed for test perspective mode.");
       }
-    } else if (optind == argc &&
-               argc > 1) { // No primary actions left, but options were given
-      // This means options like -d, -D, -M, --size might have been given
-      // without a primary action. Or a long-only option like --parse was
-      // processed, and that's fine. If no workflow was explicitly triggered and
-      // no files remain, but options were parsed, it might be an incomplete
-      // command. However, getopt handles errors for missing arguments. If we
-      // reach here and nothing else was done, it's likely okay or help was
-      // already shown.
-    } else if (optind < argc) {
+      testPerspectiveTransformWorkflow(test_perspective_image_path);
+    } else if (optind < argc) { // Unprocessed positional arguments without a
+                                // specific flag like -P
+      // This indicates an error if no workflow like -p, -g, -v, -c was hit
+      // which would consume them. However, those cases already return 0 above.
+      // This path is more for "gem some_unknown_arg"
       std::cerr << "Error: Unprocessed arguments. What is '" << argv[optind]
                 << "'?" << std::endl;
       displayHelpMessage();
       return 1;
+    } else if (argc > 1 && optind == argc) {
+      // All arguments were options, but no primary workflow was triggered.
+      // This might happen if only -d or --game-name was given.
+      // In such cases, displaying help might be appropriate if no other action
+      // is implied. However, since some options set globals, it might be
+      // intended. For now, if no explicit workflow flag, and no errors, we
+      // assume options were set and exit. If a specific workflow *was* selected
+      // (e.g. run_calibration was true), it should have been called. If we
+      // reach here, it means no specific action was chosen from the flags set.
+      // (Unless a long-opt like --parse already returned).
+      if (!(run_calibration || run_detect_stone_position_workflow ||
+            run_test_calibration || run_study_mode || run_tournament_mode ||
+            !snapshot_output.empty() || !record_sgf_output.empty() ||
+            run_draw_board_workflow || !test_perspective_image_path.empty() ||
+            run_probe_devices)) {
+        // Check if any of the options that DON'T consume optarg were the only
+        // ones. If only -d, -D, -M, -S, --game-name were provided without a
+        // workflow, it's not an error but doesn't do anything. Display help.
+        bool optionsOnly = false;
+        for (int i = 1; i < argc; ++i) {
+          if (std::string(argv[i]) == "-d" ||
+              std::string(argv[i]) == "--debug" ||
+              std::string(argv[i]) == "-D" ||
+              std::string(argv[i]) == "--device" ||
+              std::string(argv[i]) == "-M" ||
+              std::string(argv[i]) == "--mode" ||
+              std::string(argv[i]) == "-S" ||
+              std::string(argv[i]) == "--size" ||
+              std::string(argv[i]) == "--game-name") {
+            if (i + 1 < argc && (std::string(argv[i]) == "-D" ||
+                                 std::string(argv[i]) == "--device" ||
+                                 std::string(argv[i]) == "-M" ||
+                                 std::string(argv[i]) == "--mode" ||
+                                 std::string(argv[i]) == "-S" ||
+                                 std::string(argv[i]) == "--size" ||
+                                 std::string(argv[i]) == "--game-name")) {
+              i++; // Skip argument for these options
+            }
+            optionsOnly = true;
+          } else {
+            optionsOnly = false;
+            break;
+          }
+        }
+        if (optionsOnly) {
+          std::cout << "Info: Configuration options set, but no primary action "
+                       "specified."
+                    << std::endl;
+          displayHelpMessage();
+        }
+      }
     }
 
   } catch (const GEMError &e) {
