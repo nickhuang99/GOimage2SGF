@@ -34,80 +34,101 @@ std::string g_device_path = "/dev/video0";
 static const std::string Default_Go_Board_Window_Title = "Simulated Go Board";
 static const int canvas_size_px = 760;
 void displayHelpMessage() {
-  cout << "Go Environment Manager (GEM)" << endl;
-  cout << "Usage: gem [options]" << endl;
-  cout << "Options:" << endl;
-  cout << "  -d, --debug                       : Enable debug output (must be "
-          "at the beginning)."
-       << endl;
-  cout << "  -D, --device <device_path>      : Specify video device by number "
-          "(e.g., 0, 1) "
-          "(default: 0 which is equivalent to /dev/video0). Must be at the "
-          "beginning."
-       << endl;
-  cout << "  -M, --mode <backend>              : Specify capture backend "
-          "('v4l2' "
-          "or 'opencv', default: v4l2)."
-       << endl;
-  cout << "  --size <WxH>                      : Specify capture resolution "
-          "(e.g., "
-          "1280x720). Default: 640x480."
-       << endl;
-  cout << "  -b, --calibration                 : Run capture calibration "
-          "workflow."
-       << endl;
-  cout << "  -B, --interactive-calibration     : Run interactive calibration "
-          "workflow."
-       << endl;
-  cout << "  --test-calibration-config         : Load calibration snapshot and "
-          "config, draw corners."
-       << endl;
-  cout << "  -p, --process-image <image_path>   : Process the Go board image."
-       << endl;
-  cout << "  -P <col> <row>                    : Detect stone at specified "
-          "col/row (0-18)."
-       << endl; // NEW
-  cout << "      --image <image_path>          : Optional image for -P "
-          "(default: "
-       << g_default_input_image_path << ")." << endl; // NEW
-  cout << "  -g, --generate-sgf <in_img> <out_sgf> : Generate SGF from image."
-       << endl;
-  cout << "  -v, --verify <image_path> <sgf_path> : Verify board state against "
-          "SGF."
-       << endl;
-  cout << "  -c, --compare <sgf1> <sgf2>         : Compare two SGF files."
-       << endl;
-  cout << "  --parse <sgf_path>                  : Parse an SGF file." << endl;
-  cout
+  CONSOLE_OUT << "Go Environment Manager (GEM)" << endl;
+  CONSOLE_OUT << "Usage: gem [options]" << endl;
+  CONSOLE_OUT << "Options:" << endl;
+  CONSOLE_OUT << "  -d, --debug                       : Enable debug log "
+                 "output (sets log level to DEBUG)."
+              << endl;
+  CONSOLE_OUT << "  -O, --log-level <level>           : Set log level (0=NONE, "
+                 "1=ERROR, 2=WARNING, 3=INFO, 4=DEBUG). Default: 3 (INFO)."
+              << endl; // NEW
+  CONSOLE_OUT
+      << "  -D, --device <device_path>      : Specify video device by number "
+         "(e.g., 0) or path (e.g., /dev/video0). Default: /dev/video0."
+      << endl;
+  // ... (rest of help message options, using CONSOLE_OUT) ...
+  CONSOLE_OUT
+      << "  -M, --mode <backend>              : Specify capture backend "
+         "('v4l2' "
+         "or 'opencv', default: v4l2)."
+      << endl;
+  CONSOLE_OUT
+      << "  --size <WxH>                      : Specify capture resolution "
+         "(e.g., "
+         "1280x720). Default: 640x480."
+      << endl;
+  CONSOLE_OUT
+      << "  -b, --calibration                 : Run capture calibration "
+         "workflow."
+      << endl;
+  CONSOLE_OUT
+      << "  -B, --interactive-calibration     : Run interactive calibration "
+         "workflow."
+      << endl;
+  CONSOLE_OUT
+      << "  --test-calibration-config         : Load calibration snapshot and "
+         "config, draw corners."
+      << endl;
+  CONSOLE_OUT
+      << "  -p, --process-image <image_path>   : Process the Go board image."
+      << endl;
+  CONSOLE_OUT
+      << "  -P <col> <row>                    : Detect stone at specified "
+         "col/row (0-18)."
+      << endl; // NEW
+  CONSOLE_OUT << "      --image <image_path>          : Optional image for -P "
+                 "(default: "
+              << g_default_input_image_path << ")." << endl; // NEW
+  CONSOLE_OUT
+      << "  -g, --generate-sgf <in_img> <out_sgf> : Generate SGF from image."
+      << endl;
+  CONSOLE_OUT
+      << "  -v, --verify <image_path> <sgf_path> : Verify board state against "
+         "SGF."
+      << endl;
+  CONSOLE_OUT
+      << "  -c, --compare <sgf1> <sgf2>         : Compare two SGF files."
+      << endl;
+  CONSOLE_OUT << "  --parse <sgf_path>                  : Parse an SGF file."
+              << endl;
+  CONSOLE_OUT
       << "  --probe-devices                     : List available video devices."
       << endl;
-  cout << "  -s, --snapshot <output_file>        : Capture a snapshot from the "
-          "webcam."
-       << endl;
-  cout << "  -r, --record-sgf <output_sgf>        : Capture snapshot, process, "
-          "and generate SGF."
-       << endl;
-  cout << "  -t, --tournament             : Start tournament recording "
-          "mode."
-       << endl;
-  cout << "      --game-name <prefix>            : Set game name prefix for "
-          "tournament or study mode (default: "
-       << g_default_game_name_prefix << " or 'tournament' if only -t is used)."
-       << endl;
-  cout << "      --draw-board <sgf_path>         : Read SGF, draw and display "
-          "simulated board."
-       << endl; // NEW
-  cout << "  -u, --study             : Start study mode to replay a "
-          "recorded game."
-       << endl; // NEW
-  cout << "      --test-perspective <image_path> : (Dev) Test perspective "
-          "correction." // Removed -t
-       << endl;
-  cout << "  -h, --help                          : Display this help message."
-       << endl;
-  cout << "\n  Note: Webcam operations may require appropriate permissions "
-          "(e.g., user in 'video' group)."
-       << endl;
+  CONSOLE_OUT
+      << "  -s, --snapshot <output_file>        : Capture a snapshot from the "
+         "webcam."
+      << endl;
+  CONSOLE_OUT
+      << "  -r, --record-sgf <output_sgf>        : Capture snapshot, process, "
+         "and generate SGF."
+      << endl;
+  CONSOLE_OUT << "  -t, --tournament             : Start tournament recording "
+                 "mode."
+              << endl;
+  CONSOLE_OUT
+      << "      --game-name <prefix>            : Set game name prefix for "
+         "tournament or study mode (default: "
+      << g_default_game_name_prefix << " or 'tournament' if only -t is used)."
+      << endl;
+  CONSOLE_OUT
+      << "      --draw-board <sgf_path>         : Read SGF, draw and display "
+         "simulated board."
+      << endl; // NEW
+  CONSOLE_OUT << "  -u, --study             : Start study mode to replay a "
+                 "recorded game."
+              << endl; // NEW
+  CONSOLE_OUT
+      << "      --test-perspective <image_path> : (Dev) Test perspective "
+         "correction." // Removed -t
+      << endl;
+  CONSOLE_OUT
+      << "  -h, --help                          : Display this help message."
+      << endl;
+  CONSOLE_OUT
+      << "\n  Note: Webcam operations may require appropriate permissions "
+         "(e.g., user in 'video' group)."
+      << endl;
 }
 
 void processImageWorkflow(const std::string &imagePath) {
@@ -1650,12 +1671,22 @@ void detectStonePositionWorkflow(int target_col, int target_row,
 }
 
 int main(int argc, char *argv[]) {
+  // Initialize logger with default path and level.
+  // This allows logging from the very start, even during option parsing if
+  // needed. The log level can be overridden by the command-line argument later.
+  Logger::init(); // Uses default "share/log.txt" and LogLevel::INFO
+
+  // Initial log message indicating program start
+  LOG_INFO << "GEM application started." << std::endl;
+
   try {
     if (argc == 1) {
       displayHelpMessage();
       return 0;
     }
     int option_index = 0;
+    int parsed_log_level_int =
+        -1; // To store numeric log level from command line
 
     std::string snapshot_output;
     std::string record_sgf_output;
@@ -1673,6 +1704,13 @@ int main(int argc, char *argv[]) {
     bool run_detect_stone_position_workflow = false;  // NEW Flag
     int detect_stone_col = -1, detect_stone_row = -1; // NEW Args for -P
 
+    auto isWorkflowSelected = [&]() -> bool {
+      return run_probe_devices || run_calibration ||
+             run_detect_stone_position_workflow || run_test_calibration ||
+             run_study_mode || run_tournament_mode ||
+             !snapshot_output.empty() || !record_sgf_output.empty() ||
+             run_draw_board_workflow || !test_perspective_image_path.empty();
+    };
     struct option long_options[] = {
         {"image", required_argument, nullptr,
          0}, // For -P's optional image path
@@ -1683,6 +1721,7 @@ int main(int argc, char *argv[]) {
         {"parse", required_argument, nullptr, 0},
         {"help", no_argument, nullptr, 'h'},
         {"debug", no_argument, nullptr, 'd'},
+        {"log-level", required_argument, nullptr, 'O'}, // NEW
         {"probe-devices", no_argument, nullptr, 0},
         {"snapshot", required_argument, nullptr, 's'},
         {"device", required_argument, nullptr, 'D'},
@@ -1705,12 +1744,42 @@ int main(int argc, char *argv[]) {
 
     int c;
     // Process all options in a single loop
-    while ((c = getopt_long(argc, argv, "dp:g:v:c:h:s:r:D:BbM:S:ftuP",
+    while ((c = getopt_long(argc, argv, "dp:g:v:c:h:s:r:D:BbM:S:ftuPO",
                             long_options, &option_index)) != -1) {
       switch (c) {
       case 'd':
         bDebug = true;
         cout << "Debug mode enabled." << endl;
+        break;
+      case 'O': // NEW: Log Level Option
+        try {
+          parsed_log_level_int = std::stoi(optarg);
+          if (parsed_log_level_int >= static_cast<int>(LogLevel::NONE) &&
+              parsed_log_level_int <= static_cast<int>(LogLevel::DEBUG)) {
+            Logger::setGlobalLogLevel(
+                static_cast<LogLevel>(parsed_log_level_int));
+            // The setGlobalLogLevel method will log this change itself if INFO
+            // level is active
+          } else {
+            CONSOLE_ERR << "Invalid log level: " << optarg
+                        << ". Must be between 0 (NONE) and 4 (DEBUG)."
+                        << std::endl;
+            // Logger might not be fully set up or at a level to log this error
+            // yet. LOG_ERROR << "Invalid log level specified: " << optarg << ".
+            // Using current level." << std::endl; No change to log level if
+            // invalid
+          }
+        } catch (const std::invalid_argument &ia) {
+          CONSOLE_ERR << "Invalid argument for log level: " << optarg
+                      << ". Expected an integer (0-4)." << std::endl;
+          // LOG_ERROR << "Invalid argument for log level: " << optarg << ". Not
+          // an integer." << std::endl;
+        } catch (const std::out_of_range &oor) {
+          CONSOLE_ERR << "Log level argument out of range: " << optarg << "."
+                      << std::endl;
+          // LOG_ERROR << "Log level argument out of range: " << optarg << "."
+          // << std::endl;
+        }
         break;
       case 'D': // need to handle more than one digig
       {
@@ -1878,6 +1947,18 @@ int main(int argc, char *argv[]) {
       }
     }
 
+    // Log effective settings AFTER parsing all options
+    LOG_INFO << "Effective settings: Debug Mode=" << (bDebug ? "ON" : "OFF")
+             << ", LogLevel=" << static_cast<int>(Logger::getGlobalLogLevel())
+             << ", Device=" << g_device_path << ", CaptureMode="
+             << (gCaptureMode == MODE_OPENCV ? "OpenCV" : "V4L2")
+             << ", Size=" << g_capture_width << "x" << g_capture_height
+             << std::endl;
+
+    // Add a helper isWorkflowSelected if needed to simplify the final else if
+    // condition bool isWorkflowSelected(bool probe, bool calib, bool detect,
+    // /*...all workflow flags...*/) { return probe || calib || detect ...; }
+
     // --- Workflow Execution Logic ---
     // (Prioritize more specific/terminal workflows first)
 
@@ -1961,59 +2042,19 @@ int main(int argc, char *argv[]) {
                 << "'?" << std::endl;
       displayHelpMessage();
       return 1;
-    } else if (argc > 1 && optind == argc) {
-      // All arguments were options, but no primary workflow was triggered.
-      // This might happen if only -d or --game-name was given.
-      // In such cases, displaying help might be appropriate if no other action
-      // is implied. However, since some options set globals, it might be
-      // intended. For now, if no explicit workflow flag, and no errors, we
-      // assume options were set and exit. If a specific workflow *was* selected
-      // (e.g. run_calibration was true), it should have been called. If we
-      // reach here, it means no specific action was chosen from the flags set.
-      // (Unless a long-opt like --parse already returned).
-      if (!(run_calibration || run_detect_stone_position_workflow ||
-            run_test_calibration || run_study_mode || run_tournament_mode ||
-            !snapshot_output.empty() || !record_sgf_output.empty() ||
-            run_draw_board_workflow || !test_perspective_image_path.empty() ||
-            run_probe_devices)) {
-        // Check if any of the options that DON'T consume optarg were the only
-        // ones. If only -d, -D, -M, -S, --game-name were provided without a
-        // workflow, it's not an error but doesn't do anything. Display help.
-        bool optionsOnly = false;
-        for (int i = 1; i < argc; ++i) {
-          if (std::string(argv[i]) == "-d" ||
-              std::string(argv[i]) == "--debug" ||
-              std::string(argv[i]) == "-D" ||
-              std::string(argv[i]) == "--device" ||
-              std::string(argv[i]) == "-M" ||
-              std::string(argv[i]) == "--mode" ||
-              std::string(argv[i]) == "-S" ||
-              std::string(argv[i]) == "--size" ||
-              std::string(argv[i]) == "--game-name") {
-            if (i + 1 < argc && (std::string(argv[i]) == "-D" ||
-                                 std::string(argv[i]) == "--device" ||
-                                 std::string(argv[i]) == "-M" ||
-                                 std::string(argv[i]) == "--mode" ||
-                                 std::string(argv[i]) == "-S" ||
-                                 std::string(argv[i]) == "--size" ||
-                                 std::string(argv[i]) == "--game-name")) {
-              i++; // Skip argument for these options
-            }
-            optionsOnly = true;
-          } else {
-            optionsOnly = false;
-            break;
-          }
-        }
-        if (optionsOnly) {
-          std::cout << "Info: Configuration options set, but no primary action "
-                       "specified."
-                    << std::endl;
-          displayHelpMessage();
-        }
-      }
+    } else if (argc > 1 && optind == argc && !isWorkflowSelected()) {
+      // If only options like -d, -D, -M, -S, --game-name, -O were provided
+      // without a primary action workflow
+      LOG_INFO << "Configuration options processed. No primary action workflow "
+                  "specified. Displaying help."
+               << std::endl;
+      displayHelpMessage(); // Uses CONSOLE_OUT
+    } else if (optind < argc) {
+      LOG_ERROR << "Unprocessed arguments. What is '" << argv[optind] << "'?"
+                << std::endl;
+      displayHelpMessage(); // Uses CONSOLE_OUT
+      return 1;
     }
-
   } catch (const GEMError &e) {
     cerr << "Error: " << e.what() << endl;
     return 1;

@@ -1,11 +1,12 @@
-#include "logger.h" // Or "common.h" if integrated there
+#include "logger.h"
 #include <iostream> // For CONSOLE_ERR during init failure
 
 // Static member definitions
 std::ofstream Logger::s_log_file_stream;
 LogLevel Logger::s_global_log_level =
-    LogLevel::INFO; // Default global log level
-std::string Logger::s_log_file_path = "share/log.txt"; // Default log file path
+    LogLevel::INFO; // Default global log level, overwritten by init()
+std::string Logger::s_log_file_path =
+    "share/log.txt"; // Default log file path, overwritten by init()
 bool Logger::s_is_initialized_flag = false;
 std::mutex Logger::s_log_mutex;
 
@@ -13,11 +14,13 @@ std::mutex Logger::s_log_mutex;
 Logger::Logger(LogLevel message_level, const char *file, int line,
                const char *function_name)
     : m_message_level_instance(message_level),
-      m_prefix_and_timestamp_generated(false) {
+      m_prefix_and_timestamp_generated(false), m_endl_called(false) {
 
-  // Ensure static members are initialized (idempotent)
+  // Ensure static members are initialized (idempotent).
+  // This is a fallback if Logger::init() wasn't called explicitly at the start
+  // of main.
   if (!s_is_initialized_flag) {
-    init(); // Uses static s_log_file_path and s_global_log_level
+    init(); // Initialize with default path and level
   }
 
   m_should_log_this_message = s_is_initialized_flag && // Log file must be open
@@ -30,24 +33,22 @@ Logger::Logger(LogLevel message_level, const char *file, int line,
 }
 
 // Destructor: Flushes the buffered message if it's meant to be logged and
-// hasn't been flushed by std::endl
+// wasn't flushed by std::endl
 Logger::~Logger() {
-  if (m_should_log_this_message && !m_buffer.str().empty()) {
-    // Add a newline if the user didn't end with std::endl or a manipulator that
-    // flushes This handles cases like: LOG_INFO << "message"; (semicolon ends
-    // statement)
+  if (m_should_log_this_message && !m_endl_called && !m_buffer.str().empty()) {
+    // Add a newline if std::endl wasn't used and buffer has content
     writeStringToFile(m_buffer.str() + "\n");
   }
 }
 
-// Static method to initialize/re-initialize the logger (e.g., open log file)
+// Static method to initialize/re-initialize the logger
 void Logger::init(const std::string &initial_log_path, LogLevel initial_level) {
-  std::lock_guard<std::mutex> lock(
-      s_log_mutex); // Protect static initializations
+  std::lock_guard<std::mutex> lock(s_log_mutex);
 
+  // If already initialized with the same parameters, no need to re-open.
   if (s_is_initialized_flag && initial_log_path == s_log_file_path &&
       initial_level == s_global_log_level) {
-    return; // Already initialized with same parameters
+    return;
   }
 
   if (s_log_file_stream.is_open()) {
@@ -55,27 +56,25 @@ void Logger::init(const std::string &initial_log_path, LogLevel initial_level) {
   }
 
   s_log_file_path = initial_log_path;
-  s_global_log_level = initial_level; // Set global log level from init too
+  s_global_log_level = initial_level;
 
-  // Attempt to create 'share' directory if it doesn't exist.
-  // This requires C++17. For older standards, this part might need OS-specific
-  // calls or manual creation.
   try {
     std::filesystem::path logPathFs(s_log_file_path);
     if (logPathFs.has_parent_path()) {
       if (!std::filesystem::exists(logPathFs.parent_path())) {
-        std::filesystem::create_directories(logPathFs.parent_path());
-        // Initial log message below won't capture this if it's the very first
-        // one.
+        if (!std::filesystem::create_directories(logPathFs.parent_path())) {
+          // Fallback to console if directory creation fails
+          CONSOLE_ERR
+              << "LOGGER WARNING: Could not create directory for log file: "
+              << logPathFs.parent_path() << ". Log output might fail."
+              << std::endl;
+        }
       }
     }
   } catch (const std::filesystem::filesystem_error &e) {
-    // Use CONSOLE_ERR because logger might not be usable yet
-    CONSOLE_ERR << "LOGGER FS ERROR: Could not create directory for log file: "
-                << s_log_file_path << " - " << e.what()
-                << ". Please ensure 'share' directory exists or can be created."
-                << std::endl;
-    // Proceed to attempt opening the file anyway; it might fail.
+    CONSOLE_ERR
+        << "LOGGER FS ERROR: Could not create/check directory for log file: "
+        << s_log_file_path << " - " << e.what() << std::endl;
   }
 
   s_log_file_stream.open(s_log_file_path, std::ios::app); // Append mode
@@ -83,12 +82,10 @@ void Logger::init(const std::string &initial_log_path, LogLevel initial_level) {
     CONSOLE_ERR << "LOGGER FATAL ERROR: Could not open log file: "
                 << s_log_file_path << ". File logging will be disabled."
                 << std::endl;
-    s_is_initialized_flag = false; // Mark as not successfully initialized
+    s_is_initialized_flag = false;
   } else {
     s_is_initialized_flag = true;
-    // Log successful initialization (this will create a new Logger instance)
-    // Note: This relies on the recursive call to the Logger constructor now
-    // checking s_is_initialized_flag as true.
+    // Initial log message (this will create a new Logger instance)
     Logger(LogLevel::INFO, __FILE__, __LINE__, __PRETTY_FUNCTION__)
         << "Log file initialized: " << s_log_file_path
         << ". Global log level set to: " << static_cast<int>(s_global_log_level)
@@ -99,24 +96,26 @@ void Logger::init(const std::string &initial_log_path, LogLevel initial_level) {
 // Static methods to control global logger behavior
 void Logger::setGlobalLogLevel(LogLevel level) {
   std::lock_guard<std::mutex> lock(s_log_mutex);
+  LogLevel old_level = s_global_log_level;
   s_global_log_level = level;
-  // Optionally log the change if logger is initialized
-  if (s_is_initialized_flag) {
+  if (s_is_initialized_flag &&
+      old_level !=
+          level) { // Log only if initialized and level actually changed
     Logger(LogLevel::INFO, __FILE__, __LINE__, __PRETTY_FUNCTION__)
-        << "Global log level changed to: " << static_cast<int>(level)
-        << std::endl;
+        << "Global log level changed from " << static_cast<int>(old_level)
+        << " to: " << static_cast<int>(level) << std::endl;
+  } else if (!s_is_initialized_flag) {
+    // If called before init, init will pick up this new level if we set its
+    // default. Or, ensure init is called first in main. For now, init sets its
+    // own default. Let's assume init() is called in main() before this
+    // typically.
   }
 }
 
-LogLevel Logger::getGlobalLogLevel() {
-  // No lock needed for reading a LogLevel, assuming it's atomic enough or
-  // eventual consistency is fine. For strictness, a lock could be added if
-  // reads and writes are frequent and concurrent.
-  return s_global_log_level;
-}
+LogLevel Logger::getGlobalLogLevel() { return s_global_log_level; }
 
 void Logger::setLogFile(const std::string &file_path) {
-  // This will re-initialize with the new path and current global log level.
+  // Re-initialize with the new path, using the current global log level
   init(file_path, s_global_log_level);
 }
 
@@ -125,14 +124,19 @@ void Logger::writeStringToFile(const std::string &message) {
   std::lock_guard<std::mutex> lock(s_log_mutex);
   if (s_is_initialized_flag && s_log_file_stream.is_open()) {
     s_log_file_stream << message;
-    s_log_file_stream.flush(); // Ensure it's written immediately
+    s_log_file_stream.flush();
   }
+  // If not initialized or file not open, message is lost (error already printed
+  // during init/open)
 }
 
 // Helper to generate prefix (called by constructor if should_log)
 void Logger::generatePrefix(const char *file, int line,
                             const char *function_name) {
-  if (!m_prefix_and_timestamp_generated) { // Ensure prefix is added only once
+  // This check is technically redundant if called only when
+  // m_should_log_this_message is true, but kept for safety if generatePrefix
+  // were ever called directly.
+  if (!m_prefix_and_timestamp_generated) {
     auto now = std::chrono::system_clock::now();
     auto in_time_t = std::chrono::system_clock::to_time_t(now);
     auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(
@@ -142,20 +146,21 @@ void Logger::generatePrefix(const char *file, int line,
     std::tm tmbuf{};
 #if defined(_WIN32) || defined(_WIN64)
     localtime_s(&tmbuf, &in_time_t);
-#elif defined(__unix__) || defined(__APPLE__) || defined(__linux__)
+#elif defined(__unix__) || defined(__APPLE__) ||                               \
+    defined(__linux__) // More comprehensive POSIX check
     localtime_r(&in_time_t, &tmbuf);
 #else
-    // Fallback for other systems (potentially not thread-safe)
-    std::tm *temp_tm = std::localtime(&in_time_t);
+    std::tm *temp_tm =
+        std::localtime(&in_time_t); // Fallback, potentially not thread-safe
     if (temp_tm)
       tmbuf = *temp_tm;
 #endif
 
     m_buffer << "{";
-    const char *base_filename = strrchr(file, '/'); // POSIX
+    const char *base_filename = strrchr(file, '/');
     if (!base_filename)
-      base_filename = strrchr(file, '\\'); // Windows
-    m_buffer << (base_filename ? base_filename + 1 : file);
+      base_filename = strrchr(file, '\\');                  // For Windows paths
+    m_buffer << (base_filename ? base_filename + 1 : file); // Get only filename
 
     m_buffer << ":" << line << " (" << function_name << ") ";
     m_buffer << std::put_time(&tmbuf, "%Y-%m-%d %H:%M:%S");
@@ -169,25 +174,24 @@ void Logger::generatePrefix(const char *file, int line,
 Logger &Logger::operator<<(std::ostream &(*manip)(std::ostream &)) {
   if (m_should_log_this_message) {
     if (manip == static_cast<std::ostream &(*)(std::ostream &)>(std::endl)) {
-      m_buffer << "\n"; // Add newline to buffer
+      m_buffer << "\n";
       writeStringToFile(m_buffer.str());
-      m_buffer.str(""); // Clear internal buffer
-      m_buffer.clear(); // Clear any error flags on the ostringstream
+      m_buffer.str("");
+      m_buffer.clear();
       m_prefix_and_timestamp_generated =
-          false; // Reset for a potential (though unlikely with macros) next use
-                 // of this specific instance
+          false; // Ready for next potential part if instance isn't temp
+      m_endl_called = true; // Mark that endl was used for this instance
       m_should_log_this_message =
-          false; // Mark this instance as "flushed" for this line
+          false; // Effectively "closes" this log operation for this instance
     } else if (manip ==
                static_cast<std::ostream &(*)(std::ostream &)>(std::flush)) {
-      // Write whatever is in buffer but don't add newline or clear it unless
-      // endl does
-      writeStringToFile(m_buffer.str());
-      // s_log_file_stream is flushed by writeStringToFile. The internal
-      // m_buffer is not cleared by std::flush alone.
+      writeStringToFile(m_buffer.str()); // Write current buffer content
+      // Note: Unlike std::endl, std::flush does not add a newline itself to the
+      // buffer s_log_file_stream is flushed by writeStringToFile.
     } else {
-      m_buffer << manip; // Apply other manipulators (e.g., std::hex) to the
-                         // internal buffer
+      // Apply other manipulators (e.g., std::hex, std::setw, std::fixed) to the
+      // internal buffer
+      m_buffer << manip;
     }
   }
   return *this;

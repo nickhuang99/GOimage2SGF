@@ -1,22 +1,22 @@
 #ifndef LOGGER_H
 #define LOGGER_H
 
-#include <chrono>  // For system_clock
-#include <cstring> // For strrchr
-#include <filesystem> // For C++17 directory creation (optional, can use POSIX mkdir)
+#include <chrono>     // For system_clock
+#include <cstring>    // For strrchr
+#include <filesystem> // For C++17 directory creation
 #include <fstream>
 #include <iomanip> // For std::put_time, std::setfill, std::setw
-#include <mutex>   // For thread safety (optional for now, but good to consider)
+#include <mutex>   // For thread safety
 #include <sstream>
 #include <string>
 
 // Log Levels
 enum class LogLevel {
-  NONE = 0,    // No logging
-  ERROR = 1,   // Critical errors
-  WARNING = 2, // Warnings
-  INFO = 3,    // General information (Default)
-  DEBUG = 4    // Detailed debug information
+  NONE = 0,    // No logging at all
+  ERROR = 1,   // Critical errors that might prevent continuation
+  WARNING = 2, // Potential issues or unexpected situations
+  INFO = 3,    // General operational information (Default)
+  DEBUG = 4    // Detailed information for debugging
 };
 
 class Logger {
@@ -30,9 +30,11 @@ public:
   // Static methods to control global logger behavior
   static void setGlobalLogLevel(LogLevel level);
   static LogLevel getGlobalLogLevel();
-  static void setLogFile(const std::string &file_path);
+  static void
+  setLogFile(const std::string
+                 &file_path); // Can be called before init or to change file
   static void init(const std::string &initial_log_path = "share/log.txt",
-                   LogLevel initial_level = LogLevel::INFO); // Explicit init
+                   LogLevel initial_level = LogLevel::INFO);
 
   // Stream operator to append message parts
   template <typename T> Logger &operator<<(const T &msg) {
@@ -50,9 +52,10 @@ private:
       m_buffer; // Buffer for the current message (prefix + user parts)
   LogLevel m_message_level_instance; // Level of THIS specific message
   bool m_should_log_this_message; // True if this message's level is <= global
-                                  // level
+                                  // level & file is open
   bool m_prefix_and_timestamp_generated; // To ensure prefix is added only once
                                          // per message
+  bool m_endl_called; // To track if std::endl was used for this instance
 
   // Static members for global state and file stream
   static std::ofstream s_log_file_stream;
@@ -68,6 +71,10 @@ private:
   // Helper to generate prefix (called by constructor if should_log)
   void generatePrefix(const char *file, int line, const char *function_name);
 };
+
+// Global logger instance accessor (not used directly by macros, but available
+// if needed) Logger& getLoggerInstance(); // Alternative for singleton access
+// if g_logger is not extern
 
 // Macros to create temporary Logger instances
 #define LOG_ERROR                                                              \

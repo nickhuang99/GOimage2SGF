@@ -1,6 +1,7 @@
 #ifndef UTILITY_H
 #define UTILITY_H
 
+#include "logger.h" // <<< NEW: Include logger header
 #include <charconv>
 #include <cstring>
 #include <linux/videodev2.h>
