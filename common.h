@@ -18,12 +18,13 @@ extern bool bDebug;
 extern int g_capture_width;
 extern int g_capture_height;
 extern std::string g_device_path;
-extern const std::string g_default_input_image_path;
 
 extern const std::string CALIB_CONFIG_PATH;
 extern const std::string CALIB_SNAPSHOT_PATH;
 extern const std::string CALIB_SNAPSHOT_DEBUG_PATH;
 extern const std::string CALIB_SNAPSHOT_RAW_PATH;
+
+extern const std::string g_default_input_image_path;
 
 #define WHITE 2
 #define BLACK 1
