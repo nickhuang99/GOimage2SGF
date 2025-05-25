@@ -31,7 +31,6 @@ int g_capture_height = 480;           // Default capture height
 std::string g_default_game_name_prefix = "tournament";
 std::string g_device_path = "/dev/video0";
 
-
 static const std::string Default_Go_Board_Window_Title = "Simulated Go Board";
 static const int canvas_size_px = 760;
 void displayHelpMessage() {
