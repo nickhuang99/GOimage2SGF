@@ -1804,7 +1804,7 @@ bool detectSpecificColoredRoundShape(const cv::Mat &inputBgrImage,
 
   double roiArea = static_cast<double>(roi.width * roi.height);
   double minStoneAreaInRoi = roiArea * 0.03;
-  double maxStoneAreaInRoi = roiArea * 0.70;
+  double maxStoneAreaInRoi = roiArea * 0.85;
   double minCircularity = 0.65;
 
   LOG_DEBUG << "  For ROI at (" << roi.x << "," << roi.y
@@ -1924,7 +1924,7 @@ bool detectSpecificColoredRoundShape(const cv::Mat &inputBgrImage,
 }
 
 bool detectFourCornersGoBoard(
-    const cv::Mat &input_bgr_image,
+    const cv::Mat &corrected_bgr_image,
     std::vector<cv::Point2f> &detected_raw_centers_tl_tr_br_bl,
     std::vector<float> &detected_raw_radii_tl_tr_br_bl) {
 
@@ -1934,7 +1934,7 @@ bool detectFourCornersGoBoard(
   detected_raw_centers_tl_tr_br_bl.assign(4, cv::Point2f(-1, -1));
   detected_raw_radii_tl_tr_br_bl.assign(4, -1.0f);
 
-  if (input_bgr_image.empty()) {
+  if (corrected_bgr_image.empty()) {
     LOG_ERROR << "Input image is empty in detectFourCornersGoBoard."
               << std::endl;
     return false;
@@ -1950,22 +1950,15 @@ bool detectFourCornersGoBoard(
     return false;
   }
 
-  if (input_bgr_image.cols != calib_data.image_width ||
-      input_bgr_image.rows != calib_data.image_height) {
-    LOG_ERROR << "Input image dimensions (" << input_bgr_image.cols << "x"
-              << input_bgr_image.rows
+  if (corrected_bgr_image.cols != calib_data.image_width ||
+      corrected_bgr_image.rows != calib_data.image_height) {
+    LOG_ERROR << "Input image dimensions (" << corrected_bgr_image.cols << "x"
+              << corrected_bgr_image.rows
               << ") do not match calibration config dimensions ("
               << calib_data.image_width << "x" << calib_data.image_height
               << ") in detectFourCornersGoBoard." << std::endl;
     return false;
   }
-
-  cv::Mat perspective_matrix = cv::getPerspectiveTransform(
-      calib_data.corners,
-      getBoardCornersCorrected(input_bgr_image.cols, input_bgr_image.rows));
-  cv::Mat corrected_bgr_image;
-  cv::warpPerspective(input_bgr_image, corrected_bgr_image, perspective_matrix,
-                      input_bgr_image.size());
 
   if (Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
     cv::imshow("detectFourCorners - Corrected BGR for ROI calc",
