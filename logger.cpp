@@ -100,9 +100,9 @@ void Logger::setGlobalLogLevel(LogLevel level) {
   if (s_is_initialized_flag &&
       old_level !=
           level) { // Log only if initialized and level actually changed
-    Logger(LogLevel::INFO, __FILE__, __LINE__, __PRETTY_FUNCTION__)
-        << "Global log level changed from " << static_cast<int>(old_level)
-        << " to: " << static_cast<int>(level) << std::endl;
+    CONSOLE_OUT << "Global log level changed from "
+                << static_cast<int>(old_level)
+                << " to: " << static_cast<int>(level) << std::endl;
   } else if (!s_is_initialized_flag) {
     // If called before init, init will pick up this new level if we set its
     // default. Or, ensure init is called first in main. For now, init sets its
