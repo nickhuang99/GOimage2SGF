@@ -288,4 +288,12 @@ cv::Rect calculateGridIntersectionROI(int target_col, int target_row,
  */
 int detectStoneAtPosition(const cv::Mat &corrected_bgr_image, int target_col,
                           int target_row, const CalibrationData &calib_data);
+
+bool detectSpecificColoredRoundShape(const cv::Mat &inputBgrImage,
+                                     const cv::Rect &regionOfInterest,
+                                     const cv::Vec3f &expectedAvgLabColor,
+                                     float l_tolerance, float ab_tolerance,
+                                     cv::Point2f &detectedCenter,
+                                     float &detectedRadius);
+
 #endif // UTILITY_H
