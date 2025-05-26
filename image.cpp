@@ -2017,12 +2017,8 @@ bool detectFourCornersGoBoard(
             detected_center_corrected, detected_radius_corrected)) {
 
       std::vector<cv::Point2f> point_to_transform = {detected_center_corrected};
-      std::vector<cv::Point2f> transformed_point_raw;
-      cv::Mat inverse_perspective_matrix;
-      cv::invert(perspective_matrix, inverse_perspective_matrix);
-      cv::perspectiveTransform(point_to_transform, transformed_point_raw,
-                               inverse_perspective_matrix);
-      detected_raw_centers_tl_tr_br_bl[i] = transformed_point_raw[0];
+
+      detected_raw_centers_tl_tr_br_bl[i] = point_to_transform[0];
 
       cv::Point2f p1_roi_edge_corrected =
           cv::Point2f(roi_corrected.x, roi_corrected.y);
@@ -2030,11 +2026,9 @@ bool detectFourCornersGoBoard(
           cv::Point2f(roi_corrected.x + roi_corrected.width, roi_corrected.y);
       std::vector<cv::Point2f> roi_edge_points_corrected = {
           p1_roi_edge_corrected, p2_roi_edge_corrected};
-      std::vector<cv::Point2f> roi_edge_points_raw;
-      cv::perspectiveTransform(roi_edge_points_corrected, roi_edge_points_raw,
-                               inverse_perspective_matrix);
+
       float roi_width_raw =
-          cv::norm(roi_edge_points_raw[0] - roi_edge_points_raw[1]);
+          cv::norm(roi_edge_points_corrected[0] - roi_edge_points_corrected[1]);
       float scale_factor_at_roi =
           (roi_corrected.width > 0.001f)
               ? (roi_width_raw / static_cast<float>(roi_corrected.width))
@@ -2071,7 +2065,7 @@ bool detectFourCornersGoBoard(
                   << "), Radius=" << detected_raw_radii_tl_tr_br_bl[i]
                   << std::endl;
       }
-      cv::Mat debug_raw_img_final = input_bgr_image.clone();
+      cv::Mat debug_raw_img_final = corrected_bgr_image.clone();
       for (size_t i = 0; i < 4; ++i) {
         if (detected_raw_centers_tl_tr_br_bl[i].x >= 0) {
           cv::circle(debug_raw_img_final, detected_raw_centers_tl_tr_br_bl[i],
