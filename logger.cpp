@@ -86,10 +86,9 @@ void Logger::init(const std::string &initial_log_path, LogLevel initial_level) {
   } else {
     s_is_initialized_flag = true;
     // Initial log message (this will create a new Logger instance)
-    Logger(LogLevel::INFO, __FILE__, __LINE__, __PRETTY_FUNCTION__)
-        << "Log file initialized: " << s_log_file_path
-        << ". Global log level set to: " << static_cast<int>(s_global_log_level)
-        << std::endl;
+    CONSOLE_OUT << "Log file initialized: " << s_log_file_path
+                << ". Global log level set to: "
+                << static_cast<int>(s_global_log_level) << std::endl;
   }
 }
 
