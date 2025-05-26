@@ -1,9 +1,9 @@
-#include "common.h"
+#include "common.h" // Includes logger.h
 #include <algorithm>
 #include <cmath>
 #include <fstream>
 #include <iomanip>
-#include <iostream>
+// #include <iostream> // Replaced by logger.h for LOG_XXX and CONSOLE_XXX
 #include <limits>
 #include <map>
 #include <numeric>
@@ -12,27 +12,29 @@
 #include <set>
 #include <vector>
 
-using namespace std;
-using namespace cv;
+// Using namespace std; // Avoid global using namespace std for better practice
+// Using namespace cv;  // Avoid global using namespace cv for better practice
 
-static void debugPrint(const Mat &before_board_state,
-                       const Mat &next_board_state) {
+static void debugPrint(const cv::Mat &before_board_state,
+                       const cv::Mat &next_board_state) {
+  LOG_DEBUG << "Board state before vs next:" << std::endl;
   for (int row = 0; row < 19; ++row) {
+    std::stringstream ss_row;
     for (int col = 0; col < 19; ++col) {
       int before_stone = before_board_state.at<uchar>(row, col);
       int next_stone = next_board_state.at<uchar>(row, col);
-      cout << before_stone << "(" << next_stone << ") ";
+      ss_row << before_stone << "(" << next_stone << ") ";
     }
-    cout << endl;
+    LOG_DEBUG << ss_row.str() << std::endl;
   }
 }
 
-static void calculateSgfDiff(const Mat &before_board_state,
-                             const Mat &next_board_state,
-                             vector<Point> &black_diff_add,
-                             vector<Point> &white_diff_add,
-                             vector<Point> &black_diff_remove,
-                             vector<Point> &white_diff_remove) {
+static void calculateSgfDiff(const cv::Mat &before_board_state,
+                             const cv::Mat &next_board_state,
+                             std::vector<cv::Point> &black_diff_add,
+                             std::vector<cv::Point> &white_diff_add,
+                             std::vector<cv::Point> &black_diff_remove,
+                             std::vector<cv::Point> &white_diff_remove) {
 
   for (int row = 0; row < 19; ++row) {
     for (int col = 0; col < 19; ++col) {
@@ -44,124 +46,165 @@ static void calculateSgfDiff(const Mat &before_board_state,
                            : next_board_state.at<uchar>(row, col);
 
       if (before_stone != next_stone) {
-        if (next_stone == BLACK) {                   // Black stone added
-          black_diff_add.push_back(Point(col, row)); // Store as (x, y)
-        } else if (next_stone == WHITE) {            // White stone added
-          white_diff_add.push_back(Point(col, row));
-        } else if (before_stone == BLACK) { // Black stone removed
-          black_diff_remove.push_back(Point(col, row));
-        } else if (before_stone == WHITE) { // White stone removed
-          white_diff_remove.push_back(Point(col, row));
+        if (next_stone == BLACK) {
+          black_diff_add.push_back(cv::Point(col, row));
+        } else if (next_stone == WHITE) {
+          white_diff_add.push_back(cv::Point(col, row));
+        } else if (before_stone == BLACK) {
+          black_diff_remove.push_back(cv::Point(col, row));
+        } else if (before_stone == WHITE) {
+          white_diff_remove.push_back(cv::Point(col, row));
         }
       }
     }
   }
 }
 
-static string generateSgfFromDiff(const vector<Point> &black_diff_add,
-                                  const vector<Point> &white_diff_add,
-                                  const vector<Point> &black_diff_remove,
-                                  const vector<Point> &white_diff_remove) {
-  string sgf_move = "";
-  if (black_diff_add.size() == BLACK && white_diff_add.size() == EMPTY) {
-    // Black played a stone.
+static std::string
+generateSgfFromDiff(const std::vector<cv::Point> &black_diff_add,
+                    const std::vector<cv::Point> &white_diff_add,
+                    const std::vector<cv::Point> &black_diff_remove,
+                    const std::vector<cv::Point> &white_diff_remove) {
+  std::string sgf_move = "";
+  if (black_diff_add.size() == 1 &&
+      white_diff_add.empty()) { // Rule was BLACK macro (1) and EMPTY macro (0)
     char sgf_col = 'a' + black_diff_add[0].x;
     char sgf_row = 'a' + black_diff_add[0].y;
-    sgf_move = ";B[" + string(1, sgf_col) + string(1, sgf_row) + "]";
-    //  Captures are optional
-    for (Point p : white_diff_remove) {
+    sgf_move = ";B[" + std::string(1, sgf_col) + std::string(1, sgf_row) + "]";
+    for (cv::Point p : white_diff_remove) {
       char sgf_col_remove = 'a' + p.x;
       char sgf_row_remove = 'a' + p.y;
-      sgf_move +=
-          "AE[" + string(1, sgf_col_remove) + string(1, sgf_row_remove) + "]";
+      sgf_move += "AE[" + std::string(1, sgf_col_remove) +
+                  std::string(1, sgf_row_remove) + "]";
     }
-
-  } else if (white_diff_add.size() == BLACK && black_diff_add.size() == EMPTY) {
-    // White played a stone.
+  } else if (white_diff_add.size() == 1 &&
+             black_diff_add
+                 .empty()) { // Rule was BLACK macro (1) and EMPTY macro (0)
     char sgf_col = 'a' + white_diff_add[0].x;
     char sgf_row = 'a' + white_diff_add[0].y;
-    sgf_move = ";W[" + string(1, sgf_col) + string(1, sgf_row) + "]";
-    // Captures are optional
-    for (Point p : black_diff_remove) {
+    sgf_move = ";W[" + std::string(1, sgf_col) + std::string(1, sgf_row) + "]";
+    for (cv::Point p : black_diff_remove) {
       char sgf_col_remove = 'a' + p.x;
       char sgf_row_remove = 'a' + p.y;
-      sgf_move +=
-          "AE[" + string(1, sgf_col_remove) + string(1, sgf_row_remove) + "]";
+      sgf_move += "AE[" + std::string(1, sgf_col_remove) +
+                  std::string(1, sgf_row_remove) + "]";
     }
-  } else {
-    cout << "impossible to have both black and white stones added at same time"
-         << endl;
+  } else if (!black_diff_add.empty() ||
+             !white_diff_add.empty()) { // Log only if there were additions
+                                        // attempt but rules not met
+    LOG_ERROR << "generateSgfFromDiff: Impossible move. Black additions: "
+              << black_diff_add.size()
+              << ", White additions: " << white_diff_add.size()
+              << ". Both should not be >0 or one >1." << std::endl;
   }
   return sgf_move;
 }
 
-bool validateSGgfMove(const Mat &before_board_state,
-                      const Mat &next_board_state, int prevColor) {
-  vector<Point> black_diff_add;
-  vector<Point> white_diff_add;
-  vector<Point> black_diff_remove;
-  vector<Point> white_diff_remove;
+bool validateSGgfMove(const cv::Mat &before_board_state,
+                      const cv::Mat &next_board_state, int prevColor) {
+  std::vector<cv::Point> black_diff_add;
+  std::vector<cv::Point> white_diff_add;
+  std::vector<cv::Point> black_diff_remove;
+  std::vector<cv::Point> white_diff_remove;
   calculateSgfDiff(before_board_state, next_board_state, black_diff_add,
                    white_diff_add, black_diff_remove, white_diff_remove);
-  bool black_move_valid = black_diff_add.empty() &&
-                          white_diff_add.size() == 1 &&
-                          white_diff_remove.empty(); // no suidcide
-  bool white_move_valid = black_diff_add.size() == 1 &&
-                          white_diff_add.empty() &&
-                          black_diff_remove.empty(); // no suidcide
-  bool empty_move_valid =
-      (!black_diff_add.empty() || !white_diff_add.empty()) &&
-      (black_diff_remove.empty() && white_diff_remove.empty());
 
-  bool valid = (prevColor == BLACK && black_move_valid) ||
-               (prevColor == WHITE && white_move_valid) ||
-               (prevColor == EMPTY && empty_move_valid);
+  // Valid move means:
+  // If Black just played (prevColor == BLACK), White is expected to play.
+  //   - Exactly 1 white stone added (white_diff_add.size() == 1)
+  //   - No black stones added (black_diff_add.empty())
+  //   - No white stones removed by White (white_diff_remove.empty() - no
+  //   suicide)
+  //   - Black stones may be removed by White (black_diff_remove can be
+  //   non-empty)
+  bool white_played_validly = black_diff_add.empty() &&
+                              white_diff_add.size() == 1 &&
+                              white_diff_remove.empty();
+
+  // If White just played (prevColor == WHITE), Black is expected to play.
+  //   - Exactly 1 black stone added (black_diff_add.size() == 1)
+  //   - No white stones added (white_diff_add.empty())
+  //   - No black stones removed by Black (black_diff_remove.empty() - no
+  //   suicide)
+  //   - White stones may be removed by Black (white_diff_remove can be
+  //   non-empty)
+  bool black_played_validly = black_diff_add.size() == 1 &&
+                              white_diff_add.empty() &&
+                              black_diff_remove.empty();
+
+  // For the first move of the game (prevColor == EMPTY)
+  //   - Either exactly one black stone is added OR exactly one white stone is
+  //   added.
+  //   - No stones of the other color are added.
+  //   - No stones are removed by the player making the first move.
+  bool first_move_valid =
+      ((black_diff_add.size() == 1 && white_diff_add.empty()) ||
+       (white_diff_add.size() == 1 && black_diff_add.empty())) &&
+      black_diff_remove.empty() && white_diff_remove.empty();
+
+  bool valid = (prevColor == BLACK && white_played_validly) ||
+               (prevColor == WHITE && black_played_validly) ||
+               (prevColor == EMPTY && first_move_valid);
+
+  if (!valid) {
+    LOG_WARN << "validateSGgfMove: Move deemed invalid. PrevColor: "
+             << prevColor << ", B_add: " << black_diff_add.size()
+             << ", W_add: " << white_diff_add.size()
+             << ", B_rem: " << black_diff_remove.size()
+             << ", W_rem: " << white_diff_remove.size() << std::endl;
+  } else {
+    LOG_DEBUG << "validateSGgfMove: Move valid. PrevColor: " << prevColor
+              << ", B_add: " << black_diff_add.size()
+              << ", W_add: " << white_diff_add.size()
+              << ", B_rem: " << black_diff_remove.size()
+              << ", W_rem: " << white_diff_remove.size() << std::endl;
+  }
   return valid;
 }
 
-// Function to determine the SGF move between two board states
-string determineSGFMove(const Mat &before_board_state,
-                        const Mat &next_board_state) {
-  // 1. Find the differences between the two board states.
-  vector<Point> black_diff_add;
-  vector<Point> white_diff_add;
-  vector<Point> black_diff_remove;
-  vector<Point> white_diff_remove;
+std::string determineSGFMove(const cv::Mat &before_board_state,
+                             const cv::Mat &next_board_state) {
+  std::vector<cv::Point> black_diff_add;
+  std::vector<cv::Point> white_diff_add;
+  std::vector<cv::Point> black_diff_remove;
+  std::vector<cv::Point> white_diff_remove;
   calculateSgfDiff(before_board_state, next_board_state, black_diff_add,
                    white_diff_add, black_diff_remove, white_diff_remove);
   return generateSgfFromDiff(black_diff_add, white_diff_add, black_diff_remove,
                              white_diff_remove);
 }
 
-// Function to generate SGF for the current board state
-string generateSGF(const Mat &board_state,
-                   const vector<Point2f> &intersections) {
-  ostringstream sgf;
-  sgf << "(;FF[4]GM[1]SZ[19]AP[GoBoardAnalyzer:1.0]\n"; // SGF Header
+std::string generateSGF(const cv::Mat &board_state,
+                        const std::vector<cv::Point2f>
+                            &intersections) { // intersections currently unused
+  std::ostringstream sgf;
+  sgf << "(;FF[4]GM[1]SZ[19]AP[GEM:GoBoardAnalyzer:1.0]\n";
 
-  vector<Point> black_stones;
-  vector<Point> white_stones;
+  std::vector<cv::Point> black_stones;
+  std::vector<cv::Point> white_stones;
 
-  if (bDebug) {
+  if (Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
+    LOG_DEBUG << "generateSGF: Board state:" << std::endl;
     for (int row = 0; row < 19; ++row) {
+      std::stringstream ss_row_debug;
       for (int col = 0; col < 19; ++col) {
-        cout << static_cast<int>(board_state.at<uchar>(row, col)) << ",";
+        ss_row_debug << static_cast<int>(board_state.at<uchar>(row, col))
+                     << ",";
       }
-      cout << endl;
+      LOG_DEBUG << "  " << ss_row_debug.str() << std::endl;
     }
   }
   for (int row = 0; row < 19; ++row) {
     for (int col = 0; col < 19; ++col) {
       int stone = board_state.at<uchar>(row, col);
-      if (stone == 1) { // Black stone
-        black_stones.push_back(Point(col, row));
-      } else if (stone == 2) { // White stone
-        white_stones.push_back(Point(col, row));
+      if (stone == BLACK) {
+        black_stones.push_back(cv::Point(col, row));
+      } else if (stone == WHITE) {
+        white_stones.push_back(cv::Point(col, row));
       }
-      // 0 (empty) is skipped
     }
   }
-  // Add black stones using AB property
+
   if (!black_stones.empty()) {
     sgf << ";AB";
     for (const auto &stone : black_stones) {
@@ -171,7 +214,6 @@ string generateSGF(const Mat &board_state,
     }
   }
 
-  // Add white stones using AW property
   if (!white_stones.empty()) {
     sgf << ";AW";
     for (const auto &stone : white_stones) {
@@ -184,109 +226,101 @@ string generateSGF(const Mat &board_state,
   return sgf.str();
 }
 
-// Function to parse SGF header from a string
-SGFHeader parseSGFHeader(const string &sgf_content) {
-  SGFHeader header = {0}; // Initialize all fields to default values.
+SGFHeader parseSGFHeader(const std::string &sgf_content) {
+  SGFHeader header; // Default constructor initializes members
 
-  // Use a stringstream to parse the SGF content.
-  stringstream ss(sgf_content);
-  string token;
-
-  // Helper function to extract property values
-  auto extractValue = [&](const string &propertyName) -> string {
-    size_t pos = sgf_content.find(propertyName);
-    if (pos != string::npos) {
-      size_t start = sgf_content.find('[', pos) + 1;
-      size_t end = sgf_content.find(']', pos);
-      if (end > start)
-        return sgf_content.substr(start, end - start);
+  auto extractValue = [&](const std::string &propertyName) -> std::string {
+    std::regex prop_regex(propertyName + "\\[([^\\]]*)\\]");
+    std::smatch match;
+    if (std::regex_search(sgf_content, match, prop_regex) && match.size() > 1) {
+      return match[1].str();
     }
     return "";
   };
 
-  // Parse GM property
-  string gm_value = extractValue("GM");
+  std::string gm_value = extractValue("GM");
   if (!gm_value.empty()) {
     try {
-      header.gm = stoi(gm_value);
-    } catch (const invalid_argument &e) {
-      cerr << "Invalid GM value: " << gm_value << endl;
-      header.gm = 0; // set to default
+      header.gm = std::stoi(gm_value);
+    } catch (const std::invalid_argument &e) {
+      LOG_ERROR << "Invalid GM value in SGF header: " << gm_value
+                << ". Error: " << e.what() << std::endl;
+    } catch (const std::out_of_range &e) {
+      LOG_ERROR << "GM value out of range in SGF header: " << gm_value
+                << ". Error: " << e.what() << std::endl;
     }
   }
 
-  // Parse FF property
-  string ff_value = extractValue("FF");
+  std::string ff_value = extractValue("FF");
   if (!ff_value.empty()) {
     try {
-      header.ff = stoi(ff_value);
-    } catch (const invalid_argument &e) {
-      cerr << "Invalid FF value: " << ff_value << endl;
-      header.ff = 0;
+      header.ff = std::stoi(ff_value);
+    } catch (const std::invalid_argument &e) {
+      LOG_ERROR << "Invalid FF value in SGF header: " << ff_value
+                << ". Error: " << e.what() << std::endl;
+    } catch (const std::out_of_range &e) {
+      LOG_ERROR << "FF value out of range in SGF header: " << ff_value
+                << ". Error: " << e.what() << std::endl;
     }
   }
 
-  // Parse CA property
   header.ca = extractValue("CA");
-
-  // Parse AP property
   header.ap = extractValue("AP");
 
-  // Parse SZ property
-  string sz_value = extractValue("SZ");
+  std::string sz_value = extractValue("SZ");
   if (!sz_value.empty()) {
     try {
-      header.sz = stoi(sz_value);
-    } catch (const invalid_argument &e) {
-      cerr << "Invalid SZ value: " << sz_value << endl;
-      header.sz = 0;
+      header.sz = std::stoi(sz_value);
+    } catch (const std::invalid_argument &e) {
+      LOG_ERROR << "Invalid SZ value in SGF header: " << sz_value
+                << ". Error: " << e.what() << std::endl;
+    } catch (const std::out_of_range &e) {
+      LOG_ERROR << "SZ value out of range in SGF header: " << sz_value
+                << ". Error: " << e.what() << std::endl;
     }
   }
   return header;
 }
 
-// Function to parse SGF game moves, differentiating setup and moves, and
-// handling captures
-void parseSGFGame(const string &sgfContent, set<pair<int, int>> &setupBlack,
-                  set<pair<int, int>> &setupWhite, vector<Move> &moves) {
+void parseSGFGame(const std::string &sgfContent,
+                  std::set<std::pair<int, int>> &setupBlack,
+                  std::set<std::pair<int, int>> &setupWhite,
+                  std::vector<Move> &moves) {
   setupBlack.clear();
   setupWhite.clear();
   moves.clear();
 
-  // Helper function to convert SGF coordinates (e.g., "ab") to row and column
-  auto sgfCoordToRowCol = [](const string &coord) -> pair<int, int> {
+  auto sgfCoordToRowCol = [](const std::string &coord) -> std::pair<int, int> {
     if (coord.size() != 2 || !islower(coord[0]) || !islower(coord[1])) {
-      cout << "sgfCoordToRowCol: Invalid coordinate: " << coord << endl;
-      return {-1, -1}; // Invalid coordinate
+      LOG_WARN << "sgfCoordToRowCol: Invalid coordinate format: " << coord
+               << std::endl;
+      return {-1, -1};
     }
     int col = coord[0] - 'a';
     int row = coord[1] - 'a';
+    if (col < 0 || col > 18 || row < 0 || row > 18) {
+      LOG_WARN << "sgfCoordToRowCol: Coordinate out of bounds (0-18): " << coord
+               << " -> (" << row << "," << col << ")" << std::endl;
+      return {-1, -1};
+    }
     return {row, col};
   };
 
-  // Regex for parsing coordinate pairs: [a-z][a-z]
-  const regex coordRegex(R"(\[([a-z]{2})\])");
-
-  // New game property regex:
-  // Group 1: AB or AW (setup property type)
-  // Group 2: Coordinates for AB/AW (e.g., "[ab][cd]")
-  // Group 3: B or W (move player)
-  // Group 4: Move coordinate for B/W (e.g., "[ab]")
-  // Group 5: AE coordinates for captured stones (e.g., "[cd][ef]"), optional
-  const regex gamePropertyRegex(
+  const std::regex coordRegex(R"(\[([a-z]{2})\])");
+  const std::regex gamePropertyRegex(
       R"(;(?:(AB|AW)((?:\[[a-z]{2}\])+)|(B|W)(\[[a-z]{2}\])(?:AE((?:\[[a-z]{2}\])+))?))");
 
-  sregex_iterator it(sgfContent.begin(), sgfContent.end(), gamePropertyRegex);
-  sregex_iterator end;
+  std::sregex_iterator it(sgfContent.begin(), sgfContent.end(),
+                          gamePropertyRegex);
+  std::sregex_iterator end;
 
   for (; it != end; ++it) {
-    smatch match = *it;
+    std::smatch match = *it;
+    std::string setup_prop_type = match[1].str();
 
-    string setup_prop_type = match[1].str();
-
-    if (!setup_prop_type.empty()) { // Matched AB or AW (setup stones)
-      string setup_coords_str = match[2].str();
-      set<pair<int, int>> *current_setup_set = nullptr;
+    if (!setup_prop_type.empty()) {
+      std::string setup_coords_str = match[2].str();
+      std::set<std::pair<int, int>> *current_setup_set = nullptr;
       if (setup_prop_type == "AB") {
         current_setup_set = &setupBlack;
       } else if (setup_prop_type == "AW") {
@@ -294,57 +328,56 @@ void parseSGFGame(const string &sgfContent, set<pair<int, int>> &setupBlack,
       }
 
       if (current_setup_set) {
-        sregex_iterator coordIt(setup_coords_str.cbegin(),
-                                setup_coords_str.cend(), coordRegex);
-        sregex_iterator coordEnd;
+        std::sregex_iterator coordIt(setup_coords_str.cbegin(),
+                                     setup_coords_str.cend(), coordRegex);
+        std::sregex_iterator coordEnd;
         for (; coordIt != coordEnd; ++coordIt) {
-          smatch coordMatch = *coordIt;
-          string singleCoordSgf = coordMatch[1].str(); // e.g., "ab"
-          pair<int, int> rc = sgfCoordToRowCol(singleCoordSgf);
+          std::smatch coordMatch = *coordIt;
+          std::string singleCoordSgf = coordMatch[1].str();
+          std::pair<int, int> rc = sgfCoordToRowCol(singleCoordSgf);
           if (rc.first != -1 && rc.second != -1) {
             current_setup_set->insert(rc);
           }
         }
       }
     } else {
-      string move_player_str = match[3].str();
-      if (!move_player_str.empty()) { // Matched B or W (player move)
-        string move_coord_str_raw = match[4].str(); // Raw, like "[ab]"
-        string ae_coords_str = match[5].str(); // Raw, like "[cd][ef]" or empty
+      std::string move_player_str = match[3].str();
+      if (!move_player_str.empty()) {
+        std::string move_coord_str_raw = match[4].str();
+        std::string ae_coords_str = match[5].str();
 
         Move current_move;
         current_move.player = (move_player_str == "B" ? BLACK : WHITE);
 
-        // Process the main move coordinate (Group 4)
-        sregex_iterator mainMoveIt(move_coord_str_raw.cbegin(),
-                                   move_coord_str_raw.cend(), coordRegex);
-        if (mainMoveIt != sregex_iterator()) {
-          smatch mainMoveMatch = *mainMoveIt;
-          string singleCoordSgf = mainMoveMatch[1].str(); // e.g., "ab"
-          pair<int, int> rc = sgfCoordToRowCol(singleCoordSgf);
+        std::sregex_iterator mainMoveIt(move_coord_str_raw.cbegin(),
+                                        move_coord_str_raw.cend(), coordRegex);
+        if (mainMoveIt != std::sregex_iterator()) {
+          std::smatch mainMoveMatch = *mainMoveIt;
+          std::string singleCoordSgf = mainMoveMatch[1].str();
+          std::pair<int, int> rc = sgfCoordToRowCol(singleCoordSgf);
           if (rc.first != -1 && rc.second != -1) {
             current_move.row = rc.first;
             current_move.col = rc.second;
           } else {
-            // cerr << "Invalid SGF move coordinate: " << singleCoordSgf <<
-            // endl; // Optional
-            continue; // Skip this malformed move
+            LOG_ERROR << "Invalid SGF move coordinate during parsing: "
+                      << singleCoordSgf << std::endl;
+            continue;
           }
         } else {
-          // cerr << "Could not parse SGF move coordinate from: " <<
-          // move_coord_str_raw << endl; // Optional
-          continue; // Skip if main move coordinate is not parsable
+          LOG_ERROR << "Could not parse SGF move coordinate from: "
+                    << move_coord_str_raw << std::endl;
+          continue;
         }
 
-        // Process captured stones if AE part is present (Group 5)
         if (!ae_coords_str.empty()) {
-          sregex_iterator capturedIt(ae_coords_str.cbegin(),
-                                     ae_coords_str.cend(), coordRegex);
-          sregex_iterator capturedEnd;
+          std::sregex_iterator capturedIt(ae_coords_str.cbegin(),
+                                          ae_coords_str.cend(), coordRegex);
+          std::sregex_iterator capturedEnd;
           for (; capturedIt != capturedEnd; ++capturedIt) {
-            smatch capturedMatch = *capturedIt;
-            string singleCapturedSgf = capturedMatch[1].str(); // e.g., "cd"
-            pair<int, int> rc_captured = sgfCoordToRowCol(singleCapturedSgf);
+            std::smatch capturedMatch = *capturedIt;
+            std::string singleCapturedSgf = capturedMatch[1].str();
+            std::pair<int, int> rc_captured =
+                sgfCoordToRowCol(singleCapturedSgf);
             if (rc_captured.first != -1 && rc_captured.second != -1) {
               current_move.capturedStones.insert(rc_captured);
             }
@@ -356,214 +389,216 @@ void parseSGFGame(const string &sgfContent, set<pair<int, int>> &setupBlack,
   }
 }
 
-// Function to visually verify SGF data on the original image
-void verifySGF(const Mat &image, const string &sgf_data,
-               const vector<Point2f> &intersections) {
-  Mat verification_image = image.clone(); // Create a copy to draw on
-  set<pair<int, int>> setupBlack;
-  set<pair<int, int>> setupWhite;
-  vector<Move> moves;
+void verifySGF(const cv::Mat &image, const std::string &sgf_data,
+               const std::vector<cv::Point2f> &intersections) {
+  LOG_INFO << "Verifying SGF data against image..." << std::endl;
+  cv::Mat verification_image = image.clone();
+  std::set<std::pair<int, int>> setupBlack;
+  std::set<std::pair<int, int>> setupWhite;
+  std::vector<Move> moves;
 
-  parseSGFGame(sgf_data, setupBlack, setupWhite, moves);
+  parseSGFGame(sgf_data, setupBlack, setupWhite,
+               moves); // parseSGFGame logs its own warnings/errors
 
-  // Draw setup stones
+  LOG_DEBUG << "Parsed SGF for verification: SetupBlack=" << setupBlack.size()
+            << ", SetupWhite=" << setupWhite.size()
+            << ", Moves=" << moves.size() << std::endl;
+
   for (const auto &stone : setupBlack) {
     int row = stone.first;
     int col = stone.second;
-    if (row >= 0 && row < 19 && col >= 0 && col < 19) {
-      Point2f pt = intersections[row * 19 + col];
-      circle(verification_image, pt, 10, Scalar(0, 0, 0), 2); // Black
-      // cout << "Black stone at setup (" << col << ", " << row << ") - Pixel:
-      // (" << pt.x << ", " << pt.y << ")" << endl;
+    if (row >= 0 && row < 19 && col >= 0 && col < 19 &&
+        !intersections.empty()) {
+      cv::Point2f pt = intersections[row * 19 + col];
+      cv::circle(verification_image, pt, 10, cv::Scalar(0, 0, 0), 2);
+      LOG_DEBUG << "Verify: Black setup stone at (" << col << ", " << row
+                << ") - Pixel: (" << pt.x << ", " << pt.y << ")" << std::endl;
     }
   }
   for (const auto &stone : setupWhite) {
     int row = stone.first;
     int col = stone.second;
-    if (row >= 0 && row < 19 && col >= 0 && col < 19) {
-      Point2f pt = intersections[row * 19 + col];
-      circle(verification_image, pt, 10, Scalar(255, 255, 255), 2); // White
-      // cout << "White stone at setup (" << col << ", " << row << ") - Pixel:
-      // (" << pt.x << ", " << pt.y << ")" << endl;
+    if (row >= 0 && row < 19 && col >= 0 && col < 19 &&
+        !intersections.empty()) {
+      cv::Point2f pt = intersections[row * 19 + col];
+      cv::circle(verification_image, pt, 10, cv::Scalar(255, 255, 255), 2);
+      LOG_DEBUG << "Verify: White setup stone at (" << col << ", " << row
+                << ") - Pixel: (" << pt.x << ", " << pt.y << ")" << std::endl;
     }
   }
 
-  // Draw moves
   for (const auto &move : moves) {
     int row = move.row;
     int col = move.col;
-    if (row >= 0 && row < 19 && col >= 0 && col < 19) {
-      Point2f pt = intersections[row * 19 + col];
-      if (move.player == 1) {
-        circle(verification_image, pt, 10, Scalar(0, 0, 255), 2); // Black
-        // cout << "Black stone at move (" << col << ", " << row << ") - Pixel:
-        // (" << pt.x << ", " << pt.y << ")" << endl;
-      } else if (move.player == 2) {
-        circle(verification_image, pt, 10, Scalar(255, 0, 0), 2); // White
-        // cout << "White stone at move (" << col << ", " << row << ") - Pixel:
-        // (" << pt.x << ", " << pt.y << ")" << endl;
-      } else if (move.player == 0) {
-        putText(verification_image, "X", pt, FONT_HERSHEY_SIMPLEX, 0.7,
-                Scalar(255, 255, 255), 2); // Mark with 'X'
-        // cout << "Stone removed at (" << col << ", " << row << ") - Pixel: ("
-        // << pt.x << ", " << pt.y << ")" << endl;
-      }
-      if (!move.capturedStones.empty()) {
-        // cout << "  Captured: ";
-        for (const auto &captured : move.capturedStones) {
-          // cout << "(" << captured.second << ", " << captured.first << ") ";
+    if (row >= 0 && row < 19 && col >= 0 && col < 19 &&
+        !intersections.empty()) {
+      cv::Point2f pt = intersections[row * 19 + col];
+      if (move.player == BLACK) {
+        cv::circle(verification_image, pt, 10, cv::Scalar(0, 0, 255),
+                   2); // Black move - Red circle
+        LOG_DEBUG << "Verify: Black move at (" << col << ", " << row
+                  << ") - Pixel: (" << pt.x << ", " << pt.y << ")" << std::endl;
+      } else if (move.player == WHITE) {
+        cv::circle(verification_image, pt, 10, cv::Scalar(255, 0, 0),
+                   2); // White move - Blue circle
+        LOG_DEBUG << "Verify: White move at (" << col << ", " << row
+                  << ") - Pixel: (" << pt.x << ", " << pt.y << ")" << std::endl;
+      } else if (move.player ==
+                 EMPTY) { // Assuming player 0 from parseSGFGame was for AE
+        LOG_DEBUG << "Verify: AE property indicates removed stones. Number of "
+                     "captured: "
+                  << move.capturedStones.size() << std::endl;
+        for (const auto &cap_stone : move.capturedStones) {
+          if (cap_stone.first >= 0 && cap_stone.first < 19 &&
+              cap_stone.second >= 0 && cap_stone.second < 19) {
+            cv::Point2f cap_pt =
+                intersections[cap_stone.first * 19 + cap_stone.second];
+            cv::putText(verification_image, "X", cap_pt,
+                        cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(255, 255, 0),
+                        2); // Cyan X for captured
+            LOG_DEBUG << "  Verify: Captured stone marked at ("
+                      << cap_stone.second << ", " << cap_stone.first
+                      << ") - Pixel: (" << cap_pt.x << ", " << cap_pt.y << ")"
+                      << std::endl;
+          }
         }
-        // cout << endl;
+      }
+      if (move.player != EMPTY &&
+          !move.capturedStones
+               .empty()) { // This implies AE was part of B or W node
+        LOG_DEBUG << "  Verify: Move by player " << move.player
+                  << " also captured " << move.capturedStones.size()
+                  << " stones." << std::endl;
+        for (const auto &captured : move.capturedStones) {
+          LOG_DEBUG << "    Captured at (" << captured.second << ", "
+                    << captured.first << ")" << std::endl;
+          if (captured.first >= 0 && captured.first < 19 &&
+              captured.second >= 0 && captured.second < 19) {
+            cv::Point2f cap_pt_detail =
+                intersections[captured.first * 19 + captured.second];
+            // Mark differently or just log, as the main move circle is already
+            // there
+            cv::drawMarker(verification_image, cap_pt_detail,
+                           cv::Scalar(0, 255, 255), cv::MARKER_DIAMOND, 8,
+                           1); // Yellow diamond
+          }
+        }
       }
     }
   }
 
-  imshow("SGF Verification", verification_image);
-  waitKey(0);
+  cv::imshow("SGF Verification", verification_image);
+  cv::waitKey(0);
+  cv::destroyWindow("SGF Verification");
+  LOG_INFO << "SGF Verification display finished." << std::endl;
 }
 
-// Function to compare two SGF strings for semantic equivalence
-// (order-insensitive)
-bool compareSGF(const string &sgf1, const string &sgf2) {
-  // 1. Parse both SGF strings.
-  set<pair<int, int>> setupBlack1, setupBlack2;
-  set<pair<int, int>> setupWhite1, setupWhite2;
-  vector<Move> moves1, moves2;
-  SGFHeader header1 = parseSGFHeader(sgf1);
-  SGFHeader header2 = parseSGFHeader(sgf2);
+bool compareSGF(const std::string &sgf1_content,
+                const std::string &sgf2_content) {
+  LOG_INFO << "Comparing SGF contents." << std::endl;
+  std::set<std::pair<int, int>> setupBlack1, setupBlack2;
+  std::set<std::pair<int, int>> setupWhite1, setupWhite2;
+  std::vector<Move> moves1, moves2;
+  SGFHeader header1 =
+      parseSGFHeader(sgf1_content); // parseSGFHeader logs errors
+  SGFHeader header2 = parseSGFHeader(sgf2_content);
 
-  parseSGFGame(sgf1, setupBlack1, setupWhite1, moves1);
-  parseSGFGame(sgf2, setupBlack2, setupWhite2, moves2);
+  parseSGFGame(sgf1_content, setupBlack1, setupWhite1,
+               moves1); // parseSGFGame logs errors
+  parseSGFGame(sgf2_content, setupBlack2, setupWhite2, moves2);
 
-  // 2. Compare the headers, but relax the comparison for the AP property.
   bool headersMatch = (header1.gm == header2.gm) &&
-                      (header1.ff == header2.ff) &&
-                      //(header1.ca == header2.ca) &&  // Relaxed comparison
-                      (header1.sz == header2.sz);
+                      (header1.ff == header2.ff) && (header1.sz == header2.sz);
+  // AP and CA can differ, often not critical for game state comparison
 
-  if (bDebug) {
-    cout << "Comparing SGF Headers:" << endl;
-    cout << "  GM: " << header1.gm << " vs " << header2.gm << endl;
-    cout << "  FF: " << header1.ff << " vs " << header2.ff << endl;
-    cout << "  CA: " << header1.ca << " vs " << header2.ca << endl;
-    cout << "  SZ: " << header1.sz << " vs " << header2.sz << endl;
-    if (!headersMatch)
-      cout << "Headers do not match" << endl;
+  LOG_DEBUG << "SGF Comparison - HeadersMatch: " << headersMatch << std::endl;
+  if (Logger::getGlobalLogLevel() >= LogLevel::DEBUG && !headersMatch) {
+    LOG_DEBUG << "  Header1: GM=" << header1.gm << " FF=" << header1.ff
+              << " SZ=" << header1.sz << " AP=" << header1.ap
+              << " CA=" << header1.ca << std::endl;
+    LOG_DEBUG << "  Header2: GM=" << header2.gm << " FF=" << header2.ff
+              << " SZ=" << header2.sz << " AP=" << header2.ap
+              << " CA=" << header2.ca << std::endl;
   }
 
-  // 3. Compare the setup stones.
   bool setupBlackMatch = (setupBlack1 == setupBlack2);
-  if (bDebug) {
-    cout << "Comparing Black Setup:" << endl;
-    cout << "  Size1: " << setupBlack1.size()
-         << ", Size2: " << setupBlack2.size() << endl;
-    cout << "  Stones1: ";
-    for (const auto &stone : setupBlack1) {
-      cout << "(" << stone.first << ", " << stone.second << ") ";
-    }
-    cout << endl;
-    cout << "  Stones2: ";
-    for (const auto &stone : setupBlack2) {
-      cout << "(" << stone.first << ", " << stone.second << ") ";
-    }
-    cout << endl;
-    if (!setupBlackMatch)
-      cout << "Black Setup Stones do not match" << endl;
+  LOG_DEBUG << "SGF Comparison - SetupBlackMatch: " << setupBlackMatch
+            << std::endl;
+  if (Logger::getGlobalLogLevel() >= LogLevel::DEBUG &&
+      !setupBlackMatch) { /* Log details */
   }
 
   bool setupWhiteMatch = (setupWhite1 == setupWhite2);
-  if (bDebug) {
-    cout << "Comparing White Setup:" << endl;
-    cout << "  Size1: " << setupWhite1.size()
-         << ", Size2: " << setupWhite2.size() << endl;
-    cout << "  Stones1: ";
-    for (const auto &stone : setupWhite1) {
-      cout << "(" << stone.first << ", " << stone.second << ") ";
-    }
-    cout << endl;
-    cout << "  Stones2: ";
-    for (const auto &stone : setupWhite2) {
-      cout << "(" << stone.first << ", " << stone.second << ") ";
-    }
-    cout << endl;
-    if (!setupWhiteMatch)
-      cout << "White Setup Stones do not match" << endl;
+  LOG_DEBUG << "SGF Comparison - SetupWhiteMatch: " << setupWhiteMatch
+            << std::endl;
+  if (Logger::getGlobalLogLevel() >= LogLevel::DEBUG &&
+      !setupWhiteMatch) { /* Log details */
   }
 
-  // 4. Compare moves, including captured stones (now sets).
-  bool movesMatch = true;
-  if (moves1.size() != moves2.size()) {
-    movesMatch = false;
-    if (bDebug) {
-      cout << "Number of moves is different: " << moves1.size() << " vs "
-           << moves2.size() << endl;
-    }
-  } else {
-    for (size_t i = 0; i < moves1.size(); ++i) {
-      const Move &m1 = moves1[i];
-      const Move &m2 = moves2[i];
-      if (m1.player != m2.player || m1.row != m2.row || m1.col != m2.col ||
-          m1.capturedStones != m2.capturedStones) {
-        movesMatch = false;
-        if (bDebug) {
-          cout << "Moves at index " << i << " are different:" << endl;
-          cout << "  Player: " << m1.player << " vs " << m2.player << endl;
-          cout << "  Row: " << m1.row << " vs " << m2.row << endl;
-          cout << "  Col: " << m1.col << " vs " << m2.col << endl;
-          cout << "  Captured Stones: " << endl;
-          cout << "    Size1: " << m1.capturedStones.size()
-               << ", Size2: " << m2.capturedStones.size() << endl;
-          cout << "    Stones1: ";
-          for (const auto &stone : m1.capturedStones) {
-            cout << "(" << stone.first << ", " << stone.second << ") ";
-          }
-          cout << endl;
-          cout << "    Stones2: ";
-          for (const auto &stone : m2.capturedStones) {
-            cout << "(" << m2.row << ", " << m2.col << ") "; // Corrected line
-          }
-          cout << endl;
-        }
-        break; // Exit the loop as soon as a difference is found.
+  bool movesMatch = (moves1 == moves2); // Uses Move::operator==
+  LOG_DEBUG << "SGF Comparison - MovesMatch: " << movesMatch
+            << " (Size1: " << moves1.size() << ", Size2: " << moves2.size()
+            << ")" << std::endl;
+  if (Logger::getGlobalLogLevel() >= LogLevel::DEBUG && !movesMatch) {
+    size_t min_moves = std::min(moves1.size(), moves2.size());
+    for (size_t i = 0; i < min_moves; ++i) {
+      if (!(moves1[i] == moves2[i])) {
+        LOG_DEBUG << "  Moves differ at index " << i << ":" << std::endl;
+        LOG_DEBUG << "    SGF1 Move: P" << moves1[i].player << " ("
+                  << moves1[i].row << "," << moves1[i].col
+                  << ") Caps:" << moves1[i].capturedStones.size() << std::endl;
+        LOG_DEBUG << "    SGF2 Move: P" << moves2[i].player << " ("
+                  << moves2[i].row << "," << moves2[i].col
+                  << ") Caps:" << moves2[i].capturedStones.size() << std::endl;
+        break;
       }
     }
+    if (moves1.size() != moves2.size())
+      LOG_DEBUG << "  Move lists have different sizes." << std::endl;
   }
-  bool result =
-      headersMatch && setupBlackMatch && setupWhiteMatch && movesMatch;
-  return result;
+
+  return headersMatch && setupBlackMatch && setupWhiteMatch && movesMatch;
 }
 
 void testParseSGFGame() {
-  string sgfContent = "(;GM[1]FF[4]SZ[19];AB[cb][gb][hb][ib][mb];AW[ma][jb][kb]"
-                      "[nb][ob];B[ab];W[cd];AE[ef][fg])";
-  set<pair<int, int>> setupBlack;
-  set<pair<int, int>> setupWhite;
-  vector<Move> moves;
+  // This function is for testing and direct console output is often desired.
+  // Using CONSOLE_OUT for clarity that this is test output.
+  // It could also be refactored to use LOG_INFO if test output should go to
+  // file.
+  std::string sgfContent =
+      "(;GM[1]FF[4]SZ[19];AB[cb][gb][hb][ib][mb];AW[ma][jb][kb]"
+      "[nb][ob];B[ab];W[cd];AE[ef][fg])";
+  std::set<std::pair<int, int>> setupBlack;
+  std::set<std::pair<int, int>> setupWhite;
+  std::vector<Move> moves;
 
-  parseSGFGame(sgfContent, setupBlack, setupWhite, moves);
+  CONSOLE_OUT << "--- testParseSGFGame Output ---" << std::endl;
+  parseSGFGame(sgfContent, setupBlack, setupWhite,
+               moves); // parseSGFGame logs its own warnings
 
-  cout << "Black Setup Stones:" << endl;
+  CONSOLE_OUT << "Black Setup Stones:" << std::endl;
   for (const auto &stone : setupBlack) {
-    cout << "(" << stone.first << ", " << stone.second << ") ";
+    CONSOLE_OUT << "(" << stone.first << ", " << stone.second << ") ";
   }
-  cout << endl;
+  CONSOLE_OUT << std::endl;
 
-  cout << "White Setup Stones:" << endl;
+  CONSOLE_OUT << "White Setup Stones:" << std::endl;
   for (const auto &stone : setupWhite) {
-    cout << "(" << stone.first << ", " << stone.second << ") ";
+    CONSOLE_OUT << "(" << stone.first << ", " << stone.second << ") ";
   }
-  cout << endl;
+  CONSOLE_OUT << std::endl;
 
-  cout << "Moves:" << endl;
+  CONSOLE_OUT << "Moves:" << std::endl;
   for (const auto &move : moves) {
-    cout << "Player: " << move.player << ", Row: " << move.row
-         << ", Col: " << move.col;
+    CONSOLE_OUT << "Player: " << move.player << ", Row: " << move.row
+                << ", Col: " << move.col;
     if (!move.capturedStones.empty()) {
-      cout << "  Captured: ";
+      CONSOLE_OUT << "  Captured: ";
       for (const auto &captured : move.capturedStones) {
-        cout << "(" << captured.first << ", " << captured.second << ") ";
+        CONSOLE_OUT << "(" << captured.first << ", " << captured.second << ") ";
       }
     }
-    cout << endl;
+    CONSOLE_OUT << std::endl;
   }
+  CONSOLE_OUT << "--- End testParseSGFGame Output ---" << std::endl;
 }
