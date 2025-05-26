@@ -1,4 +1,5 @@
 #include "common.h"
+#include "logger.h"
 #include <algorithm>
 #include <cassert>
 #include <cmath>
@@ -62,8 +63,6 @@ bool detectSpecificColoredRoundShape(
 static int classifySingleIntersectionByDistance(
     const cv::Vec3f &intersection_lab_color, const cv::Vec3f &avg_black_calib,
     const cv::Vec3f &avg_white_calib, const cv::Vec3f &board_calib_lab);
-
-// --- NEW Implementation: calculateGridIntersectionROI ---
 cv::Rect calculateGridIntersectionROI(int target_col, int target_row,
                                       int corrected_image_width_px,
                                       int corrected_image_height_px,
@@ -71,31 +70,44 @@ cv::Rect calculateGridIntersectionROI(int target_col, int target_row,
 
   if (target_col < 0 || target_col >= grid_lines || target_row < 0 ||
       target_row >= grid_lines) {
-    THROWGEMERROR(
-        "Target column/row out of bounds in calculateGridIntersectionROI.");
+    std::string error_msg =
+        "Target column/row (" + std::to_string(target_col) + "," +
+        std::to_string(target_row) +
+        ") out of bounds for grid_lines=" + std::to_string(grid_lines);
+    LOG_ERROR << error_msg << std::endl;
+    THROWGEMERROR(error_msg);
   }
   if (grid_lines <= 1) {
-    THROWGEMERROR(
-        "Grid lines must be greater than 1 in calculateGridIntersectionROI.");
+    std::string error_msg = "Grid lines must be greater than 1 in "
+                            "calculateGridIntersectionROI. Got: " +
+                            std::to_string(grid_lines);
+    LOG_ERROR << error_msg << std::endl;
+    THROWGEMERROR(error_msg);
   }
 
   std::vector<cv::Point2f> ideal_board_corners = getBoardCornersCorrected(
       corrected_image_width_px, corrected_image_height_px);
   if (ideal_board_corners.size() != 4) {
+    LOG_ERROR << "getBoardCornersCorrected did not return 4 points in "
+                 "calculateGridIntersectionROI."
+              << std::endl;
     THROWGEMERROR("getBoardCornersCorrected did not return 4 points in "
                   "calculateGridIntersectionROI.");
   }
 
-  cv::Point2f board_top_left_px = ideal_board_corners[0]; // TL
-  // Grid area dimensions based on ideal corners
+  cv::Point2f board_top_left_px = ideal_board_corners[0];
   float grid_area_width_px =
-      ideal_board_corners[1].x - ideal_board_corners[0].x; // TR.x - TL.x
+      ideal_board_corners[1].x - ideal_board_corners[0].x;
   float grid_area_height_px =
-      ideal_board_corners[3].y - ideal_board_corners[0].y; // BL.y - TL.y
+      ideal_board_corners[3].y - ideal_board_corners[0].y;
 
   if (grid_area_width_px <= 0 || grid_area_height_px <= 0) {
-    THROWGEMERROR("Calculated grid area dimensions are non-positive in "
-                  "calculateGridIntersectionROI.");
+    std::string error_msg = "Calculated grid area dimensions are non-positive "
+                            "in calculateGridIntersectionROI. Width=" +
+                            Num2Str(grid_area_width_px).str() +
+                            ", Height=" + Num2Str(grid_area_height_px).str();
+    LOG_ERROR << error_msg << std::endl;
+    THROWGEMERROR(error_msg);
   }
 
   float avg_grid_spacing_x =
@@ -111,61 +123,58 @@ cv::Rect calculateGridIntersectionROI(int target_col, int target_row,
   int color_sampling_radius =
       calculateAdaptiveSampleRadius(grid_area_width_px, grid_area_height_px);
 
-  // Apply the 2.5f factor for shape detection ROI
   int roi_half_width =
       static_cast<int>(static_cast<float>(color_sampling_radius) * 2.5f);
-  roi_half_width =
-      std::max(roi_half_width,
-               5); // Ensure a minimum practical ROI half-width (e.g., 5 pixels
-                   // for a 10x10 ROI) Also, ensure it's not excessively large,
-                   // e.g., capped by half grid spacing
-  roi_half_width = std::min(
-      roi_half_width,
-      static_cast<int>(std::min(avg_grid_spacing_x, avg_grid_spacing_y) * 0.5f *
-                       0.9f)); // Cap at 90% of half grid spacing
-  roi_half_width =
-      std::max(roi_half_width, 5); // Re-ensure minimum after capping
+  int min_practical_roi_half_width = 5;
+  roi_half_width = std::max(roi_half_width, min_practical_roi_half_width);
+
+  float max_roi_factor = 0.45f;
+  int max_allowed_half_width = static_cast<int>(
+      std::min(avg_grid_spacing_x, avg_grid_spacing_y) * max_roi_factor);
+  max_allowed_half_width =
+      std::max(max_allowed_half_width, min_practical_roi_half_width);
+  roi_half_width = std::min(roi_half_width, max_allowed_half_width);
 
   int roi_x = static_cast<int>(center_x_px - roi_half_width);
   int roi_y = static_cast<int>(center_y_px - roi_half_width);
   int roi_side = 2 * roi_half_width;
 
-  if (bDebug && false) { // Enable for verbose ROI calculation details
-    std::cout << "  Debug (calculateGridIntersectionROI for " << target_row
-              << "," << target_col << "):" << std::endl;
-    std::cout << "    Corrected Img WxH: " << corrected_image_width_px << "x"
-              << corrected_image_height_px << std::endl;
-    std::cout << "    Ideal TL Corn: " << board_top_left_px << std::endl;
-    std::cout << "    Grid Area WxH: " << grid_area_width_px << "x"
-              << grid_area_height_px << std::endl;
-    std::cout << "    Spacing X,Y: " << avg_grid_spacing_x << ","
-              << avg_grid_spacing_y << std::endl;
-    std::cout << "    Center Px X,Y: " << center_x_px << "," << center_y_px
-              << std::endl;
-    std::cout << "    Color Samp Rad: " << color_sampling_radius << std::endl;
-    std::cout << "    ROI Half Width: " << roi_half_width
-              << " (Side: " << roi_side << ")" << std::endl;
-    std::cout << "    Calculated ROI Rect: [" << roi_x << "," << roi_y << " - "
-              << roi_side << "x" << roi_side << "]" << std::endl;
-  }
+  LOG_DEBUG << "calculateGridIntersectionROI for (" << target_row << ","
+            << target_col << "): " << "Img WxH: " << corrected_image_width_px
+            << "x" << corrected_image_height_px
+            << ", Grid Area WxH: " << grid_area_width_px << "x"
+            << grid_area_height_px << ", Spacing X,Y: " << avg_grid_spacing_x
+            << "," << avg_grid_spacing_y << ", Center Px X,Y: " << center_x_px
+            << "," << center_y_px << ", ColorSampRad: " << color_sampling_radius
+            << ", ROI Half Width: " << roi_half_width << " (Side: " << roi_side
+            << ")" << ", Calc ROI Rect: [" << roi_x << "," << roi_y << " - "
+            << roi_side << "x" << roi_side << "]" << std::endl;
 
   return cv::Rect(roi_x, roi_y, roi_side, roi_side);
 }
 
-// --- NEW Implementation: detectStoneAtPosition ---
 int detectStoneAtPosition(const cv::Mat &corrected_bgr_image, int target_col,
                           int target_row, const CalibrationData &calib_data) {
-
+  LOG_DEBUG << "Detecting stone at position: Col=" << target_col
+            << ", Row=" << target_row << std::endl;
   if (corrected_bgr_image.empty()) {
+    LOG_ERROR
+        << "Input (corrected_bgr_image) is empty in detectStoneAtPosition."
+        << std::endl;
     THROWGEMERROR(
         "Input (corrected_bgr_image) is empty in detectStoneAtPosition.");
   }
-  if (target_col < 0 || target_col >= 19 || target_row < 0 ||
-      target_row >= 19) {
-    THROWGEMERROR(
-        "Target column/row out of 0-18 bounds in detectStoneAtPosition.");
+  if (target_col < 0 || target_col > 18 || target_row < 0 || target_row > 18) {
+    std::string error_msg = "Target column/row (" + std::to_string(target_col) +
+                            "," + std::to_string(target_row) +
+                            ") out of 0-18 bounds in detectStoneAtPosition.";
+    LOG_ERROR << error_msg << std::endl;
+    THROWGEMERROR(error_msg);
   }
-  if (!calib_data.colors_loaded) { // Need at least corner stone colors
+  if (!calib_data.colors_loaded) {
+    LOG_ERROR << "Calibration data (stone colors) not loaded in "
+                 "detectStoneAtPosition."
+              << std::endl;
     THROWGEMERROR(
         "Calibration data (stone colors) not loaded in detectStoneAtPosition.");
   }
@@ -174,22 +183,20 @@ int detectStoneAtPosition(const cv::Mat &corrected_bgr_image, int target_col,
                                               corrected_bgr_image.cols,
                                               corrected_bgr_image.rows);
 
-  // Ensure ROI is within image boundaries (detectSpecificColoredRoundShape also
-  // does this, but good for clarity)
-  roi =
-      roi & cv::Rect(0, 0, corrected_bgr_image.cols, corrected_bgr_image.rows);
+  cv::Rect image_bounds(0, 0, corrected_bgr_image.cols,
+                        corrected_bgr_image.rows);
+  roi &= image_bounds;
+
   if (roi.width <= 0 || roi.height <= 0) {
-    if (bDebug)
-      std::cerr << "Warning (detectStoneAtPosition): Calculated ROI for ("
-                << target_row << "," << target_col
-                << ") is invalid or outside image bounds. ROI: " << roi
-                << std::endl;
-    return EMPTY; // Cannot detect if ROI is invalid
+    LOG_WARN << "Calculated ROI for (" << target_row << "," << target_col
+             << ") is invalid or outside image bounds after clamping. ROI: x="
+             << roi.x << ",y=" << roi.y << ",w=" << roi.width
+             << ",h=" << roi.height
+             << ". Image size: " << corrected_bgr_image.cols << "x"
+             << corrected_bgr_image.rows << std::endl;
+    return EMPTY;
   }
 
-  // Use average of TL/BL for Black, TR/BR for White as reference from
-  // calibration This assumes specific stones were placed at corners during
-  // calibration
   cv::Vec3f avg_calibrated_black_lab =
       (calib_data.lab_tl + calib_data.lab_bl) * 0.5f;
   cv::Vec3f avg_calibrated_white_lab =
@@ -198,96 +205,80 @@ int detectStoneAtPosition(const cv::Mat &corrected_bgr_image, int target_col,
   cv::Point2f detected_center;
   float detected_radius;
 
-  if (bDebug) {
-    std::cout << "Debug (detectStoneAtPosition for " << target_row << ","
-              << target_col << "): ROI is " << roi << std::endl;
-    std::cout << "  Checking for BLACK stone (ref Lab: "
-              << avg_calibrated_black_lab << ")" << std::endl;
-  }
+  LOG_DEBUG << "Checking for BLACK stone at (" << target_row << ","
+            << target_col << ") within ROI {x:" << roi.x << ",y:" << roi.y
+            << ",w:" << roi.width << ",h:" << roi.height << "}"
+            << " (Ref Lab: " << avg_calibrated_black_lab[0] << ","
+            << avg_calibrated_black_lab[1] << "," << avg_calibrated_black_lab[2]
+            << ")" << std::endl;
 
-  // Check for BLACK stone
   if (detectSpecificColoredRoundShape(
           corrected_bgr_image, roi, avg_calibrated_black_lab,
           CALIB_L_TOLERANCE_STONE, CALIB_AB_TOLERANCE_STONE, detected_center,
           detected_radius)) {
-    if (bDebug)
-      std::cout << "  Found BLACK stone at (" << target_row << "," << target_col
-                << ")" << std::endl;
+    LOG_DEBUG << "Found BLACK stone at (" << target_row << "," << target_col
+              << ")" << std::endl;
     return BLACK;
   }
 
-  if (bDebug) {
-    std::cout << "  Checking for WHITE stone (ref Lab: "
-              << avg_calibrated_white_lab << ")" << std::endl;
-  }
-  // Check for WHITE stone
+  LOG_DEBUG << "Checking for WHITE stone at (" << target_row << ","
+            << target_col << ") within ROI {x:" << roi.x << ",y:" << roi.y
+            << ",w:" << roi.width << ",h:" << roi.height << "}"
+            << " (Ref Lab: " << avg_calibrated_white_lab[0] << ","
+            << avg_calibrated_white_lab[1] << "," << avg_calibrated_white_lab[2]
+            << ")" << std::endl;
+
   if (detectSpecificColoredRoundShape(
           corrected_bgr_image, roi, avg_calibrated_white_lab,
           CALIB_L_TOLERANCE_STONE, CALIB_AB_TOLERANCE_STONE, detected_center,
           detected_radius)) {
-    if (bDebug)
-      std::cout << "  Found WHITE stone at (" << target_row << "," << target_col
-                << ")" << std::endl;
+    LOG_DEBUG << "Found WHITE stone at (" << target_row << "," << target_col
+              << ")" << std::endl;
     return WHITE;
   }
 
-  if (bDebug)
-    std::cout << "  No stone (BLACK or WHITE) found at (" << target_row << ","
-              << target_col << "). Assuming EMPTY." << std::endl;
+  LOG_DEBUG << "No stone (BLACK or WHITE) found at (" << target_row << ","
+            << target_col << "). Assuming EMPTY." << std::endl;
   return EMPTY;
 }
 
 //====================================================================//
 
-// Function to sample a region around a point and get the average Lab
-// NOTE: Assumes input image is already in Lab format (CV_8UC3)
-Vec3f getAverageLab(const Mat &image_lab, Point2f center, int radius) {
-  Vec3d sum(0.0, 0.0, 0.0);
-  std::vector<uchar> l_values;
-  std::vector<uchar> a_values;
-  std::vector<uchar> b_values;
-
-  // Define the square boundary for sampling
-  int x_min = max(0, static_cast<int>(center.x - radius));
-  int x_max = min(image_lab.cols - 1, static_cast<int>(center.x + radius));
-  int y_min = max(0, static_cast<int>(center.y - radius));
-  int y_max = min(image_lab.rows - 1, static_cast<int>(center.y + radius));
+cv::Vec3f getAverageLab(const cv::Mat &image_lab, cv::Point2f center,
+                        int radius) {
+  cv::Vec3d sum(0.0, 0.0, 0.0);
+  std::vector<uchar> l_values, a_values, b_values;
+  int x_min = std::max(0, static_cast<int>(center.x - radius));
+  int x_max = std::min(image_lab.cols - 1, static_cast<int>(center.x + radius));
+  int y_min = std::max(0, static_cast<int>(center.y - radius));
+  int y_max = std::min(image_lab.rows - 1, static_cast<int>(center.y + radius));
 
   for (int y = y_min; y <= y_max; ++y) {
     for (int x = x_min; x <= x_max; ++x) {
-      // Optional: Check if the pixel is within the circular radius
       if (std::pow(x - center.x, 2) + std::pow(y - center.y, 2) <=
           std::pow(radius, 2)) {
-        Vec3b lab = image_lab.at<Vec3b>(y, x);
-        l_values.push_back(lab[0]); // L
-        a_values.push_back(lab[1]); // a
-        b_values.push_back(lab[2]); // b
+        cv::Vec3b lab = image_lab.at<cv::Vec3b>(y, x);
+        l_values.push_back(lab[0]);
+        a_values.push_back(lab[1]);
+        b_values.push_back(lab[2]);
       }
     }
   }
-
-  size_t count = l_values.size(); // Number of pixels sampled
-
+  size_t count = l_values.size();
   if (count > 0) {
-    // Sort each channel's values independently
     std::sort(l_values.begin(), l_values.end());
     std::sort(a_values.begin(), a_values.end());
     std::sort(b_values.begin(), b_values.end());
-
-    // Find the median index
     size_t mid_index = count / 2;
-
-    // Extract the median value for each channel
-    // (Using the middle element - simple approach for even/odd counts)
-    float median_l = static_cast<float>(l_values[mid_index]);
-    float median_a = static_cast<float>(a_values[mid_index]);
-    float median_b = static_cast<float>(b_values[mid_index]);
-
-    return Vec3f(median_l, median_a, median_b);
-  } else {
-    // Return default Lab (e.g., mid-gray) if no valid pixels found
-    return Vec3f(128.0f, 128.0f, 128.0f);
+    return cv::Vec3f(static_cast<float>(l_values[mid_index]),
+                     static_cast<float>(a_values[mid_index]),
+                     static_cast<float>(b_values[mid_index]));
   }
+  LOG_WARN << "No valid pixels found for Lab averaging at center (" << center.x
+           << "," << center.y << ") with radius " << radius
+           << ". ROI bounds: x[" << x_min << "-" << x_max << "], y[" << y_min
+           << "-" << y_max << "]. Returning default invalid Lab." << std::endl;
+  return cv::Vec3f(-1.0f, -1.0f, -1.0f); // Indicate error or no sample
 }
 
 std::vector<cv::Point2f>
@@ -295,15 +286,12 @@ loadCornersFromConfigFile(const std::string &config_path) {
   std::vector<cv::Point2f> corners;
   std::ifstream configFile(config_path);
   if (!configFile.is_open()) {
-    if (bDebug)
-      std::cout << "Debug (loadCornersFromConfigFile): Config file '"
-                << config_path << "' not found." << std::endl;
-    return corners; // Return empty vector
+    LOG_DEBUG << "Config file '" << config_path
+              << "' not found during corner load attempt." << std::endl;
+    return corners;
   }
-
-  if (bDebug)
-    std::cout << "Debug (loadCornersFromConfigFile): Found config file: "
-              << config_path << ". Attempting to parse corners." << std::endl;
+  LOG_DEBUG << "Found config file: " << config_path
+            << ". Attempting to parse corners." << std::endl;
   std::map<std::string, std::string> config_data;
   std::string line;
   try {
@@ -312,7 +300,6 @@ loadCornersFromConfigFile(const std::string &config_path) {
       line.erase(line.find_last_not_of(" \t\n\r\f\v") + 1);
       if (line.empty() || line[0] == '#')
         continue;
-
       size_t equals_pos = line.find('=');
       if (equals_pos != std::string::npos) {
         std::string key = line.substr(0, equals_pos);
@@ -326,44 +313,32 @@ loadCornersFromConfigFile(const std::string &config_path) {
     }
     configFile.close();
 
-    // Check if all required pixel coordinate keys exist
     if (config_data.count("TL_X_PX") && config_data.count("TL_Y_PX") &&
         config_data.count("TR_X_PX") && config_data.count("TR_Y_PX") &&
-        config_data.count("BL_X_PX") && config_data.count("BL_Y_PX") &&
+        config_data.count("BL_X_PX") &&
+        config_data.count("BL_Y_PX") && // Corrected original code's check order
         config_data.count("BR_X_PX") && config_data.count("BR_Y_PX")) {
       cv::Point2f tl(std::stof(config_data["TL_X_PX"]),
                      std::stof(config_data["TL_Y_PX"]));
       cv::Point2f tr(std::stof(config_data["TR_X_PX"]),
                      std::stof(config_data["TR_Y_PX"]));
-      // IMPORTANT: Config file saves BL before BR based on previous logic, but
-      // perspective expects TL, TR, BR, BL Let's load them based on key names
-      // and return in the standard order.
       cv::Point2f bl(std::stof(config_data["BL_X_PX"]),
                      std::stof(config_data["BL_Y_PX"]));
       cv::Point2f br(std::stof(config_data["BR_X_PX"]),
                      std::stof(config_data["BR_Y_PX"]));
-
-      corners = {tl, tr, br, bl}; // Standard order: TL, TR, BR, BL
-      if (bDebug)
-        std::cout << "Debug (loadCornersFromConfigFile): Successfully loaded "
-                     "corners from config file."
-                  << std::endl;
-
+      corners = {tl, tr, br, bl};
+      LOG_DEBUG << "Successfully loaded corners from config file." << std::endl;
     } else {
-      if (bDebug)
-        std::cerr << "Warning (loadCornersFromConfigFile): Config file missing "
-                     "one or more pixel coordinate keys (_PX)."
-                  << std::endl;
+      LOG_WARN << "Config file " << config_path
+               << " missing one or more pixel coordinate keys (_PX)."
+               << std::endl;
     }
-
   } catch (const std::exception &e) {
-    if (bDebug)
-      std::cerr
-          << "Warning (loadCornersFromConfigFile): Error parsing config file '"
-          << config_path << "': " << e.what() << std::endl;
+    LOG_WARN << "Error parsing config file '" << config_path
+             << "': " << e.what() << std::endl;
     if (configFile.is_open())
       configFile.close();
-    corners.clear(); // Ensure empty vector on error
+    corners.clear();
   }
   return corners;
 }
@@ -407,7 +382,7 @@ static int classifyIntersectionByCalibration(
 
   if (bDebug && false) { // Set to true for very verbose per-intersection
                          // classification details
-    std::cout << "    Sample Lab: " << intersection_lab_color
+    LOG_DEBUG << "    Sample Lab: " << intersection_lab_color
               << " D(B):" << std::setw(5) << dist_b << " D(W):" << std::setw(5)
               << dist_w << " D(E):" << std::setw(5) << dist_empty
               << " -> Class: " << classification << std::endl;
@@ -422,14 +397,13 @@ static bool loadCornersFromConfig(const std::string &config_path,
                                   std::vector<cv::Point2f> &board_corners) {
   ifstream configFile(config_path);
   if (!configFile.is_open()) {
-    if (bDebug)
-      cout << "Debug: Config file '" << config_path << "' not found." << endl;
+    LOG_DEBUG << "Debug: Config file '" << config_path << "' not found."
+              << endl;
     return false;
   }
 
-  if (bDebug)
-    cout << "Debug: Found config file: " << config_path
-         << ". Attempting to parse." << endl;
+  LOG_DEBUG << "Debug: Found config file: " << config_path
+            << ". Attempting to parse." << endl;
   map<string, string> config_data;
   string line;
   try {
@@ -457,9 +431,8 @@ static bool loadCornersFromConfig(const std::string &config_path,
       int config_height = std::stoi(config_data["ImageHeight"]);
 
       if (config_width == current_width && config_height == current_height) {
-        if (bDebug)
-          cout << "Debug: Config dimensions match current image ("
-               << current_width << "x" << current_height << ")." << endl;
+        LOG_DEBUG << "Debug: Config dimensions match current image ("
+                  << current_width << "x" << current_height << ")." << endl;
 
         if (config_data.count("TL_X_PX") && config_data.count("TL_Y_PX") &&
             config_data.count("TR_X_PX") && config_data.count("TR_Y_PX") &&
@@ -476,32 +449,28 @@ static bool loadCornersFromConfig(const std::string &config_path,
                      std::stof(config_data["BR_Y_PX"]));
 
           board_corners = {tl, tr, br, bl};
-          if (bDebug)
-            cout << "Debug: Successfully loaded corners from config file."
-                 << endl;
+          LOG_DEBUG << "Debug: Successfully loaded corners from config file."
+                    << endl;
           return true;
         } else {
-          if (bDebug)
-            cerr << "Warning: Config file missing one or more pixel coordinate "
-                    "keys (_PX)."
-                 << endl;
+          LOG_WARN
+              << "Warning: Config file missing one or more pixel coordinate "
+                 "keys (_PX)."
+              << endl;
         }
       } else {
-        if (bDebug)
-          cerr << "Warning: Config file dimensions (" << config_width << "x"
-               << config_height << ") do not match image dimensions ("
-               << current_width << "x" << current_height
-               << "). Ignoring config." << endl;
+        LOG_WARN << "Warning: Config file dimensions (" << config_width << "x"
+                 << config_height << ") do not match image dimensions ("
+                 << current_width << "x" << current_height
+                 << "). Ignoring config." << endl;
       }
     } else {
-      if (bDebug)
-        cerr << "Warning: Config file missing ImageWidth or ImageHeight."
-             << endl;
+      LOG_WARN << "Warning: Config file missing ImageWidth or ImageHeight."
+               << endl;
     }
   } catch (const std::exception &e) {
-    if (bDebug)
-      cerr << "Warning: Error parsing config file '" << config_path
-           << "': " << e.what() << ". Using defaults." << endl;
+    LOG_WARN << "Warning: Error parsing config file '" << config_path
+             << "': " << e.what() << ". Using defaults." << endl;
     if (configFile.is_open())
       configFile.close();
     return false; // Ensure returns false if parsing fails
@@ -513,15 +482,13 @@ CalibrationData loadCalibrationData(const std::string &config_path) {
   CalibrationData data;
   std::ifstream configFile(config_path);
   if (!configFile.is_open()) {
-    if (bDebug)
-      std::cerr << "Debug (loadCalibrationData): Config file not found: "
-                << config_path << std::endl;
+    LOG_ERROR << "Debug (loadCalibrationData): Config file not found: "
+              << config_path << std::endl;
     return data;
   }
 
-  if (bDebug)
-    std::cout << "Debug (loadCalibrationData): Parsing config file: "
-              << config_path << std::endl;
+  LOG_DEBUG << "Debug (loadCalibrationData): Parsing config file: "
+            << config_path << std::endl;
   std::map<std::string, std::string> config_map;
   std::string line;
   int line_num = 0;
@@ -541,10 +508,9 @@ CalibrationData loadCalibrationData(const std::string &config_path) {
       value.erase(value.find_last_not_of(" \t") + 1);
       config_map[key] = value;
     } else {
-      if (bDebug)
-        std::cerr << "Warning (loadCalibrationData): Invalid line format (no "
-                     "'=') at line "
-                  << line_num << ": " << line << std::endl;
+      LOG_ERROR << "Warning (loadCalibrationData): Invalid line format (no "
+                   "'=') at line "
+                << line_num << ": " << line << std::endl;
     }
   }
   configFile.close();
@@ -553,12 +519,10 @@ CalibrationData loadCalibrationData(const std::string &config_path) {
     if (config_map.count("DevicePath")) {
       data.device_path = config_map["DevicePath"];
       data.device_path_loaded = true;
-      if (bDebug)
-        std::cout << "  Debug: Loaded DevicePath: " << data.device_path
-                  << std::endl;
+      LOG_DEBUG << "  Debug: Loaded DevicePath: " << data.device_path
+                << std::endl;
     } else {
-      if (bDebug)
-        std::cerr << "  Warning: DevicePath missing from config." << std::endl;
+      LOG_ERROR << "  Warning: DevicePath missing from config." << std::endl;
     }
     // Parse Dimensions (as in your file)
     if (config_map.count("ImageWidth") && config_map.count("ImageHeight")) {
@@ -566,13 +530,11 @@ CalibrationData loadCalibrationData(const std::string &config_path) {
           std::stoi(config_map["ImageWidth"]); // Store in new distinct fields
       data.image_height = std::stoi(config_map["ImageHeight"]);
       data.dimensions_loaded = true;
-      if (bDebug)
-        std::cout << "  Debug: Loaded Dimensions at Calib: " << data.image_width
-                  << "x" << data.image_height << std::endl;
+      LOG_DEBUG << "  Debug: Loaded Dimensions at Calib: " << data.image_width
+                << "x" << data.image_height << std::endl;
     } else {
-      if (bDebug)
-        std::cerr << "  Warning: ImageWidth or ImageHeight missing from config."
-                  << std::endl;
+      LOG_ERROR << "  Warning: ImageWidth or ImageHeight missing from config."
+                << std::endl;
     }
 
     // Parse Corners (_PX) (as in your file)
@@ -591,13 +553,11 @@ CalibrationData loadCalibrationData(const std::string &config_path) {
                      std::stof(config_map["BR_Y_PX"]));
       data.corners = {tl, tr, br, bl};
       data.corners_loaded = true;
-      if (bDebug)
-        std::cout << "  Debug: Loaded Corners (TL, TR, BR, BL): " << tl << ", "
-                  << tr << ", " << br << ", " << bl << std::endl;
+      LOG_DEBUG << "  Debug: Loaded Corners (TL, TR, BR, BL): " << tl << ", "
+                << tr << ", " << br << ", " << bl << std::endl;
     } else {
-      if (bDebug)
-        std::cerr << "  Warning: One or more corner pixel keys (_PX) missing."
-                  << std::endl;
+      LOG_ERROR << "  Warning: One or more corner pixel keys (_PX) missing."
+                << std::endl;
     }
 
     // Parse Corner Colors (L, A, B) (as in your file)
@@ -625,10 +585,9 @@ CalibrationData loadCalibrationData(const std::string &config_path) {
       if (bDebug) {              /* ... debug print for corner colors ... */
       }
     } else {
-      if (bDebug)
-        std::cerr
-            << "  Warning: One or more corner Lab color keys (L/A/B) missing."
-            << std::endl;
+      LOG_ERROR
+          << "  Warning: One or more corner Lab color keys (L/A/B) missing."
+          << std::endl;
     }
 
     // --- NEW: Parse Average Board Color ---
@@ -639,21 +598,21 @@ CalibrationData loadCalibrationData(const std::string &config_path) {
       data.lab_board_avg[2] = std::stof(config_map["BOARD_B_AVG"]);
       data.board_color_loaded = true;
       if (bDebug) {
-        std::cout << std::fixed << std::setprecision(1);
-        std::cout << "  Debug: Loaded Average Board Lab: ["
+        LOG_DEBUG << std::fixed << std::setprecision(1)
+                  << "  Debug: Loaded Average Board Lab: ["
                   << data.lab_board_avg[0] << "," << data.lab_board_avg[1]
                   << "," << data.lab_board_avg[2] << "]" << std::endl;
       }
     } else {
       if (bDebug)
-        std::cerr << "  Warning: Average Board Lab color keys "
+        LOG_ERROR << "  Warning: Average Board Lab color keys "
                      "(BOARD_L/A/B_AVG) missing."
                   << std::endl;
     }
     // --- End NEW ---
 
   } catch (const std::invalid_argument &ia) {
-    std::cerr
+    LOG_ERROR
         << "Error (loadCalibrationData): Invalid number format in config file '"
         << config_path << "'. " << ia.what() << std::endl;
     data.corners_loaded = false;
@@ -661,7 +620,7 @@ CalibrationData loadCalibrationData(const std::string &config_path) {
     data.dimensions_loaded = false;
     data.board_color_loaded = false;
   } catch (const std::out_of_range &oor) {
-    std::cerr
+    LOG_ERROR
         << "Error (loadCalibrationData): Number out of range in config file '"
         << config_path << "'. " << oor.what() << std::endl;
     data.corners_loaded = false;
@@ -669,7 +628,7 @@ CalibrationData loadCalibrationData(const std::string &config_path) {
     data.dimensions_loaded = false;
     data.board_color_loaded = false;
   } catch (const std::exception &e) {
-    std::cerr
+    LOG_ERROR
         << "Error (loadCalibrationData): Generic error parsing config file '"
         << config_path << "': " << e.what() << std::endl;
     data.corners_loaded = false;
@@ -685,35 +644,38 @@ CalibrationData loadCalibrationData(const std::string &config_path) {
 // percentages.
 std::vector<cv::Point2f> getBoardCorners(const cv::Mat &inputImage) {
   std::vector<cv::Point2f> board_corners_result;
-  bool use_config_corners = false;
+  LOG_DEBUG << "getBoardCorners: Determining board corners for image "
+            << inputImage.cols << "x" << inputImage.rows << std::endl;
 
   int current_width = inputImage.cols;
   int current_height = inputImage.rows;
-  CalibrationData calib_data = loadCalibrationData(
-      CALIB_CONFIG_PATH); // CALIB_CONFIG_PATH defined in camera.cpp
+  CalibrationData calib_data = loadCalibrationData(CALIB_CONFIG_PATH);
 
   if (calib_data.corners_loaded && calib_data.dimensions_loaded &&
       calib_data.image_width == current_width &&
       calib_data.image_height == current_height) {
-    if (bDebug)
-      std::cout << "Debug (getBoardCorners): Using corners from config file "
-                   "(dimensions match)."
-                << std::endl;
+    LOG_DEBUG << "Using corners from config file (dimensions match)."
+              << std::endl;
     board_corners_result = calib_data.corners;
-    use_config_corners = true;
-  } else if (calib_data.corners_loaded && calib_data.dimensions_loaded) {
-    if (bDebug)
-      std::cerr << "Warning (getBoardCorners): Config dimensions ("
-                << calib_data.image_width << "x" << calib_data.image_height
-                << ") mismatch image (" << current_width << "x"
-                << current_height << "). Ignoring config corners." << std::endl;
-  }
-  if (!use_config_corners) {
-    if (bDebug) {
-      std::cout << "Debug (getBoardCorners): Falling back to hardcoded "
-                   "percentage values for corners."
-                << std::endl;
+  } else {
+    if (calib_data.corners_loaded &&
+        calib_data.dimensions_loaded) { // Mismatch case
+      LOG_WARN << "Config dimensions (" << calib_data.image_width << "x"
+               << calib_data.image_height << ") mismatch current image ("
+               << current_width << "x" << current_height
+               << "). Ignoring config corners and falling back to defaults."
+               << std::endl;
+    } else if (!calib_data.corners_loaded) {
+      LOG_WARN
+          << "Corner data not loaded from config. Falling back to defaults."
+          << std::endl;
+    } else if (!calib_data.dimensions_loaded) {
+      LOG_WARN << "Dimensions not loaded from config. Falling back to defaults."
+               << std::endl;
     }
+
+    LOG_INFO << "Falling back to hardcoded percentage values for board corners."
+             << std::endl;
     board_corners_result = {cv::Point2f(current_width * 20.0f / 100.0f,
                                         current_height * 8.0f / 100.0f),
                             cv::Point2f(current_width * 73.0f / 100.0f,
@@ -739,36 +701,50 @@ vector<Point2f> getBoardCornersCorrected(int width, int height) {
   return output_corners;
 }
 
-Mat correctPerspective(const Mat &image) {
+cv::Mat correctPerspective(const cv::Mat &image) {
+  LOG_DEBUG << "Correcting perspective for image of size " << image.cols << "x"
+            << image.rows << std::endl;
+  if (image.empty()) {
+    LOG_ERROR << "Input image to correctPerspective is empty." << std::endl;
+    return cv::Mat();
+  }
   int width = image.cols;
   int height = image.rows;
+  std::vector<cv::Point2f> input_corners =
+      getBoardCorners(image); // Uses logging
+  std::vector<cv::Point2f> output_corners =
+      getBoardCornersCorrected(width, height);
+  cv::Mat perspective_matrix =
+      cv::getPerspectiveTransform(input_corners, output_corners);
+  cv::Mat corrected_image;
+  cv::warpPerspective(image, corrected_image, perspective_matrix,
+                      cv::Size(width, height));
 
-  vector<Point2f> input_corners = getBoardCorners(image);
+  if (Logger::getGlobalLogLevel() >=
+      LogLevel::DEBUG) { // Replaces if(bDebug) for imshow
+    cv::Mat display_original = image.clone();
+    cv::Mat display_corrected = corrected_image.clone();
+    for (const auto &corner : input_corners)
+      cv::circle(display_original, corner, 5, cv::Scalar(0, 0, 255), -1);
+    for (const auto &corner : output_corners)
+      cv::circle(display_corrected, corner, 5, cv::Scalar(0, 255, 0), -1);
 
-  vector<Point2f> output_corners = getBoardCornersCorrected(width, height);
-  Mat perspective_matrix =
-      getPerspectiveTransform(input_corners, output_corners);
-  Mat corrected_image;
-  warpPerspective(image, corrected_image, perspective_matrix,
-                  Size(width, height));
-  if (bDebug) {
-    // Draw the input and output corners on the original and corrected images
-    for (const auto &corner : input_corners) {
-      circle(image, corner, 5, Scalar(0, 0, 255), -1); // Red circles
-    }
-    for (const auto &corner : output_corners) {
-      circle(corrected_image, corner, 5, Scalar(0, 255, 0),
-             -1); // Green circles
-    }
-    imshow("Original Image with Input Corners", image);
-    imshow("Corrected Image with Output Corners", corrected_image);
-    waitKey(0);
+    LOG_DEBUG << "Displaying original image with input corners for perspective "
+                 "correction."
+              << std::endl;
+    cv::imshow("Original Image with Input Corners", display_original);
+    LOG_DEBUG << "Displaying corrected image with output corners." << std::endl;
+    cv::imshow("Corrected Image with Output Corners", display_corrected);
+    cv::waitKey(0); // Wait if showing debug images
+    cv::destroyWindow("Original Image with Input Corners");
+    cv::destroyWindow("Corrected Image with Output Corners");
   }
   return corrected_image;
 }
 
 // 1. Preprocessing Function
 Mat preprocessImage(const Mat &image, bool bDebug) {
+  LOG_DEBUG << "Preprocessing image..." << std::endl;
   Mat gray, blurred, edges;
   cvtColor(image, gray, COLOR_BGR2GRAY);
   GaussianBlur(gray, blurred, Size(5, 5), 0); // Or Size(7, 7)
@@ -797,11 +773,13 @@ Mat preprocessImage(const Mat &image, bool bDebug) {
   if (bDebug && false) {
     imshow("Canny", result);
   }
+  LOG_DEBUG << "Preprocessing finished." << std::endl;
   return result;
 }
 
 // 2. Line Segment Detection Function (Refactored)
 vector<Vec4i> detectLineSegments(const Mat &edges, bool bDebug) {
+  LOG_DEBUG << "Detecting line segments..." << std::endl;
   int width = edges.cols;
   int height = edges.rows;
 
@@ -841,8 +819,9 @@ vector<Vec4i> detectLineSegments(const Mat &edges, bool bDebug) {
   HoughLinesP(masked_edges, all_segments, 1, CV_PI / 180, hough_threshold,
               min_line_length, max_line_gap);
 
-  if (bDebug && false) {
-    cout << "Total detected line segments: " << all_segments.size() << endl;
+  if (bDebug) {
+    LOG_DEBUG << "Total detected line segments: " << all_segments.size()
+              << endl;
 
     // Visualize Mask and Line Segments
     Mat mask_and_lines = edges.clone();
@@ -854,24 +833,27 @@ vector<Vec4i> detectLineSegments(const Mat &edges, bool bDebug) {
               mask_thickness); // Draw board mask
 
     // Draw all line segments
-    cout << "\n----all line segments---\n";
+    LOG_DEBUG << "\n----all line segments---\n";
     for (const auto &line : all_segments) {
       cv::line(mask_and_lines, cv::Point(line[0], line[1]),
                cv::Point(line[2], line[3]), line_color, 1);
-      cout << "[" << line[0] << "," << line[1] << "]:" << "[" << line[2] << ","
-           << line[3] << "]\n";
+      LOG_DEBUG << "[" << line[0] << "," << line[1] << "]:" << "[" << line[2]
+                << "," << line[3] << "]\n";
     }
 
     imshow("Board Mask and All Line Segments", mask_and_lines);
     waitKey(0);
   }
-
+  LOG_DEBUG << "Total detected line segments: " << all_segments.size()
+            << std::endl;
   return all_segments;
 }
 
 // 3. Convert and Classify Line Segments to Lines (Refactored)
 pair<vector<Line>, vector<Line>>
 convertSegmentsToLines(const vector<Vec4i> &all_segments, bool bDebug) {
+  LOG_DEBUG << "Converting " << all_segments.size() << " segments to lines..."
+            << std::endl;
   vector<Line> horizontal_lines_raw, vertical_lines_raw;
 
   // Angle tolerance for classifying lines as horizontal or vertical (in
@@ -917,18 +899,21 @@ convertSegmentsToLines(const vector<Vec4i> &all_segments, bool bDebug) {
   sort(horizontal_lines_raw.begin(), horizontal_lines_raw.end(), compareLines);
   sort(vertical_lines_raw.begin(), vertical_lines_raw.end(), compareLines);
 
-  if (bDebug) {
-    cout << "Raw horizontal lines count (after angle classification): "
-         << horizontal_lines_raw.size() << endl;
-    cout << "Raw vertical lines count (after angle classification): "
-         << vertical_lines_raw.size() << endl;
-  }
+  LOG_DEBUG << "Raw horizontal lines count (after angle classification): "
+            << horizontal_lines_raw.size() << endl;
+  LOG_DEBUG << "Raw vertical lines count (after angle classification): "
+            << vertical_lines_raw.size() << endl;
+
+  LOG_DEBUG << "Raw vertical lines (after angle classification): "
+            << vertical_lines_raw.size() << std::endl;
   return std::make_pair(horizontal_lines_raw, vertical_lines_raw);
 }
 
 // 4. Cluster and Average Lines
 vector<double> clusterAndAverageLines(const vector<Line> &raw_lines,
                                       double threshold, bool bDebug) {
+  LOG_DEBUG << "Clustering " << raw_lines.size() << " raw lines with threshold "
+            << threshold << std::endl;
   vector<double> clustered_values;
   if (raw_lines.empty())
     return clustered_values;
@@ -943,23 +928,25 @@ vector<double> clusterAndAverageLines(const vector<Line> &raw_lines,
     for (size_t j = i + 1; j < raw_lines.size(); ++j) {
       if (!processed[j] &&
           abs(raw_lines[j].value - raw_lines[i].value) < threshold) {
-        if (bDebug && false) {
-          cout << "Clustering: " << raw_lines[j].value << " and "
-               << raw_lines[i].value
-               << " (diff: " << abs(raw_lines[j].value - raw_lines[i].value)
-               << ")" << endl;
-        }
-        current_cluster.push_back(raw_lines[j].value);
-        processed[j] = true;
+        LOG_DEBUG << "Clustering: " << raw_lines[j].value << " and "
+                  << raw_lines[i].value
+                  << " (diff: " << abs(raw_lines[j].value - raw_lines[i].value)
+                  << ")" << endl;
       }
+      current_cluster.push_back(raw_lines[j].value);
+      processed[j] = true;
     }
+
     if (!current_cluster.empty()) {
       clustered_values.push_back(
           accumulate(current_cluster.begin(), current_cluster.end(), 0.0) /
           current_cluster.size());
     }
   }
+
   sort(clustered_values.begin(), clustered_values.end());
+  LOG_DEBUG << "Found " << clustered_values.size() << " clustered lines."
+            << std::endl;
   return clustered_values;
 }
 
@@ -967,13 +954,16 @@ vector<double> findUniformGridLinesImproved(const vector<double> &values,
                                             double dominant_distance,
                                             int target_count, double tolerance,
                                             bool bDebug) {
+  LOG_DEBUG << "Finding uniform grid lines (improved) from " << values.size()
+            << " values. Target: " << target_count
+            << ", DomDist: " << dominant_distance << ", Tol: " << tolerance
+            << std::endl;
   vector<double> uniform_lines;
 
   if (values.size() < 2) {
-    if (bDebug) {
-      cout << "findUniformGridLinesImproved2: Less than 2 values, cannot find "
-              "uniform grid.\n";
-    }
+    LOG_DEBUG
+        << "findUniformGridLinesImproved2: Less than 2 values, cannot find "
+           "uniform grid.\n";
     return uniform_lines; // Return empty
   }
 
@@ -1028,9 +1018,7 @@ vector<double> findUniformGridLinesImproved(const vector<double> &values,
 
   // 2. Basis Line Selection
   if (match_data.empty()) {
-    if (bDebug) {
-      cout << "findUniformGridLinesImproved2: No matching data found.\n";
-    }
+    LOG_DEBUG << "findUniformGridLinesImproved2: No matching data found.\n";
     return uniform_lines; // Return empty
   }
 
@@ -1059,15 +1047,16 @@ vector<double> findUniformGridLinesImproved(const vector<double> &values,
   sort(uniform_lines.begin(), uniform_lines.end());
 
   // Final check: If we didn't find enough lines, return empty.
-  if (uniform_lines.size() < target_count) {
-    if (bDebug) {
-      cout << "findUniformGridLinesImproved2: Could not find enough uniform "
-              "lines. Found: "
-           << uniform_lines.size() << ", Expected: " << target_count << "\n";
-    }
-    uniform_lines.clear();
+  if (uniform_lines.empty() ||
+      uniform_lines.size() < static_cast<size_t>(target_count)) {
+    LOG_WARN << "Could not find enough uniform grid lines. Found: "
+             << uniform_lines.size() << ", Expected: " << target_count
+             << std::endl;
+    uniform_lines.clear(); // Ensure it's empty on failure to meet target
+  } else {
+    LOG_DEBUG << "Found " << uniform_lines.size() << " uniform grid lines."
+              << std::endl;
   }
-
   return uniform_lines;
 }
 
@@ -1080,18 +1069,21 @@ std::vector<double> findUniformGridLines(
     bool is_generating_horizontal_lines // True for horizontal (y-coords), false
                                         // for vertical (x-coords)
 ) {
-  if (bDebug) {
-    std::cout
-        << "  Debug (findUniformGridLines - NEW CALIBRATED METHOD): Generating "
-        << (is_generating_horizontal_lines ? "horizontal" : "vertical")
-        << " lines for image size " << corrected_image_width << "x"
-        << corrected_image_height << std::endl;
-  }
+  LOG_INFO << "Finding uniform "
+           << (is_generating_horizontal_lines ? "horizontal" : "vertical")
+           << " grid lines for image " << corrected_image_width << "x"
+           << corrected_image_height << ", target count: " << target_count
+           << std::endl;
 
   if (target_count <= 1) {
+    LOG_ERROR << "findUniformGridLines: target_count must be greater than 1."
+              << std::endl;
     THROWGEMERROR("findUniformGridLines: target_count must be greater than 1.");
   }
   if (corrected_image_width <= 0 || corrected_image_height <= 0) {
+    LOG_ERROR
+        << "findUniformGridLines: corrected_image dimensions must be positive."
+        << endl;
     THROWGEMERROR(
         "findUniformGridLines: corrected_image dimensions must be positive.");
   }
@@ -1102,6 +1094,9 @@ std::vector<double> findUniformGridLines(
       getBoardCornersCorrected(corrected_image_width, corrected_image_height);
 
   if (corrected_board_corners.size() != 4) {
+    LOG_ERROR << "findUniformGridLines: getBoardCornersCorrected did not "
+                 "return 4 points."
+              << endl;
     THROWGEMERROR("findUniformGridLines: getBoardCornersCorrected did not "
                   "return 4 points.");
   }
@@ -1112,14 +1107,12 @@ std::vector<double> findUniformGridLines(
   // used for main axis start/end)
   cv::Point2f bl = corrected_board_corners[3]; // Bottom-Left
 
-  if (bDebug) {
-    std::cout
-        << "    Corrected board corners used for generation (TL, TR, BR, BL):"
-        << std::endl;
-    std::cout << "      TL: " << tl << ", TR: " << tr
-              << ", BR: " << corrected_board_corners[2] << ", BL: " << bl
-              << std::endl;
-  }
+  LOG_DEBUG
+      << "    Corrected board corners used for generation (TL, TR, BR, BL):"
+      << std::endl;
+  LOG_DEBUG << "      TL: " << tl << ", TR: " << tr
+            << ", BR: " << corrected_board_corners[2] << ", BL: " << bl
+            << std::endl;
 
   std::vector<double> lines;
   lines.reserve(target_count);
@@ -1132,6 +1125,9 @@ std::vector<double> findUniformGridLines(
 
     if (std::abs(last_line_y - first_line_y) <
         1.0f) { // Check for negligible height
+      LOG_ERROR << "findUniformGridLines: Corrected board height is too small "
+                   "for horizontal line generation."
+                << endl;
       THROWGEMERROR("findUniformGridLines: Corrected board height is too small "
                     "for horizontal line generation.");
     }
@@ -1139,11 +1135,9 @@ std::vector<double> findUniformGridLines(
     double spacing =
         static_cast<double>(last_line_y - first_line_y) / (target_count - 1.0);
 
-    if (bDebug) {
-      std::cout << "    Horizontal lines: start_y=" << first_line_y
-                << ", end_y=" << last_line_y << ", spacing=" << spacing
-                << std::endl;
-    }
+    LOG_DEBUG << "    Horizontal lines: start_y=" << first_line_y
+              << ", end_y=" << last_line_y << ", spacing=" << spacing
+              << std::endl;
 
     for (int i = 0; i < target_count; ++i) {
       lines.push_back(static_cast<double>(first_line_y) + i * spacing);
@@ -1163,11 +1157,9 @@ std::vector<double> findUniformGridLines(
     double spacing =
         static_cast<double>(last_line_x - first_line_x) / (target_count - 1.0);
 
-    if (bDebug) {
-      std::cout << "    Vertical lines: start_x=" << first_line_x
-                << ", end_x=" << last_line_x << ", spacing=" << spacing
-                << std::endl;
-    }
+    LOG_DEBUG << "    Vertical lines: start_x=" << first_line_x
+              << ", end_x=" << last_line_x << ", spacing=" << spacing
+              << std::endl;
 
     for (int i = 0; i < target_count; ++i) {
       lines.push_back(static_cast<double>(first_line_x) + i * spacing);
@@ -1176,10 +1168,15 @@ std::vector<double> findUniformGridLines(
 
   if (lines.size() != static_cast<size_t>(target_count)) {
     // This should ideally not happen if logic is correct
+    LOG_ERROR << "findUniformGridLines: Failed to generate the target number "
+                 "of lines."
+              << endl;
     THROWGEMERROR(
         "findUniformGridLines: Failed to generate the target number of lines.");
   }
-
+  LOG_DEBUG << "Generated " << lines.size() << " "
+            << (is_generating_horizontal_lines ? "horizontal" : "vertical")
+            << " lines." << std::endl;
   return lines;
 }
 
@@ -1201,11 +1198,9 @@ pair<vector<double>, double> findOptimalClusteringForOrientation(
   // Initialize previous results with clustering at a very low threshold
   prev_clustered_lines = clusterAndAverageLines(raw_lines, 0.1, bDebug);
 
-  if (bDebug) {
-    cout << "Initial Clustering (" << orientation
-         << ") with threshold 0.1: " << prev_clustered_lines.size()
-         << " lines\n";
-  }
+  LOG_DEBUG << "Initial Clustering (" << orientation
+            << ") with threshold 0.1: " << prev_clustered_lines.size()
+            << " lines\n";
 
   clustered_lines =
       prev_clustered_lines; // Initialize with the initial clustering
@@ -1218,27 +1213,23 @@ pair<vector<double>, double> findOptimalClusteringForOrientation(
     clustered_lines =
         clusterAndAverageLines(raw_lines, cluster_threshold, bDebug);
 
-    if (bDebug) {
-      cout << "Clustering Attempt (" << orientation << ") " << i + 1
-           << " with threshold " << cluster_threshold << ": "
-           << clustered_lines.size() << " lines\n";
-    }
+    LOG_DEBUG << "Clustering Attempt (" << orientation << ") " << i + 1
+              << " with threshold " << cluster_threshold << ": "
+              << clustered_lines.size() << " lines\n";
 
     if (clustered_lines.size() < target_count) {
-      if (bDebug) {
-        cout << "Clustered line count (" << orientation
-             << ") dropped below target (" << target_count
-             << "). Returning previous threshold's results.\n";
-      }
+      LOG_DEBUG << "Clustered line count (" << orientation
+                << ") dropped below target (" << target_count
+                << "). Returning previous threshold's results.\n";
+
       return make_pair(prev_clustered_lines,
                        optimal_threshold); // Return previous (better) result
     }
 
     if (clustered_lines.size() == target_count) {
-      if (bDebug) {
-        cout << "Found target number of clustered lines (" << target_count
-             << ") for " << orientation << ".\n";
-      }
+      LOG_DEBUG << "Found target number of clustered lines (" << target_count
+                << ") for " << orientation << ".\n";
+
       return make_pair(clustered_lines, cluster_threshold);
     }
 
@@ -1248,11 +1239,11 @@ pair<vector<double>, double> findOptimalClusteringForOrientation(
         threshold_step; // Increase threshold for the next attempt
   }
 
-  if (bDebug) {
-    cout << "Max iterations reached for " << orientation
-         << " without finding target count or dropping below. Returning last "
-            "iteration's results.\n";
-  }
+  LOG_DEBUG
+      << "Max iterations reached for " << orientation
+      << " without finding target count or dropping below. Returning last "
+         "iteration's results.\n";
+
   return make_pair(clustered_lines, optimal_threshold);
 }
 
@@ -1276,13 +1267,12 @@ findOptimalClustering(const vector<Line> &horizontal_lines_raw,
 // Refactored detectUniformGrid to use the new findOptimalClustering function
 pair<vector<double>, vector<double>> detectUniformGrid(const Mat &image) {
   // image here is expected to be the perspective-corrected BGR image
-  if (bDebug) {
-    std::cout << "Debug (detectUniformGrid): Using NEW calibrated method via "
-                 "refactored findUniformGridLines."
-              << std::endl;
-  }
+  LOG_DEBUG << "Debug (detectUniformGrid): Using NEW calibrated method via "
+               "refactored findUniformGridLines."
+            << std::endl;
 
   if (image.empty()) {
+    LOG_ERROR << "detectUniformGrid: Input image is empty." << endl;
     THROWGEMERROR("detectUniformGrid: Input image is empty.");
   }
 
@@ -1310,16 +1300,18 @@ pair<vector<double>, vector<double>> detectUniformGrid(const Mat &image) {
   }
 
   if (bDebug) {
-    std::cout << "  Debug (detectUniformGrid): Generated uniform horizontal "
+    LOG_DEBUG << "  Debug (detectUniformGrid): Generated uniform horizontal "
                  "lines (y): ";
     for (double y : final_horizontal_y)
-      std::cout << y << " ";
-    std::cout << std::endl;
-    std::cout << "  Debug (detectUniformGrid): Generated uniform vertical "
-                 "lines (x): ";
+      LOG_DEBUG << y << " "
+                << "  Debug (detectUniformGrid): Generated uniform vertical "
+                   "lines (y): "
+                << std::endl;
     for (double x : final_vertical_x)
-      std::cout << x << " ";
-    std::cout << std::endl;
+      LOG_DEBUG << x << " "
+                << "  Debug (detectUniformGrid): Generated uniform vertical "
+                   "lines (x): "
+                << std::endl;
 
     // Optional: Draw these generated lines on a copy of the input image for
     // visualization
@@ -1355,24 +1347,6 @@ pair<vector<double>, vector<double>> detectUniformGrid(const Mat &image) {
   }
 
   return std::make_pair(final_horizontal_y, final_vertical_x);
-
-  /*
-  // --- OLD LOGIC THAT IS NOW BYPASSED ---
-  Mat processed_image = preprocessImage(image, bDebug); // Now unused by this
-  path vector<Vec4i> mixed_segments = detectLineSegments(processed_image,
-  bDebug); // Now unused auto [horizontal_lines_raw, vertical_lines_raw] =
-      convertSegmentsToLines(mixed_segments, bDebug); // Now unused
-
-  auto [clustered_horizontal_y, clustered_vertical_x] = findOptimalClustering(
-      horizontal_lines_raw, vertical_lines_raw, 19, bDebug); // Now unused
-
-  // The old findUniformGridLines would have been called here with
-  clustered_horizontal_y / clustered_vertical_x
-  // e.g., findUniformGridLines(clustered_horizontal_y, 19,
-  uniformity_tolerance, bDebug);
-  // That call is now replaced by the direct calls to the NEW
-  findUniformGridLines above.
-  */
 }
 
 // Function to find intersection points of two sets of lines
@@ -1391,11 +1365,10 @@ int calculateAdaptiveSampleRadius(float board_pixel_width,
                                   float board_pixel_height) {
   const float factor = 0.35f;
   if (board_pixel_width <= 0 || board_pixel_height <= 0) {
-    if (bDebug)
-      std::cerr << "Warning (calculateAdaptiveSampleRadius): Invalid board "
-                   "dimensions ("
-                << board_pixel_width << "x" << board_pixel_height
-                << "). Defaulting radius to 3." << std::endl;
+    LOG_DEBUG << "Warning (calculateAdaptiveSampleRadius): Invalid board "
+                 "dimensions ("
+              << board_pixel_width << "x" << board_pixel_height
+              << "). Defaulting radius to 3." << std::endl;
     return 3; // Default small radius
   }
   float avg_grid_spacing_x =
@@ -1408,13 +1381,12 @@ int calculateAdaptiveSampleRadius(float board_pixel_width,
   // Optional: Add a maximum cap if desired, e.g., radius = std::min(radius,
   // 10);
 
-  if (bDebug) {
-    std::cout << "  Debug (calculateAdaptiveSampleRadius): Board W="
-              << board_pixel_width << ", H=" << board_pixel_height
-              << ". Avg Grid Spacing X=" << avg_grid_spacing_x
-              << ", Y=" << avg_grid_spacing_y << ". Calculated Radius (factor "
-              << factor << "): " << radius << std::endl;
-  }
+  LOG_DEBUG << "  Debug (calculateAdaptiveSampleRadius): Board W="
+            << board_pixel_width << ", H=" << board_pixel_height
+            << ". Avg Grid Spacing X=" << avg_grid_spacing_x
+            << ", Y=" << avg_grid_spacing_y << ". Calculated Radius (factor "
+            << factor << "): " << radius << std::endl;
+
   return radius;
 }
 
@@ -1447,6 +1419,9 @@ static int classifySingleIntersectionByDistance(
       20.0f; // If L is this much higher than avg_white_calib[0]
 
   if (intersection_lab_color[0] < 0) { // Invalid sample
+    LOG_ERROR
+        << "Invalid Lab sample in classifySingleIntersectionByDistance: L="
+        << intersection_lab_color[0] << std::endl;
     THROWGEMERROR(
         "Error: Invalid Lab sample in classifySingleIntersectionByDistance.")
   }
@@ -1454,20 +1429,18 @@ static int classifySingleIntersectionByDistance(
   // --- Heuristic 1: Absolute L* checks (your suggestion) ---
   if (intersection_lab_color[0] <
       (avg_black_calib[0] - L_HEURISTIC_BLACK_OFFSET)) {
-    if (bDebug)
-      std::cout << "      L-Heuristic: Classified as BLACK (L="
-                << intersection_lab_color[0]
-                << " < BlackRefL=" << avg_black_calib[0] << " - "
-                << L_HEURISTIC_BLACK_OFFSET << ")" << std::endl;
+    LOG_DEBUG << "      L-Heuristic: Classified as BLACK (L="
+              << intersection_lab_color[0]
+              << " < BlackRefL=" << avg_black_calib[0] << " - "
+              << L_HEURISTIC_BLACK_OFFSET << ")" << std::endl;
     return 1; // Black
   }
   if (intersection_lab_color[0] >
       (avg_white_calib[0] + L_HEURISTIC_WHITE_OFFSET)) {
-    if (bDebug)
-      std::cout << "      L-Heuristic: Classified as WHITE (L="
-                << intersection_lab_color[0]
-                << " > WhiteRefL=" << avg_white_calib[0] << " + "
-                << L_HEURISTIC_WHITE_OFFSET << ")" << std::endl;
+    LOG_DEBUG << "      L-Heuristic: Classified as WHITE (L="
+              << intersection_lab_color[0]
+              << " > WhiteRefL=" << avg_white_calib[0] << " + "
+              << L_HEURISTIC_WHITE_OFFSET << ")" << std::endl;
     return 2; // White
   }
 
@@ -1504,11 +1477,9 @@ static int classifySingleIntersectionByDistance(
     // You could add a fallback to unweighted if desired, or just default to
     // empty.
     classification = 0;
-    if (bDebug) {
-      std::cout << "      WeightedDist: All checks failed or distances too "
-                   "high. MinWDist="
-                << min_weighted_dist << ". Defaulting to Empty." << std::endl;
-    }
+    LOG_DEBUG << "      WeightedDist: All checks failed or distances too "
+                 "high. MinWDist="
+              << min_weighted_dist << ". Defaulting to Empty." << std::endl;
   }
   return classification;
 }
@@ -1522,9 +1493,8 @@ static void classifyIntersectionsByCalibration(
     const std::vector<cv::Point2f> &intersection_points, int num_intersections,
     const cv::Mat &corrected_bgr_image, int adaptive_sample_radius_for_drawing,
     cv::Mat &board_state_output, cv::Mat &board_with_stones_output) {
-  if (bDebug)
-    std::cout << "  Debug (classifyIntersectionsByCalibration): Starting..."
-              << std::endl;
+  LOG_DEBUG << "  Debug (classifyIntersectionsByCalibration): Starting..."
+            << std::endl;
 
   cv::Vec3f avg_black_calib = (calib_data.lab_tl + calib_data.lab_bl) * 0.5f;
   cv::Vec3f avg_white_calib = (calib_data.lab_tr + calib_data.lab_br) * 0.5f;
@@ -1532,22 +1502,21 @@ static void classifyIntersectionsByCalibration(
   board_state_output = cv::Mat(19, 19, CV_8U, cv::Scalar(0));
   board_with_stones_output = corrected_bgr_image.clone();
 
-  if (bDebug) {
-    std::cout << std::fixed << std::setprecision(1);
-    std::cout << "    Using Ref Black Lab: " << avg_black_calib << std::endl;
-    std::cout << "    Using Ref White Lab: " << avg_white_calib << std::endl;
-    std::cout << "    Using Ref Board Lab: " << calib_data.lab_board_avg
-              << std::endl;
-    // These constants are now inside classifySingleIntersectionByDistance,
-    // but you can print their values here if you re-declare them or pass them.
-    // For now, let's assume the user knows they are defined locally in the
-    // helper. To print them, they would need to be accessible here (e.g.,
-    // file-static const). For simplicity in this snippet, I'll omit printing
-    // the local consts of the helper.
-    std::cout << "    (Using L-heuristic and weighted distances with internal "
-                 "thresholds/weights)"
-              << std::endl;
-  }
+  LOG_DEBUG
+      << std::fixed << std::setprecision(1)
+      << "    Using Ref Black Lab: " << avg_black_calib
+      << "    Using Ref White Lab: " << avg_white_calib
+      << "    Using Ref Board Lab: "
+      << calib_data.lab_board_avg
+      // These constants are now inside classifySingleIntersectionByDistance,
+      // but you can print their values here if you re-declare them or pass
+      // them. For now, let's assume the user knows they are defined locally in
+      // the helper. To print them, they would need to be accessible here (e.g.,
+      // file-static const). For simplicity in this snippet, I'll omit printing
+      // the local consts of the helper.
+      << "    (Using L-heuristic and weighted distances with internal "
+         "thresholds/weights)"
+      << std::endl;
 
   for (int i = 0; i < num_intersections; ++i) {
     int row = i / 19;
@@ -1577,7 +1546,7 @@ static void classifyIntersectionsByCalibration(
               ? "Black"
               : (classification == 2 ? "White" : "Empty/Board");
 
-      std::cout << "    Int [" << std::setw(2) << row << "," << std::setw(2)
+      LOG_DEBUG << "    Int [" << std::setw(2) << row << "," << std::setw(2)
                 << col << "] Lab: [" << std::setw(5)
                 << current_intersection_lab[0] << "," << std::setw(5)
                 << current_intersection_lab[1] << "," << std::setw(5)
@@ -1615,9 +1584,8 @@ static void classifyIntersectionsByCalibration(
     imshow("Direct Classification Result (Helper)", board_with_stones_output);
     cv::waitKey(0);
   }
-  if (bDebug)
-    std::cout << "  Debug (classifyIntersectionsByCalibration): Finished."
-              << std::endl;
+  LOG_DEBUG << "  Debug (classifyIntersectionsByCalibration): Finished."
+            << std::endl;
 }
 
 // Function to process the Go board image and determine the board state
@@ -1627,9 +1595,8 @@ void processGoBoard(
     cv::Mat &board_with_stones_out,                    // Renamed for clarity
     std::vector<cv::Point2f> &intersection_points_out) // Renamed for clarity
 {
-  if (bDebug)
-    std::cout << "Debug (processGoBoard): Starting board processing."
-              << std::endl;
+  LOG_DEBUG << "Debug (processGoBoard): Starting board processing."
+            << std::endl;
 
   // 1. Load Calibration Data
   CalibrationData calib_data = loadCalibrationData(CALIB_CONFIG_PATH);
@@ -1648,8 +1615,7 @@ void processGoBoard(
                "are correctly placed.";
     THROWGEMERROR(err_msg);
   }
-  if (bDebug)
-    std::cout << "  Debug: Full calibration data loaded." << std::endl;
+  LOG_DEBUG << "  Debug: Full calibration data loaded." << std::endl;
 
   // 2. Perspective Correction
   cv::Mat image_bgr_corrected = correctPerspective(image_bgr_in);
@@ -1681,16 +1647,15 @@ void processGoBoard(
   int num_intersections = intersection_points_out.size();
   if (num_intersections != 361 && image_bgr_corrected.cols > 0 &&
       image_bgr_corrected.rows > 0) {
-    std::cerr << "Warning (processGoBoard): Expected 361 intersections, found "
+    LOG_ERROR << "Warning (processGoBoard): Expected 361 intersections, found "
               << num_intersections << "." << std::endl;
     if (num_intersections == 0)
       THROWGEMERROR("No intersection points found.");
   } else if (num_intersections == 0) {
     THROWGEMERROR("No intersection points found (image might be invalid).");
   }
-  if (bDebug)
-    std::cout << "  Debug: Found " << num_intersections
-              << " intersection points." << std::endl;
+  LOG_DEBUG << "  Debug: Found " << num_intersections << " intersection points."
+            << std::endl;
 
   // 4. Sample Lab Color at Each Intersection
   float board_pixel_width_corrected = 0;
@@ -1707,20 +1672,18 @@ void processGoBoard(
   int adaptive_sample_radius = calculateAdaptiveSampleRadius(
       board_pixel_width_corrected, board_pixel_height_corrected);
 
-  if (bDebug)
-    std::cout << "width:" << board_pixel_width_corrected
-              << "\theight:" << board_pixel_height_corrected
-              << "  Debug: Image processing using adaptive_sample_radius: "
-              << adaptive_sample_radius << std::endl;
+  LOG_DEBUG << "width:" << board_pixel_width_corrected
+            << "\theight:" << board_pixel_height_corrected
+            << "  Debug: Image processing using adaptive_sample_radius: "
+            << adaptive_sample_radius << std::endl;
 
   std::vector<cv::Vec3f> average_lab_values(num_intersections);
   for (int i = 0; i < num_intersections; ++i) {
     average_lab_values[i] = getAverageLab(image_lab, intersection_points_out[i],
                                           adaptive_sample_radius);
   }
-  if (bDebug)
-    std::cout << "  Debug: Sampled Lab colors for all intersections."
-              << std::endl;
+  LOG_DEBUG << "  Debug: Sampled Lab colors for all intersections."
+            << std::endl;
 
   // --- 5. Call the new helper function for Direct Classification ---
   classifyIntersectionsByCalibration(
@@ -1752,7 +1715,7 @@ void drawSimulatedGoBoard(const std::string &full_tournament_sgf_content,
 
   if (board_proper_size_px <=
       18 * 5) { // Ensure at least 5px per line_spacing for visibility
-    std::cerr << "Error (drawSimulatedGoBoard): Canvas size " << canvas_size_px
+    LOG_ERROR << "Error (drawSimulatedGoBoard): Canvas size " << canvas_size_px
               << "px is too small for margins and a legible board. Board "
                  "proper size: "
               << board_proper_size_px << std::endl;
@@ -2033,10 +1996,10 @@ void drawSimulatedGoBoard(const std::string &full_tournament_sgf_content,
   }
 
   if (bDebug) {
-    std::cout << "Debug (drawSimulatedGoBoard): Displaying board state after "
+    LOG_DEBUG << "Debug (drawSimulatedGoBoard): Displaying board state after "
               << display_up_to_move_idx << " B/W moves." << std::endl;
     if (highlight_this_move_idx != -1) {
-      std::cout << "Debug (drawSimulatedGoBoard): Highlighting move index "
+      LOG_DEBUG << "Debug (drawSimulatedGoBoard): Highlighting move index "
                 << highlight_this_move_idx << std::endl;
     }
   }
@@ -2058,24 +2021,21 @@ getStoneCandidateCenters(const cv::Mat &image_for_size_ref,
   double min_abs_area = image_area * min_area_ratio;
   double max_abs_area = image_area * max_area_ratio;
 
-  if (bDebug) {
-    std::cout << "    getCandidateCenters: Image Area=" << image_area
-              << ", MinStoneArea=" << min_abs_area
-              << ", MaxStoneArea=" << max_abs_area << std::endl;
-  }
+  LOG_DEBUG << "    getCandidateCenters: Image Area=" << image_area
+            << ", MinStoneArea=" << min_abs_area
+            << ", MaxStoneArea=" << max_abs_area << std::endl;
 
   for (const auto &contour : contours) {
     double area = cv::contourArea(contour);
     if (area < min_abs_area || area > max_abs_area) {
       if (bDebug && area > 10)
-        std::cout << "      Contour rejected by area: " << area << std::endl;
+        LOG_DEBUG << "      Contour rejected by area: " << area << std::endl;
       continue;
     }
 
     if (contour.size() < 5) {
-      if (bDebug)
-        std::cout << "      Contour rejected by insufficient points: "
-                  << contour.size() << std::endl;
+      LOG_DEBUG << "      Contour rejected by insufficient points: "
+                << contour.size() << std::endl;
       continue;
     }
 
@@ -2085,9 +2045,8 @@ getStoneCandidateCenters(const cv::Mat &image_for_size_ref,
 
     double circularity = (4 * CV_PI * area) / (perimeter * perimeter);
     if (circularity < min_circularity) {
-      if (bDebug)
-        std::cout << "      Contour rejected by circularity: " << circularity
-                  << " (Area: " << area << ")" << std::endl;
+      LOG_DEBUG << "      Contour rejected by circularity: " << circularity
+                << " (Area: " << area << ")" << std::endl;
       continue;
     }
 
@@ -2096,9 +2055,8 @@ getStoneCandidateCenters(const cv::Mat &image_for_size_ref,
       cv::Point2f center(static_cast<float>(M.m10 / M.m00),
                          static_cast<float>(M.m01 / M.m00));
       centers.push_back(center);
-      if (bDebug)
-        std::cout << "      Contour accepted: Center=" << center
-                  << ", Area=" << area << ", Circ=" << circularity << std::endl;
+      LOG_DEBUG << "      Contour accepted: Center=" << center
+                << ", Area=" << area << ", Circ=" << circularity << std::endl;
     }
   }
   return centers;
@@ -2110,25 +2068,20 @@ bool detectSpecificColoredRoundShape(
     float l_tolerance,                    // Tolerance for L channel
     float ab_tolerance,                   // Tolerance for A and B channels
     cv::Point2f &detectedCenter, float &detectedRadius) {
-
-  // ... (initial checks, Lab conversion, color masking, morphology -
-  // unchanged) ...
   if (inputBgrImage.empty()) {
-    if (bDebug)
-      std::cerr << "Error (detectSpecificColoredRoundShape): Input BGR image "
-                   "is empty."
-                << std::endl;
+    LOG_ERROR << "Error (detectSpecificColoredRoundShape): Input BGR image "
+                 "is empty."
+              << std::endl;
     return false;
   }
 
   cv::Rect roi =
       regionOfInterest & cv::Rect(0, 0, inputBgrImage.cols, inputBgrImage.rows);
   if (roi.width <= 0 || roi.height <= 0) {
-    if (bDebug)
-      std::cerr << "Error (detectSpecificColoredRoundShape): Region of "
-                   "interest is invalid or outside image bounds. ROI: "
-                << regionOfInterest << ", Image: " << inputBgrImage.cols << "x"
-                << inputBgrImage.rows << std::endl;
+    LOG_ERROR << "Error (detectSpecificColoredRoundShape): Region of "
+                 "interest is invalid or outside image bounds. ROI: "
+              << regionOfInterest << ", Image: " << inputBgrImage.cols << "x"
+              << inputBgrImage.rows << std::endl;
     return false;
   }
 
@@ -2146,14 +2099,11 @@ bool detectSpecificColoredRoundShape(
                  std::min(255.f, expectedAvgLabColor[1] + ab_tolerance),
                  std::min(255.f, expectedAvgLabColor[2] + ab_tolerance));
 
-  if (bDebug) {
-    std::cout << "  Debug (detectSpecificColoredRoundShape for ROI at "
-              << roi.tl() << "): Target Lab: " << expectedAvgLabColor
-              << ", L_tol: " << l_tolerance << ", AB_tol: " << ab_tolerance
-              << std::endl;
-    std::cout << "    Calculated Lab Lower: " << labLower
-              << ", Lab Upper: " << labUpper << std::endl;
-  }
+  LOG_DEBUG << "  Debug (detectSpecificColoredRoundShape for ROI at "
+            << roi.tl() << "): Target Lab: " << expectedAvgLabColor
+            << ", L_tol: " << l_tolerance << ", AB_tol: " << ab_tolerance
+            << "    Calculated Lab Lower: " << labLower
+            << ", Lab Upper: " << labUpper << std::endl;
 
   cv::inRange(roiImageLab, labLower, labUpper, colorMask);
 
@@ -2184,18 +2134,15 @@ bool detectSpecificColoredRoundShape(
   cv::findContours(colorMask, contours, cv::RETR_EXTERNAL,
                    cv::CHAIN_APPROX_SIMPLE);
 
-  if (bDebug) {
-    std::cout << "  Debug (detectSpecificColoredRoundShape for ROI at "
-              << roi.tl() << "): Found " << contours.size()
-              << " raw contours in ROI (" << roi.x << "," << roi.y << " "
-              << roi.width << "x" << roi.height << ")." << std::endl;
-  }
+  LOG_DEBUG << "  Debug (detectSpecificColoredRoundShape for ROI at "
+            << roi.tl() << "): Found " << contours.size()
+            << " raw contours in ROI (" << roi.x << "," << roi.y << " "
+            << roi.width << "x" << roi.height << ")." << std::endl;
 
   if (contours.empty()) {
-    if (bDebug)
-      std::cout << "  Debug (detectSpecificColoredRoundShape for ROI at "
-                << roi.tl() << "): No contours " << "found after color masking."
-                << std::endl;
+    LOG_DEBUG << "  Debug (detectSpecificColoredRoundShape for ROI at "
+              << roi.tl() << "): No contours " << "found after color masking."
+              << std::endl;
     return false;
   }
 
@@ -2204,13 +2151,11 @@ bool detectSpecificColoredRoundShape(
   double maxStoneAreaInRoi = roiArea * 0.70;
   double minCircularity = 0.65; // Current threshold
 
-  if (bDebug) {
-    std::cout << "  Debug (detectSpecificColoredRoundShape for ROI at "
-              << roi.tl() << "): ROI Area=" << roiArea
-              << ", MinStoneAreaInRoi=" << minStoneAreaInRoi
-              << ", MaxStoneAreaInRoi=" << maxStoneAreaInRoi
-              << ", MinCircularity=" << minCircularity << std::endl;
-  }
+  LOG_DEBUG << "  Debug (detectSpecificColoredRoundShape for ROI at "
+            << roi.tl() << "): ROI Area=" << roiArea
+            << ", MinStoneAreaInRoi=" << minStoneAreaInRoi
+            << ", MaxStoneAreaInRoi=" << maxStoneAreaInRoi
+            << ", MinCircularity=" << minCircularity << std::endl;
 
   std::vector<cv::Point> bestContour;
   double bestContourScore = 0.0f;
@@ -2225,10 +2170,9 @@ bool detectSpecificColoredRoundShape(
   for (const auto &contour : contours) {
     contour_idx++;
     if (contour.size() < 5) {
-      if (bDebug)
-        std::cout << "    Contour " << contour_idx << " (ROI " << roi.tl()
-                  << ") rejected: too few points (" << contour.size() << ")."
-                  << std::endl;
+      LOG_DEBUG << "    Contour " << contour_idx << " (ROI " << roi.tl()
+                << ") rejected: too few points (" << contour.size() << ")."
+                << std::endl;
       continue;
     }
 
@@ -2236,84 +2180,73 @@ bool detectSpecificColoredRoundShape(
     double perimeter = cv::arcLength(contour, true);
 
     if (perimeter < 1.0) {
-      if (bDebug)
-        std::cout << "    Contour " << contour_idx << " (ROI " << roi.tl()
-                  << ") rejected: perimeter too small (" << perimeter << ")."
-                  << std::endl;
+      LOG_DEBUG << "    Contour " << contour_idx << " (ROI " << roi.tl()
+                << ") rejected: perimeter too small (" << perimeter << ")."
+                << std::endl;
       continue;
     }
 
     double circularity = (4 * CV_PI * area) / (perimeter * perimeter);
 
-    if (bDebug) {
-      std::cout << "    Contour " << contour_idx << " (ROI " << roi.tl()
-                << ") evaluating: " << "Area=" << area
-                << " (Thresh: " << minStoneAreaInRoi << "-" << maxStoneAreaInRoi
-                << "), " << "Circularity=" << circularity
-                << " (Thresh: >=" << minCircularity << ")." << std::endl;
-    }
+    LOG_DEBUG << "    Contour " << contour_idx << " (ROI " << roi.tl()
+              << ") evaluating: " << "Area=" << area
+              << " (Thresh: " << minStoneAreaInRoi << "-" << maxStoneAreaInRoi
+              << "), " << "Circularity=" << circularity
+              << " (Thresh: >=" << minCircularity << ")." << std::endl;
 
     if (area < minStoneAreaInRoi || area > maxStoneAreaInRoi) {
-      if (bDebug) {
-        std::cout << "      -> Contour " << contour_idx << " (ROI " << roi.tl()
-                  << ") REJECTED by area."
-                  << (area < minStoneAreaInRoi ? " (too small)"
-                                               : " (too large)")
-                  << std::endl;
-        cv::drawContours(roi_contour_vis_canvas,
-                         std::vector<std::vector<cv::Point>>{contour}, -1,
-                         cv::Scalar(0, 165, 255), 1); // Orange for area fail
-      }
+      LOG_DEBUG << "      -> Contour " << contour_idx << " (ROI " << roi.tl()
+                << ") REJECTED by area."
+                << (area < minStoneAreaInRoi ? " (too small)" : " (too large)")
+                << std::endl;
+      cv::drawContours(roi_contour_vis_canvas,
+                       std::vector<std::vector<cv::Point>>{contour}, -1,
+                       cv::Scalar(0, 165, 255), 1); // Orange for area fail
       continue;
     }
 
     if (circularity < minCircularity) {
-      if (bDebug) {
-        std::cout << "      -> Contour " << contour_idx << " (ROI " << roi.tl()
-                  << ") REJECTED by circularity." << std::endl;
-        // Draw the contour that failed circularity check in blue
-        cv::drawContours(roi_contour_vis_canvas,
-                         std::vector<std::vector<cv::Point>>{contour}, -1,
-                         cv::Scalar(255, 0, 0), 1); // Blue for circ fail
-        cv::putText(roi_contour_vis_canvas,
-                    "C:" + std::to_string(circularity).substr(0, 4),
-                    contour[0] - cv::Point(0, 5), cv::FONT_HERSHEY_SIMPLEX, 0.3,
-                    cv::Scalar(255, 100, 100));
-      }
+      LOG_DEBUG << "      -> Contour " << contour_idx << " (ROI " << roi.tl()
+                << ") REJECTED by circularity." << std::endl;
+      // Draw the contour that failed circularity check in blue
+      cv::drawContours(roi_contour_vis_canvas,
+                       std::vector<std::vector<cv::Point>>{contour}, -1,
+                       cv::Scalar(255, 0, 0), 1); // Blue for circ fail
+      cv::putText(roi_contour_vis_canvas,
+                  "C:" + std::to_string(circularity).substr(0, 4),
+                  contour[0] - cv::Point(0, 5), cv::FONT_HERSHEY_SIMPLEX, 0.3,
+                  cv::Scalar(255, 100, 100));
       continue;
     }
 
-    if (bDebug) {
-      std::cout << "      => Contour " << contour_idx << " (ROI " << roi.tl()
-                << ") PASSED filters. Current best score: " << bestContourScore
-                << std::endl;
-      // Draw passed contours in a tentative color like yellow
-      cv::drawContours(roi_contour_vis_canvas,
-                       std::vector<std::vector<cv::Point>>{contour}, -1,
-                       cv::Scalar(0, 255, 255), 1);
-    }
+    LOG_DEBUG << "      => Contour " << contour_idx << " (ROI " << roi.tl()
+              << ") PASSED filters. Current best score: " << bestContourScore
+              << std::endl;
+    // Draw passed contours in a tentative color like yellow
+    cv::drawContours(roi_contour_vis_canvas,
+                     std::vector<std::vector<cv::Point>>{contour}, -1,
+                     cv::Scalar(0, 255, 255), 1);
 
     if (area > bestContourScore) {
       bestContourScore = area;
       bestContour = contour;
-      if (bDebug)
-        std::cout << "        ==> New best contour " << contour_idx << " (ROI "
-                  << roi.tl() << ") with area " << area << std::endl;
+      LOG_DEBUG << "        ==> New best contour " << contour_idx << " (ROI "
+                << roi.tl() << ") with area " << area << std::endl;
     }
-  }
 
-  if (bDebug && !contours.empty()) { // Show the canvas if we had contours
-    std::string roi_contours_win_name = "Evaluated Contours (ROI X" +
-                                        std::to_string(roi.x) + " Y" +
-                                        std::to_string(roi.y) + ")";
-    if (!bestContour.empty()) {
-      // Highlight best contour in Green
-      cv::drawContours(roi_contour_vis_canvas,
-                       std::vector<std::vector<cv::Point>>{bestContour}, -1,
-                       cv::Scalar(0, 255, 0), 2);
+    if (bDebug && !contours.empty()) { // Show the canvas if we had contours
+      std::string roi_contours_win_name = "Evaluated Contours (ROI X" +
+                                          std::to_string(roi.x) + " Y" +
+                                          std::to_string(roi.y) + ")";
+      if (!bestContour.empty()) {
+        // Highlight best contour in Green
+        cv::drawContours(roi_contour_vis_canvas,
+                         std::vector<std::vector<cv::Point>>{bestContour}, -1,
+                         cv::Scalar(0, 255, 0), 2);
+      }
+      cv::imshow(roi_contours_win_name, roi_contour_vis_canvas);
+      waitKey(0);
     }
-    cv::imshow(roi_contours_win_name, roi_contour_vis_canvas);
-    waitKey(0);
   }
 
   if (!bestContour.empty()) {
@@ -2323,21 +2256,18 @@ bool detectSpecificColoredRoundShape(
     detectedCenter.x = centerInRoi.x + roi.x;
     detectedCenter.y = centerInRoi.y + roi.y;
     detectedRadius = radiusInRoi;
-    if (bDebug)
-      std::cout << "  Debug (detectSpecificColoredRoundShape for ROI at "
-                << roi.tl() << "): Found specific "
-                << "stone. Center (orig img): " << detectedCenter
-                << ", Radius: " << detectedRadius << std::endl;
+    LOG_DEBUG << "  Debug (detectSpecificColoredRoundShape for ROI at "
+              << roi.tl() << "): Found specific "
+              << "stone. Center (orig img): " << detectedCenter
+              << ", Radius: " << detectedRadius << std::endl;
     return true;
   }
-  if (bDebug)
-    std::cout << "  Debug (detectSpecificColoredRoundShape for ROI at "
-              << roi.tl() << "): No suitable "
-              << "specific stone contour found in ROI after filtering."
-              << std::endl;
+  LOG_DEBUG << "  Debug (detectSpecificColoredRoundShape for ROI at "
+            << roi.tl() << "): No suitable "
+            << "specific stone contour found in ROI after filtering."
+            << std::endl;
   return false;
 }
-
 // Utility function to detect a single colored round shape in a region
 // Utility function to detect a single colored round shape in a region
 // Output order for detected_corners_tl_tr_br_bl: TL, TR, BR, BL
@@ -2350,17 +2280,16 @@ bool detectFourCornersGoBoard(
     std::vector<cv::Point2f> &detected_raw_centers_tl_tr_br_bl,
     std::vector<float> &detected_raw_radii_tl_tr_br_bl) {
 
-  if (bDebug)
-    std::cout << "Debug (detectFourCornersGoBoard - Config-Refined & ROI "
-                 "Util): Starting..."
-              << std::endl;
+  LOG_DEBUG << "Debug (detectFourCornersGoBoard - Config-Refined & ROI "
+               "Util): Starting..."
+            << std::endl;
 
   detected_raw_centers_tl_tr_br_bl.assign(
       4, cv::Point2f(-1, -1)); // Initialize with invalid points
   detected_raw_radii_tl_tr_br_bl.assign(4, -1.0f);
 
   if (input_bgr_image.empty()) {
-    std::cerr << "Error (detectFourCornersGoBoard): Input image is empty."
+    LOG_ERROR << "Error (detectFourCornersGoBoard): Input image is empty."
               << std::endl;
     return false;
   }
@@ -2368,7 +2297,7 @@ bool detectFourCornersGoBoard(
   CalibrationData calib_data = loadCalibrationData(CALIB_CONFIG_PATH);
   if (!calib_data.corners_loaded || !calib_data.colors_loaded ||
       !calib_data.dimensions_loaded) {
-    std::cerr << "Error (detectFourCornersGoBoard): Essential calibration data "
+    LOG_ERROR << "Error (detectFourCornersGoBoard): Essential calibration data "
                  "(corners, colors, or dimensions) not loaded. Cannot perform "
                  "refined detection."
               << std::endl;
@@ -2378,7 +2307,7 @@ bool detectFourCornersGoBoard(
   // Ensure input image dimensions match calibration for perspective transform
   if (input_bgr_image.cols != calib_data.image_width ||
       input_bgr_image.rows != calib_data.image_height) {
-    std::cerr << "Error (detectFourCornersGoBoard): Input image dimensions ("
+    LOG_ERROR << "Error (detectFourCornersGoBoard): Input image dimensions ("
               << input_bgr_image.cols << "x" << input_bgr_image.rows
               << ") do not match calibration config dimensions ("
               << calib_data.image_width << "x" << calib_data.image_height
@@ -2429,22 +2358,18 @@ bool detectFourCornersGoBoard(
     roi_corrected &=
         cv::Rect(0, 0, corrected_bgr_image.cols, corrected_bgr_image.rows);
 
-    if (bDebug) {
-      std::cout << "  Debug (detectFourCorners for " << corner_names[i]
-                << "):" << std::endl;
-      std::cout << "    Target Grid Coords: (" << target_r << "," << target_c
-                << ")" << std::endl;
-      std::cout << "    Calculated ROI in Corrected Img: " << roi_corrected
-                << std::endl;
-      std::cout << "    Using Lab Ref: " << corner_lab_refs[i] << std::endl;
-    }
+    LOG_DEBUG << "  Debug (detectFourCorners for " << corner_names[i]
+              << "):" << "    Target Grid Coords: (" << target_r << ","
+              << target_c << ")"
+              << "    Calculated ROI in Corrected Img: " << roi_corrected
+              << "    Using Lab Ref: " << corner_lab_refs[i] << std::endl;
 
     if (roi_corrected.width <= 0 || roi_corrected.height <= 0) {
       all_found = false;
-      if (bDebug)
-        std::cerr << "    ROI for " << corner_names[i]
-                  << " is invalid after clamping. Skipping detection."
-                  << std::endl;
+
+      LOG_ERROR << "    ROI for " << corner_names[i]
+                << " is invalid after clamping. Skipping detection."
+                << std::endl;
       continue;
     }
 
@@ -2484,28 +2409,26 @@ bool detectFourCornersGoBoard(
       detected_raw_radii_tl_tr_br_bl[i] =
           detected_radius_corrected * scale_factor_at_roi;
 
-      if (bDebug)
-        std::cout << "    Found " << corner_names[i]
-                  << ": Corrected Center=" << detected_center_corrected
-                  << ", Raw Center=" << detected_raw_centers_tl_tr_br_bl[i]
-                  << ", Corrected Radius=" << detected_radius_corrected
-                  << ", Approx Raw Radius=" << detected_raw_radii_tl_tr_br_bl[i]
-                  << std::endl;
+      LOG_DEBUG << "    Found " << corner_names[i]
+                << ": Corrected Center=" << detected_center_corrected
+                << ", Raw Center=" << detected_raw_centers_tl_tr_br_bl[i]
+                << ", Corrected Radius=" << detected_radius_corrected
+                << ", Approx Raw Radius=" << detected_raw_radii_tl_tr_br_bl[i]
+                << std::endl;
     } else {
       all_found = false;
-      if (bDebug)
-        std::cerr << "    Failed to find " << corner_names[i]
-                  << " stone using specific Lab target." << std::endl;
+      LOG_ERROR << "    Failed to find " << corner_names[i]
+                << " stone using specific Lab target." << std::endl;
     }
   }
 
   if (all_found) {
     if (bDebug) {
-      std::cout << "  Refined config-guided detection successful. Raw corner "
+      LOG_DEBUG << "  Refined config-guided detection successful. Raw corner "
                    "centers (TL, TR, BR, BL):"
                 << std::endl;
       for (size_t i = 0; i < detected_raw_centers_tl_tr_br_bl.size(); ++i) {
-        std::cout << "    " << corner_names[i] << ": "
+        LOG_DEBUG << "    " << corner_names[i] << ": "
                   << detected_raw_centers_tl_tr_br_bl[i]
                   << " (Radius: " << detected_raw_radii_tl_tr_br_bl[i] << ")"
                   << std::endl;
@@ -2528,12 +2451,9 @@ bool detectFourCornersGoBoard(
     }
     return true;
   } else {
-    std::cerr << "Error (detectFourCornersGoBoard - ROI Util): Failed to "
+    LOG_ERROR << "Error (detectFourCornersGoBoard - ROI Util): Failed to "
                  "pinpoint all four corner stones."
               << std::endl;
     return false;
   }
 }
-
-// ... (rest of image.cpp, including detectSpecificColoredRoundShape,
-// processGoBoard etc. from previous versions)
