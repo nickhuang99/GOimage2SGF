@@ -1,5 +1,6 @@
 // gem.cpp
 #include "common.h"
+#include "logger.h"
 #include <algorithm>
 #include <bits/getopt_core.h>
 #include <cerrno> // For errno
@@ -132,35 +133,44 @@ void displayHelpMessage() {
 }
 
 void processImageWorkflow(const std::string &imagePath) {
-  cout << "Processing image: " << imagePath << endl;
+  LOG_INFO << "Processing image: " << imagePath << std::endl;
   cv::Mat image_bgr = imread(imagePath);
   if (image_bgr.empty()) {
+    LOG_ERROR << "Could not open or find the image: " << imagePath << std::endl;
     THROWGEMERROR("Could not open or find the image: " + imagePath);
   } else {
     try {
       cv::Mat board_state, board_with_stones;
-      vector<Point2f> intersection_points;
+      std::vector<Point2f> intersection_points;
       processGoBoard(image_bgr, board_state, board_with_stones,
                      intersection_points);
-      // Further processing or display (could be moved to another function if
-      // needed)
-      if (bDebug || true) {
-        imshow("processGoBoard", board_with_stones);
+      LOG_INFO << "Image processed successfully. Board state matrix size: "
+               << board_state.rows << "x" << board_state.cols << std::endl;
+
+      if (bDebug || Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
+        imshow("processGoBoard Result", board_with_stones);
+        LOG_DEBUG << "Displaying processed board. Press any key to continue."
+                  << std::endl;
         waitKey(0);
+        destroyWindow("processGoBoard Result");
       }
     } catch (const cv::Exception &e) {
+      LOG_ERROR << "OpenCV error in processImageWorkflow: " << e.what()
+                << std::endl;
       THROWGEMERROR("OpenCV error in processImageWorkflow: " +
-                    string(e.what())); // Wrap OpenCV exceptions
+                    std::string(e.what()));
     }
   }
 }
 
 void generateSGFWorkflow(const std::string &inputImagePath,
                          const std::string &outputSGFPath) {
-  cout << "Generating SGF from image: " << inputImagePath
-       << " to: " << outputSGFPath << endl;
+  LOG_INFO << "Generating SGF from image: " << inputImagePath
+           << " to: " << outputSGFPath << std::endl;
   cv::Mat image_bgr = imread(inputImagePath);
   if (image_bgr.empty()) {
+    LOG_ERROR << "Could not open or find the input image: " << inputImagePath
+              << std::endl;
     THROWGEMERROR("Could not open or find the input image: " + inputImagePath);
   } else {
     try {
@@ -170,90 +180,113 @@ void generateSGFWorkflow(const std::string &inputImagePath,
       std::string sgf_content = generateSGF(board_state, intersections);
       std::ofstream outfile(outputSGFPath);
       if (!outfile.is_open()) {
+        LOG_ERROR << "Could not open SGF file for writing: " << outputSGFPath
+                  << std::endl;
         THROWGEMERROR("Could not open SGF file for writing: " + outputSGFPath);
       }
-      outfile << sgf_content << endl;
+      outfile << sgf_content << std::endl;
       outfile.close();
-      cout << "SGF content written to: " << outputSGFPath << endl;
+      LOG_INFO << "SGF content written to: " << outputSGFPath << std::endl;
+      CONSOLE_OUT << "SGF content written to: " << outputSGFPath << std::endl;
     } catch (const cv::Exception &e) {
+      LOG_ERROR << "OpenCV error in generateSGFWorkflow: " << e.what()
+                << std::endl;
       THROWGEMERROR("OpenCV error in generateSGFWorkflow: " +
-                    string(e.what())); // Wrap OpenCV exceptions
+                    std::string(e.what()));
     }
   }
 }
 
 void verifySGFWorkflow(const std::string &imagePath,
                        const std::string &sgfPath) {
-  cout << "Verifying image: " << imagePath << " against SGF: " << sgfPath
-       << endl;
+  LOG_INFO << "Verifying image: " << imagePath << " against SGF: " << sgfPath
+           << std::endl;
   cv::Mat image_bgr = imread(imagePath);
   if (image_bgr.empty()) {
+    LOG_ERROR << "Could not open or find the image: " << imagePath << std::endl;
     THROWGEMERROR("Could not open or find the image: " + imagePath);
   } else {
     try {
-      cv::Mat board_state, board_with_stones;
+      cv::Mat board_state, board_with_stones; // Not used for display here, but
+                                              // processGoBoard populates them
       std::vector<cv::Point2f> intersections;
       processGoBoard(image_bgr, board_state, board_with_stones, intersections);
 
       std::ifstream infile(sgfPath);
       if (!infile.is_open()) {
+        LOG_ERROR << "Could not open SGF file: " << sgfPath << std::endl;
         THROWGEMERROR("Could not open SGF file: " + sgfPath);
       }
       std::stringstream buffer;
       buffer << infile.rdbuf();
       std::string sgf_data = buffer.str();
       if (sgf_data.empty()) {
+        LOG_ERROR << "Could not read SGF data from: " << sgfPath << std::endl;
         THROWGEMERROR("Could not read SGF data from: " + sgfPath);
       }
+      // verifySGF will now use LOG_XXX for its output and imshow
       verifySGF(image_bgr, sgf_data, intersections);
     } catch (const cv::Exception &e) {
-      THROWGEMERROR("OpenCV error in verifySGFWorkflow: " + string(e.what()));
+      LOG_ERROR << "OpenCV error in verifySGFWorkflow: " << e.what()
+                << std::endl;
+      THROWGEMERROR("OpenCV error in verifySGFWorkflow: " +
+                    std::string(e.what()));
     }
   }
 }
 
 void compareSGFWorkflow(const std::string &sgfPath1,
                         const std::string &sgfPath2) {
-  cout << "Comparing SGF files: " << sgfPath1 << " and " << sgfPath2 << endl;
+  LOG_INFO << "Comparing SGF files: " << sgfPath1 << " and " << sgfPath2
+           << std::endl;
   std::ifstream infile1(sgfPath1);
   if (!infile1.is_open()) {
+    LOG_ERROR << "Could not open the first SGF file: " << sgfPath1 << std::endl;
     THROWGEMERROR("Could not open the first SGF file: " + sgfPath1);
   }
   std::stringstream buffer1;
   buffer1 << infile1.rdbuf();
   std::string sgf_data1 = buffer1.str();
   if (sgf_data1.empty()) {
+    LOG_ERROR << "Could not read SGF data from: " << sgfPath1 << std::endl;
     THROWGEMERROR("Could not read SGF data from: " + sgfPath1);
   }
 
   std::ifstream infile2(sgfPath2);
   if (!infile2.is_open()) {
+    LOG_ERROR << "Could not open the second SGF file: " << sgfPath2
+              << std::endl;
     THROWGEMERROR("Could not open the second SGF file: " + sgfPath2);
   }
   std::stringstream buffer2;
   buffer2 << infile2.rdbuf();
   std::string sgf_data2 = buffer2.str();
   if (sgf_data2.empty()) {
+    LOG_ERROR << "Could not read SGF data from: " << sgfPath2 << std::endl;
     THROWGEMERROR("Could not read SGF data from: " + sgfPath2);
   }
 
   if (compareSGF(sgf_data1, sgf_data2)) {
-    cout << "SGF files are identical." << endl;
+    LOG_INFO << "SGF files comparison result: IDENTICAL." << std::endl;
+    CONSOLE_OUT << "SGF files are identical." << std::endl;
   } else {
-    cout << "SGF files are different." << endl;
+    LOG_INFO << "SGF files comparison result: DIFFERENT." << std::endl;
+    CONSOLE_OUT << "SGF files are different." << std::endl;
   }
 }
 
 void parseSGFWorkflow(const std::string &sgfPath) {
-  cout << "Parsing SGF file: " << sgfPath << endl;
+  LOG_INFO << "Parsing SGF file: " << sgfPath << std::endl;
   std::ifstream infile(sgfPath);
   if (!infile.is_open()) {
+    LOG_ERROR << "Could not open SGF file: " << sgfPath << std::endl;
     THROWGEMERROR("Could not open SGF file: " + sgfPath);
   }
   std::stringstream buffer;
   buffer << infile.rdbuf();
   std::string sgf_content = buffer.str();
   if (sgf_content.empty()) {
+    LOG_ERROR << "Could not read SGF data from: " << sgfPath << std::endl;
     THROWGEMERROR("Could not read SGF data from: " + sgfPath);
   }
 
@@ -261,132 +294,158 @@ void parseSGFWorkflow(const std::string &sgfPath) {
   std::vector<Move> moves;
   try {
     parseSGFGame(sgf_content, setupBlack, setupWhite, moves);
-    SGFHeader header = parseSGFHeader(sgf_content);
+    SGFHeader header =
+        parseSGFHeader(sgf_content); // parseSGFHeader internal logs errors
 
-    cout << "SGF Header:" << endl;
-    cout << "  Game: " << header.gm << endl;
-    cout << "  File Format: " << header.ff << endl;
-    cout << "  Character Set: " << header.ca << endl;
-    cout << "  Application: " << header.ap << endl;
-    cout << "  Board Size: " << header.sz << endl;
+    LOG_INFO << "SGF Header Parsed: GM=" << header.gm << ", FF=" << header.ff
+             << ", CA=" << header.ca << ", AP=" << header.ap
+             << ", SZ=" << header.sz << std::endl;
+    CONSOLE_OUT << "SGF Header:" << std::endl;
+    CONSOLE_OUT << "  Game: " << header.gm << std::endl;
+    CONSOLE_OUT << "  File Format: " << header.ff << std::endl;
+    CONSOLE_OUT << "  Character Set: " << header.ca << std::endl;
+    CONSOLE_OUT << "  Application: " << header.ap << std::endl;
+    CONSOLE_OUT << "  Board Size: " << header.sz << std::endl;
 
-    cout << "\nSetup Black: ";
+    std::stringstream ss_black, ss_white, ss_moves;
+    ss_black << "Setup Black (" << setupBlack.size() << " stones): ";
     for (const auto &stone : setupBlack) {
-      cout << "(" << stone.first << "," << stone.second << ") ";
+      ss_black << "(" << stone.first << "," << stone.second << ") ";
     }
-    cout << endl;
+    LOG_INFO << ss_black.str() << std::endl;
+    CONSOLE_OUT << "\n" << ss_black.str() << std::endl;
 
-    cout << "Setup White: ";
+    ss_white << "Setup White (" << setupWhite.size() << " stones): ";
     for (const auto &stone : setupWhite) {
-      cout << "(" << stone.first << "," << stone.second << ") ";
+      ss_white << "(" << stone.first << "," << stone.second << ") ";
     }
-    cout << endl;
+    LOG_INFO << ss_white.str() << std::endl;
+    CONSOLE_OUT << ss_white.str() << std::endl;
 
-    cout << "\nMoves:" << endl;
-    for (const auto &move : moves) {
-      cout << "  Player: " << move.player << ", Row: " << move.row
-           << ", Col: " << move.col;
+    LOG_INFO << "Parsed " << moves.size() << " moves." << std::endl;
+    CONSOLE_OUT << "\nMoves:" << std::endl;
+    for (size_t i = 0; i < moves.size(); ++i) {
+      const auto &move = moves[i];
+      ss_moves.str("");
+      ss_moves.clear(); // Clear stringstream for reuse
+      ss_moves << "  Move " << (i + 1) << ": Player=" << move.player
+               << ", Pos=(" << move.row << "," << move.col << ")";
       if (!move.capturedStones.empty()) {
-        cout << ", Captured: ";
+        ss_moves << ", Captured(" << move.capturedStones.size() << "): ";
         for (const auto &captured : move.capturedStones) {
-          cout << "(" << captured.first << "," << captured.second << ") ";
+          ss_moves << "(" << captured.first << "," << captured.second << ") ";
         }
-        cout << endl;
       }
+      LOG_INFO << ss_moves.str() << std::endl;
+      CONSOLE_OUT << ss_moves.str() << std::endl;
     }
   } catch (const SGFError &e) {
-    THROWGEMERROR("SGF parsing error: " + string(e.what())); // Wrap SGF errors
+    LOG_ERROR << "SGF parsing error: " << e.what() << std::endl;
+    THROWGEMERROR("SGF parsing error: " + std::string(e.what()));
   }
 }
+
 void probeVideoDevicesWorkflow() {
-  std::vector<VideoDeviceInfo> available_devices = probeVideoDevices();
+  LOG_INFO << "Probing video devices..." << std::endl;
+  std::vector<VideoDeviceInfo> available_devices =
+      probeVideoDevices(); // probeVideoDevices uses LOG_XXX
 
   if (available_devices.empty()) {
-    std::cout << "No video capture devices found.\n";
+    LOG_INFO << "No video capture devices found." << std::endl;
+    CONSOLE_OUT << "No video capture devices found." << std::endl;
     return;
   }
-  std::cout << "Available video capture devices:\n";
+  LOG_INFO << "Found " << available_devices.size() << " video capture devices."
+           << std::endl;
+  CONSOLE_OUT << "Available video capture devices:" << std::endl;
   for (size_t i = 0; i < available_devices.size(); ++i) {
-    std::cout << "[" << i << "] Path: " << available_devices[i].device_path
-              << "\n  Driver: " << available_devices[i].driver_name
-              << "\n  Card: " << available_devices[i].card_name
-              << "\n  Capabilities: "
-              << getCapabilityDescription(available_devices[i].capabilities)
-              << " (0x" << std::hex << available_devices[i].capabilities
-              << std::dec << ")" << "\n  Supported Formats & Sizes:";
+    CONSOLE_OUT << "[" << i << "] Path: " << available_devices[i].device_path
+                << "\n  Driver: " << available_devices[i].driver_name
+                << "\n  Card: " << available_devices[i].card_name
+                << "\n  Capabilities: "
+                << getCapabilityDescription(available_devices[i].capabilities)
+                << " (0x" << std::hex << available_devices[i].capabilities
+                << std::dec << ")" << "\n  Supported Formats & Sizes:";
     if (available_devices[i].supported_format_details.empty()) {
-      std::cout << " None listed or error in enumeration.";
+      CONSOLE_OUT << " None listed or error in enumeration.";
     } else {
       for (const std::string &detail :
            available_devices[i].supported_format_details) {
-        std::cout << "\n    - " << detail;
+        CONSOLE_OUT << "\n    - " << detail;
       }
     }
-    std::cout << "\n\n"; // Add an extra newline for better separation
+    CONSOLE_OUT << "\n\n";
   }
 }
 
 void captureSnapshotWorkflow(const std::string &output) {
-  cout << "\nAttempting to capture snapshot from: " << g_device_path
-       << " using " << (gCaptureMode == MODE_OPENCV ? "OpenCV" : "V4L2")
-       << " mode.\n";
-  // captureSnapshot function now respects gCaptureMode internally
-  if (captureSnapshot(g_device_path, output)) {
-    std::cout << "Snapshot saved to " << output << std::endl;
+  LOG_INFO << "Attempting to capture snapshot from: " << g_device_path
+           << " using " << (gCaptureMode == MODE_OPENCV ? "OpenCV" : "V4L2")
+           << " mode to: " << output << std::endl;
+  if (captureSnapshot(g_device_path, output)) { // captureSnapshot uses LOG_XXX
+    LOG_INFO << "Snapshot saved to " << output << std::endl;
+    CONSOLE_OUT << "Snapshot saved to " << output << std::endl;
   } else {
-    // Error message printed within captureSnapshot or its called functions
+    LOG_ERROR << "Snapshot capture failed for device " << g_device_path
+              << " using mode "
+              << (gCaptureMode == MODE_OPENCV ? "OpenCV" : "V4L2")
+              << ". Check logs for details." << std::endl;
+    // Error already logged by captureSnapshot or its callees
   }
 }
 
 void recordSGFWorkflow(const std::string &output_sgf) {
-  cout << "Capturing snapshot using "
-       << (gCaptureMode == MODE_OPENCV ? "OpenCV" : "V4L2")
-       << " mode, processing, and generating SGF to: " << output_sgf
-       << " from device: " << g_device_path << endl;
+  LOG_INFO << "Capturing snapshot, processing, and generating SGF to: "
+           << output_sgf << " from device: " << g_device_path << " using "
+           << (gCaptureMode == MODE_OPENCV ? "OpenCV" : "V4L2") << " mode."
+           << std::endl;
 
   Mat captured_image;
   try {
     if (!captureFrame(g_device_path, captured_image)) {
-      THROWGEMERROR("Failed to capture frame from device.");
+      LOG_ERROR << "Failed to capture frame from device " << g_device_path
+                << std::endl;
+      THROWGEMERROR("Failed to capture frame from device " + g_device_path);
     }
+    LOG_DEBUG << "Frame captured successfully for recordSGFWorkflow."
+              << std::endl;
 
-    // --- Rest of processing remains the same ---
     Mat board_state, board_with_stones;
-    vector<Point2f> intersections;
+    std::vector<Point2f> intersections;
     processGoBoard(captured_image, board_state, board_with_stones,
                    intersections);
+    LOG_DEBUG << "Board processed for recordSGFWorkflow." << std::endl;
 
-    string sgf_content = generateSGF(board_state, intersections);
+    std::string sgf_content = generateSGF(board_state, intersections);
+    LOG_DEBUG << "SGF content generated for recordSGFWorkflow: "
+              << sgf_content.substr(0, 50) << "..." << std::endl;
 
-    ofstream outfile(output_sgf);
+    std::ofstream outfile(output_sgf);
     if (!outfile.is_open()) {
+      LOG_ERROR << "Could not open SGF file for writing: " << output_sgf
+                << std::endl;
       THROWGEMERROR("Could not open SGF file for writing: " + output_sgf);
     }
-    outfile << sgf_content << endl;
+    outfile << sgf_content << std::endl;
     outfile.close();
-    cout << "SGF content written to: " << output_sgf << endl;
+    LOG_INFO << "SGF content written to: " << output_sgf << std::endl;
+    CONSOLE_OUT << "SGF content written to: " << output_sgf << std::endl;
 
   } catch (const cv::Exception &e) {
-    THROWGEMERROR("OpenCV error in recordSGFWorkflow: " + string(e.what()));
-  } catch (const GEMError &e) { // Catch GEMError specifically
-    THROWGEMERROR(string("Error in recordSGFWorkflow: ") + e.what());
+    LOG_ERROR << "OpenCV error in recordSGFWorkflow: " << e.what() << std::endl;
+    THROWGEMERROR("OpenCV error in recordSGFWorkflow: " +
+                  std::string(e.what()));
+  } catch (const GEMError &e) {
+    // Error already logged by THROWGEMERROR's source, but we log the context of
+    // this workflow.
+    LOG_ERROR << "GEMError in recordSGFWorkflow: " << e.what() << std::endl;
+    throw;
   }
 }
 
-// New function for testing perspective transform
-void testPerspectiveTransform(const std::string &imagePath) {
-  Mat image = imread(imagePath);
-  if (image.empty()) {
-    cerr << "Error: Could not open image: " << imagePath << endl;
-    return;
-  }
-  Mat correct_image = correctPerspective(image);
-}
-
-// --- NEW Calibration Workflow Function ---
 void calibrationWorkflow(bool bInteractive) {
-  cout << "Starting Calibration Workflow..." << endl;
-
+  LOG_INFO << "Starting Calibration Workflow. Interactive: "
+           << (bInteractive ? "Yes" : "No") << std::endl;
   // Extract camera index from device path (e.g., /dev/video0 -> 0)
   int camera_index = 0; // Default
   size_t last_digit_pos = g_device_path.find_last_of("0123456789");
@@ -399,99 +458,105 @@ void calibrationWorkflow(bool bInteractive) {
       string index_str = g_device_path.substr(first_digit_pos);
       camera_index = std::stoi(index_str);
     } catch (const std::exception &e) {
-      cerr << "Warning: Could not parse camera index from device path '"
-           << g_device_path << "'. Using default index 0. Error: " << e.what()
-           << endl;
+      LOG_WARN << "Warning: Could not parse camera index from device path '"
+               << g_device_path
+               << "'. Using default index 0. Error: " << e.what() << endl;
       camera_index = 0;
     }
   } else {
-    cerr << "Warning: Could not find camera index in device path '"
-         << g_device_path << "'. Using default index 0." << endl;
+    LOG_WARN << "Warning: Could not find camera index in device path '"
+             << g_device_path << "'. Using default index 0." << endl;
     camera_index = 0;
   }
 
-  cout << "Displaying live feed from camera index: " << camera_index
-       << " (derived from " << g_device_path << ")" << endl;
-  // Call the function (defined in snapshot.cpp)
-  if (bInteractive) {
+  if (bInteractive) { // Assuming run_interactive_calibration is
+                      // set appropriately
+    LOG_INFO << "Running INTERACTIVE calibration for camera index "
+             << camera_index << " (device: " << g_device_path << ")"
+             << std::endl;
     runInteractiveCalibration(camera_index);
   } else {
-    cout << "Starting AUTOMATED calibration using snapshot: "
-         << CALIB_SNAPSHOT_PATH << endl;
+    LOG_INFO << "Running AUTOMATED calibration using snapshot: "
+             << CALIB_SNAPSHOT_PATH << std::endl;
     runCaptureCalibration();
   }
-
-  cout << "Calibration workflow finished." << endl;
+  LOG_INFO << "Calibration workflow finished." << std::endl;
 }
 
-// --- NEW Workflow Function ---
 void testCalibrationConfigWorkflow() {
-  std::cout << "Testing Calibration Config..." << std::endl;
+  LOG_INFO << "Testing Calibration Config..." << std::endl;
+  LOG_INFO << "  Loading config file: " << CALIB_CONFIG_PATH << std::endl;
+  CalibrationData data = loadCalibrationData(CALIB_CONFIG_PATH);
 
-  // 1. Load calibration data (corners and colors)
-  std::cout << "  Loading config file: " << CALIB_CONFIG_PATH << std::endl;
-  CalibrationData data =
-      loadCalibrationData(CALIB_CONFIG_PATH); // Uses new function
-
-  // Check if essential data was loaded
   if (!data.corners_loaded) {
+    LOG_ERROR << "Failed to load corner data from config file: " +
+                     CALIB_CONFIG_PATH
+              << std::endl;
     THROWGEMERROR("Failed to load corner data from config file: " +
                   CALIB_CONFIG_PATH);
   }
   if (!data.colors_loaded) {
-    // Don't throw error here, maybe calibration was done before color sampling
-    // was added
-    std::cout << "  Warning: Color calibration data not found or incomplete in "
-                 "config file."
-              << std::endl;
-    // Allow test to proceed showing only corners
+    LOG_WARN << "Color calibration data (stones) not found or incomplete in "
+                "config file."
+             << std::endl;
+  }
+  if (!data.board_color_loaded) {
+    LOG_WARN << "Average board color data not found in config file."
+             << std::endl;
   }
   if (!data.dimensions_loaded) {
-    std::cout << "  Warning: Image dimensions not found in config file."
-              << std::endl;
+    LOG_WARN << "Image dimensions not found in config file." << std::endl;
   }
 
-  // Print loaded data
-  std::cout << "  --- Loaded Calibration Data ---" << std::endl;
+  LOG_INFO << "  --- Loaded Calibration Data ---" << std::endl;
+
   if (data.dimensions_loaded) {
-    std::cout << "  Dimensions: " << data.image_width << "x"
-              << data.image_height << std::endl;
+    LOG_INFO << "  Dimensions: " << data.image_width << "x" << data.image_height
+             << std::endl;
   }
-  std::cout << "  Corners Loaded: " << (data.corners_loaded ? "Yes" : "No")
-            << std::endl;
+  LOG_INFO << "  Corners Loaded: " << (data.corners_loaded ? "Yes" : "No")
+           << std::endl;
   if (data.corners_loaded) {
-    std::cout << "    TL: " << data.corners[0] << std::endl;
-    std::cout << "    TR: " << data.corners[1] << std::endl;
-    std::cout << "    BR: " << data.corners[2] << std::endl;
-    std::cout << "    BL: " << data.corners[3] << std::endl;
+    LOG_INFO << "    TL: " << data.corners[0] << std::endl;
+    LOG_INFO << "    TR: " << data.corners[1] << std::endl;
+    LOG_INFO << "    BR: " << data.corners[2] << std::endl;
+    LOG_INFO << "    BL: " << data.corners[3] << std::endl;
   }
-  std::cout << "  Colors Loaded: " << (data.colors_loaded ? "Yes" : "No")
-            << std::endl;
+  LOG_INFO << "  Colors Loaded: " << (data.colors_loaded ? "Yes" : "No")
+           << std::endl;
   if (data.colors_loaded) {
-    std::cout << std::fixed << std::setprecision(1);
-    std::cout << "    TL Lab: [" << data.lab_tl[0] << "," << data.lab_tl[1]
-              << "," << data.lab_tl[2] << "]" << std::endl;
-    std::cout << "    TR Lab: [" << data.lab_tr[0] << "," << data.lab_tr[1]
-              << "," << data.lab_tr[2] << "]" << std::endl;
-    std::cout << "    BL Lab: [" << data.lab_bl[0] << "," << data.lab_bl[1]
-              << "," << data.lab_bl[2] << "]" << std::endl;
-    std::cout << "    BR Lab: [" << data.lab_br[0] << "," << data.lab_br[1]
-              << "," << data.lab_br[2] << "]" << std::endl;
+    LOG_INFO << std::fixed << std::setprecision(1);
+    LOG_INFO << "    TL Lab: [" << data.lab_tl[0] << "," << data.lab_tl[1]
+             << "," << data.lab_tl[2] << "]" << std::endl;
+    LOG_INFO << "    TR Lab: [" << data.lab_tr[0] << "," << data.lab_tr[1]
+             << "," << data.lab_tr[2] << "]" << std::endl;
+    LOG_INFO << "    BL Lab: [" << data.lab_bl[0] << "," << data.lab_bl[1]
+             << "," << data.lab_bl[2] << "]" << std::endl;
+    LOG_INFO << "    BR Lab: [" << data.lab_br[0] << "," << data.lab_br[1]
+             << "," << data.lab_br[2] << "]" << std::endl;
   }
-  std::cout << "  -------------------------------" << std::endl;
+  LOG_INFO << "  -------------------------------" << std::endl;
 
   // 2. Determine snapshot file path and load image
-  std::string snapshot_path =
-      bDebug ? CALIB_SNAPSHOT_DEBUG_PATH : CALIB_SNAPSHOT_PATH;
-  std::cout << "  Loading snapshot image: " << snapshot_path << std::endl;
-  cv::Mat image = cv::imread(snapshot_path);
+  std::string snapshot_path_to_load = CALIB_SNAPSHOT_RAW_PATH;
+  LOG_INFO << "  Loading raw calibration snapshot image: "
+           << snapshot_path_to_load << std::endl;
+  cv::Mat image = cv::imread(snapshot_path_to_load);
   if (image.empty()) {
-    THROWGEMERROR("Failed to load calibration snapshot image: " +
-                  snapshot_path);
+    LOG_ERROR << "Failed to load calibration raw snapshot image: "
+              << snapshot_path_to_load << std::endl;
+    THROWGEMERROR("Failed to load calibration raw snapshot image: " +
+                  snapshot_path_to_load);
+  }
+  if (data.dimensions_loaded &&
+      (image.cols != data.image_width || image.rows != data.image_height)) {
+    LOG_WARN << "Snapshot image dimensions (" << image.cols << "x" << image.rows
+             << ") mismatch config dimensions (" << data.image_width << "x"
+             << data.image_height << "). Markers might be offset." << std::endl;
   }
 
   // 3. Draw markers on image using loaded corners
-  std::cout << "  Drawing markers on snapshot..." << std::endl;
+  LOG_INFO << "  Drawing markers on snapshot..." << std::endl;
   // Colors for markers (same as before)
   cv::Scalar marker_color_tl =
       bDebug ? cv::Scalar(0, 255, 0) : cv::Scalar(0, 0, 255);
@@ -514,40 +579,48 @@ void testCalibrationConfigWorkflow() {
     cv::drawMarker(image, data.corners[3], marker_color_bl, cv::MARKER_CROSS,
                    marker_size, marker_thickness); // BL
   } else {
-    std::cout << "  Warning: Cannot draw markers as corners were not loaded."
-              << std::endl;
+    LOG_WARN << "  Warning: Cannot draw markers as corners were not loaded."
+             << std::endl;
   }
 
   // 4. Display the image
   std::string window_title = "Calibration Test Verification";
   cv::imshow(window_title, image);
-  std::cout << "  Displaying image. Press any key or close window to exit."
-            << std::endl;
+  LOG_INFO << "  Displaying image. Press any key or close window to exit."
+           << std::endl;
   cv::waitKey(0);
   cv::destroyAllWindows();
 
-  std::cout << "Calibration Test Finished." << std::endl;
+  LOG_INFO << "Calibration Test Finished." << std::endl;
 }
 
-void testPerspectiveTransformWorkflow(
-    const std::string &imagePath) { // Renamed function
-  cout << "Testing perspective transform on image: " << imagePath << endl;
+void testPerspectiveTransformWorkflow(const std::string &imagePath) {
+  LOG_INFO << "Testing perspective transform on image: " << imagePath
+           << std::endl;
   Mat image = imread(imagePath);
   if (image.empty()) {
-    cerr << "Error: Could not open image for perspective test: " << imagePath
-         << endl;
-    return;
+    LOG_ERROR << "Could not open image for perspective test: " << imagePath
+              << std::endl;
+    THROWGEMERROR("Could not open image for perspective test: " + imagePath);
   }
   Mat corrected_image = correctPerspective(image);
-  if (bDebug || !corrected_image.empty()) {
+  if (corrected_image.empty()) {
+    LOG_ERROR << "Perspective correction resulted in an empty image for: "
+              << imagePath << std::endl;
+    THROWGEMERROR("Perspective correction resulted in an empty image for " +
+                  imagePath);
+  }
+  LOG_INFO << "Perspective correction test completed." << std::endl;
+  if (bDebug || Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
     imshow("Original for Perspective Test", image);
     imshow("Corrected Perspective Test", corrected_image);
+    LOG_DEBUG << "Displaying perspective test images. Press any key."
+              << std::endl;
     waitKey(0);
     destroyAllWindows();
-  } else if (corrected_image.empty()) {
-    cerr << "Error: Perspective correction resulted in an empty image." << endl;
   }
 }
+
 static bool createOrClearGameFolder(const std::string &folder_path,
                                     bool debug_flag) {
   // 1. Ensure ./share exists (as per README, user should create it with 777)
@@ -563,20 +636,20 @@ static bool createOrClearGameFolder(const std::string &folder_path,
   // 2. Handle the game-specific folder
   if (fs::exists(folder_path)) {
     if (debug_flag)
-      std::cout << "  Debug: Game folder " << folder_path
+      LOG_DEBUG << "  Debug: Game folder " << folder_path
                 << " exists. Attempting to remove and recreate..." << std::endl;
     std::error_code ec;
     fs::remove_all(folder_path,
                    ec); // C++17 way to remove directory and its contents
     if (ec) {
       // remove_all might fail if permissions are wrong or files are in use.
-      std::cerr << "Warning: Could not completely remove existing game folder '"
+      LOG_ERROR << "Warning: Could not completely remove existing game folder '"
                 << folder_path << "': " << ec.message()
                 << ". Attempting to proceed..." << std::endl;
       // Attempt to create anyway, it might be empty or mkdir might handle it.
     } else {
       if (debug_flag)
-        std::cout << "    Debug: Successfully removed existing folder: "
+        LOG_DEBUG << "    Debug: Successfully removed existing folder: "
                   << folder_path << std::endl;
     }
   }
@@ -589,7 +662,7 @@ static bool createOrClearGameFolder(const std::string &folder_path,
                   ec_create.message());
   }
   if (debug_flag)
-    std::cout << "  Debug: Ensured game folder exists (created if new): "
+    LOG_DEBUG << "  Debug: Ensured game folder exists (created if new): "
               << folder_path << std::endl;
 
   return true;
@@ -606,8 +679,8 @@ generateFirstGameStateSGF(const std::string &current_step_sgf_content_full) {
             content_for_tournament_start.back() == '\r')) {
       content_for_tournament_start.pop_back();
     }
-    std::cout << "  generateFirstGameStateSGF: " << content_for_tournament_start
-              << std::endl;
+    LOG_INFO << "  generateFirstGameStateSGF: " << content_for_tournament_start
+             << std::endl;
     return content_for_tournament_start;
   }
   THROWGEMERROR("generateFirstGameStateSGF fails to parse game state:" +
@@ -615,26 +688,36 @@ generateFirstGameStateSGF(const std::string &current_step_sgf_content_full) {
 }
 
 static bool setupCalibrationFromConfig() {
-  std::cout << "  Attempting to load calibration settings from: "
-            << CALIB_CONFIG_PATH << std::endl;
-  CalibrationData data = loadCalibrationData(
-      CALIB_CONFIG_PATH); // loadCalibrationData is in image.cpp
+  LOG_INFO << "Attempting to load and apply calibration settings from: "
+           << CALIB_CONFIG_PATH << std::endl;
+  CalibrationData data = loadCalibrationData(CALIB_CONFIG_PATH);
 
   if (!data.device_path_loaded || data.device_path.empty()) {
-    THROWGEMERROR("Tournament mode requires 'DevicePath' in " +
-                  CALIB_CONFIG_PATH + ". Please run calibration first.");
+    LOG_ERROR << "Required 'DevicePath' not found in " << CALIB_CONFIG_PATH
+              << ". Please run calibration first." << std::endl;
+    THROWGEMERROR("Required 'DevicePath' not found in " + CALIB_CONFIG_PATH);
   }
   if (!data.dimensions_loaded || data.image_width <= 0 ||
       data.image_height <= 0) {
+    LOG_ERROR << "Tournament mode requires 'ImageWidth' and 'ImageHeight' in "
+              << CALIB_CONFIG_PATH << ". Please run calibration first."
+              << std::endl;
     THROWGEMERROR(
         "Tournament mode requires 'ImageWidth' and 'ImageHeight' in " +
         CALIB_CONFIG_PATH + ". Please run calibration first.");
   }
   if (!data.corners_loaded) {
+    LOG_ERROR << "Tournament mode requires corner data (e.g. TL_X_PX) in "
+              << CALIB_CONFIG_PATH << ". Please run calibration first."
+              << std::endl;
     THROWGEMERROR("Tournament mode requires corner data (e.g. TL_X_PX) in " +
                   CALIB_CONFIG_PATH + ". Please run calibration first.");
   }
   if (!data.colors_loaded || !data.board_color_loaded) {
+    LOG_ERROR << "Tournament mode requires color calibration data (stones and "
+                 "board average) in "
+              << CALIB_CONFIG_PATH << ". Please run calibration first."
+              << std::endl;
     THROWGEMERROR("Tournament mode requires color calibration data (stones and "
                   "board average) in " +
                   CALIB_CONFIG_PATH + ". Please run calibration first.");
@@ -650,13 +733,12 @@ static bool setupCalibrationFromConfig() {
   g_capture_width = data.image_width;
   g_capture_height = data.image_height;
 
-  std::cout << "  Successfully loaded calibration settings for Tournament Mode:"
-            << std::endl;
-  std::cout << "    Device Path: " << g_device_path << " (from config)"
-            << std::endl;
-  std::cout << "    Resolution: " << g_capture_width << "x" << g_capture_height
-            << " (from config)" << std::endl;
-
+  LOG_INFO << "Successfully loaded and applied calibration settings."
+           << std::endl;
+  LOG_INFO << "  Effective Device Path: " << g_device_path << " (from config)"
+           << std::endl;
+  LOG_INFO << "  Effective Resolution: " << g_capture_width << "x"
+           << g_capture_height << " (from config)" << std::endl;
   // Check if command-line options for device/size were also provided and warn
   // if they differ User might have specified -D or --size along with -t
   bool cmd_line_device_differs =
@@ -671,17 +753,17 @@ static bool setupCalibrationFromConfig() {
            480); // Check if original was not un-touched default
 
   if (cmd_line_device_differs) {
-    std::cout << "    WARNING: Command-line specified device '"
-              << original_g_device_path
-              << "' is overridden by calibrated device '" << g_device_path
-              << "' from config for tournament mode." << std::endl;
+    LOG_WARN << "    WARNING: Command-line specified device '"
+             << original_g_device_path
+             << "' is overridden by calibrated device '" << g_device_path
+             << "' from config for tournament mode." << std::endl;
   }
   if (cmd_line_size_differs) {
-    std::cout << "    WARNING: Command-line specified size '"
-              << original_g_capture_width << "x" << original_g_capture_height
-              << "' is overridden by calibrated size '" << g_capture_width
-              << "x" << g_capture_height << "' from config for tournament mode."
-              << std::endl;
+    LOG_WARN << "    WARNING: Command-line specified size '"
+             << original_g_capture_width << "x" << original_g_capture_height
+             << "' is overridden by calibrated size '" << g_capture_width << "x"
+             << g_capture_height << "' from config for tournament mode."
+             << std::endl;
   }
 
   return true;
@@ -697,14 +779,14 @@ static void debugAndShowUserIdenticalBoardState(
     const std::string
         &window_name // To potentially display messages or new images
 ) {
-  std::cout << "  DEBUG_INFO: Board state for step " << step_num
-            << " is identical to the previous step." << std::endl;
-  std::cout << "  User may have forgotten to make a move, or processGoBoard "
-               "failed to detect a change."
-            << std::endl;
-  std::cout << "  Displaying current processed board. Press 'N' to try "
-               "capturing for this step again, or 'ESC' to exit."
-            << std::endl;
+  LOG_INFO << "  DEBUG_INFO: Board state for step " << step_num
+           << " is identical to the previous step." << std::endl;
+  LOG_INFO << "  User may have forgotten to make a move, or processGoBoard "
+              "failed to detect a change."
+           << std::endl;
+  LOG_INFO << "  Displaying current processed board. Press 'N' to try "
+              "capturing for this step again, or 'ESC' to exit."
+           << std::endl;
 
   // For now, this function will just print. You can expand it to show images in
   // new windows or overlay messages on the existing 'snapshot_window_name'.
@@ -749,10 +831,10 @@ static bool compareBoardStates(const cv::Mat &board1, const cv::Mat &board2) {
 // validateSGgfMove, drawSimulatedGoBoard etc. are external
 
 void tournamentModeWorkflow(const std::string &game_name_final_prefix) {
-  std::cout << "Starting Tournament Mode (Refactored Flow)..." << std::endl;
-  std::cout << "  Game Name Prefix: " << game_name_final_prefix << std::endl;
-  std::cout << "  Using Device: " << g_device_path << " at " << g_capture_width
-            << "x" << g_capture_height << std::endl;
+  LOG_INFO << "Starting Tournament Mode (Refactored Flow)..." << std::endl;
+  LOG_INFO << "  Game Name Prefix: " << game_name_final_prefix << std::endl;
+  LOG_INFO << "  Using Device: " << g_device_path << " at " << g_capture_width
+           << "x" << g_capture_height << std::endl;
 
   std::string base_share_path = "./share/";
   std::string game_folder_path = base_share_path + game_name_final_prefix;
@@ -815,7 +897,7 @@ void tournamentModeWorkflow(const std::string &game_name_final_prefix) {
   std::vector<cv::Point2f> intersections; // Keep it accessible
 
   // --- Step 0: Initial Board Setup (Outside the main game loop) ---
-  std::cout << "Setting up initial board (Step 0)..." << std::endl;
+  LOG_INFO << "Setting up initial board (Step 0)..." << std::endl;
   cv::setWindowTitle(main_display_window_name,
                      main_display_window_name + " - Step 0 (Initial Setup)");
   if (bDebug) {
@@ -827,7 +909,7 @@ void tournamentModeWorkflow(const std::string &game_name_final_prefix) {
   while (
       !step0_ok) { // Loop until step 0 is successfully processed or user exits
     if (!captureFrame(g_device_path, current_raw_frame)) { //
-      std::cerr
+      LOG_ERROR
           << "Error: Failed to capture frame for Step 0. Retrying in 1s..."
           << std::endl;
       cv::Mat error_disp =
@@ -849,7 +931,7 @@ void tournamentModeWorkflow(const std::string &game_name_final_prefix) {
       cv::waitKey(1);
     }
 
-    std::cout << "Processing Step 0..." << std::endl;
+    LOG_INFO << "Processing Step 0..." << std::endl;
     cv::Mat temp_step0_display = current_raw_frame.clone();
     cv::putText(temp_step0_display, "Processing Initial Board (Step 0)...",
                 cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 0.7,
@@ -866,7 +948,7 @@ void tournamentModeWorkflow(const std::string &game_name_final_prefix) {
       }
       step0_ok = true; // Mark as successful processing
     } catch (const std::exception &e) {
-      std::cerr << "Error processing initial board (Step 0): " << e.what()
+      LOG_ERROR << "Error processing initial board (Step 0): " << e.what()
                 << std::endl;
       cv::Mat error_disp =
           current_raw_frame.empty()
@@ -899,11 +981,11 @@ void tournamentModeWorkflow(const std::string &game_name_final_prefix) {
   // Save snapshot and SGF for Step 0
   std::string step0_snapshot_path = game_folder_path + "/0.jpg";
   if (!cv::imwrite(step0_snapshot_path, current_raw_frame)) {
-    std::cerr << "Error saving snapshot for Step 0 to " << step0_snapshot_path
+    LOG_ERROR << "Error saving snapshot for Step 0 to " << step0_snapshot_path
               << std::endl;
   } else {
-    std::cout << "  Saved initial snapshot: " << step0_snapshot_path
-              << std::endl;
+    LOG_INFO << "  Saved initial snapshot: " << step0_snapshot_path
+             << std::endl;
   }
 
   std::string step0_sgf_content_full =
@@ -913,15 +995,17 @@ void tournamentModeWorkflow(const std::string &game_name_final_prefix) {
   if (step0_sgf_file_out.is_open()) {
     step0_sgf_file_out << step0_sgf_content_full;
     step0_sgf_file_out.close();
-    std::cout << "  Saved initial SGF: " << step0_sgf_path << std::endl;
+    LOG_INFO << "  Saved initial SGF: " << step0_sgf_path << std::endl;
   } else {
-    std::cerr << "Error saving SGF for Step 0 to " << step0_sgf_path
+    LOG_ERROR << "Error saving SGF for Step 0 to " << step0_sgf_path
               << std::endl;
   }
 
   // Initialize main tournament SGF
   std::ofstream tournament_sgf_out(main_sgf_path, std::ios::trunc);
   if (!tournament_sgf_out.is_open()) {
+    LOG_ERROR << "Failed to open main SGF for initial write: " << main_sgf_path
+              << endl;
     THROWGEMERROR("Failed to open main SGF for initial write: " +
                   main_sgf_path);
   }
@@ -942,8 +1026,8 @@ void tournamentModeWorkflow(const std::string &game_name_final_prefix) {
   tournament_sgf_out << content_for_tournament_start;
   accumulated_tournament_sgf_content = content_for_tournament_start; //
   tournament_sgf_out.close();
-  std::cout << "  Initialized " << main_sgf_path << " with initial board state."
-            << std::endl;
+  LOG_INFO << "  Initialized " << main_sgf_path << " with initial board state."
+           << std::endl;
 
   previous_board_state_matrix = current_board_state_matrix_local.clone(); //
   if (bDebug) {
@@ -967,7 +1051,7 @@ void tournamentModeWorkflow(const std::string &game_name_final_prefix) {
 
   int key_to_start_game = cv::waitKey(0);
   if (key_to_start_game == 27) { // ESC
-    std::cout << "Exiting tournament mode before first move." << std::endl;
+    LOG_INFO << "Exiting tournament mode before first move." << std::endl;
     // Finalize SGF with just the initial setup
     std::ofstream main_sgf_final_stream(main_sgf_path, std::ios::app);
     if (main_sgf_final_stream.is_open()) {
@@ -1048,19 +1132,19 @@ void tournamentModeWorkflow(const std::string &game_name_final_prefix) {
     int key_input = cv::waitKey(0);
 
     if (key_input == 27) { // ESC
-      std::cout << "Tournament mode finishing after "
-                << (game_step_counter > 0
-                        ? "Step " + std::to_string(game_step_counter - 1)
-                        : "initial setup")
-                << "." << std::endl;
+      LOG_INFO << "Tournament mode finishing after "
+               << (game_step_counter > 0
+                       ? "Step " + std::to_string(game_step_counter - 1)
+                       : "initial setup")
+               << "." << std::endl;
       break;
     } else if (key_input == 'n' || key_input == 'N') {
       // User has made their move and pressed 'N'. Now capture and process.
-      std::cout << "Capturing and processing " << current_step_info_str << "..."
-                << std::endl;
+      LOG_INFO << "Capturing and processing " << current_step_info_str << "..."
+               << std::endl;
 
       if (!captureFrame(g_device_path, current_raw_frame)) { //
-        std::cerr << "Error: Failed to capture frame for "
+        LOG_ERROR << "Error: Failed to capture frame for "
                   << current_step_info_str << ". Please try again."
                   << std::endl;
         // Display error on main window, keep simulated board as is
@@ -1097,8 +1181,8 @@ void tournamentModeWorkflow(const std::string &game_name_final_prefix) {
         if (!validateSGgfMove(previous_board_state_matrix,
                               current_board_state_matrix_local,
                               previous_move_color)) { //
-          std::cout << "  WARNING: Invalid move or no change detected for "
-                    << current_step_info_str << "." << std::endl;
+          LOG_WARN << "  WARNING: Invalid move or no change detected for "
+                   << current_step_info_str << "." << std::endl;
           processing_ok_current_attempt = false;
           debugAndShowUserIdenticalBoardState(
               current_raw_frame,
@@ -1107,7 +1191,7 @@ void tournamentModeWorkflow(const std::string &game_name_final_prefix) {
               main_display_window_name); //
         }
       } catch (const std::exception &e) {
-        std::cerr << "Error processing board for " << current_step_info_str
+        LOG_ERROR << "Error processing board for " << current_step_info_str
                   << ": " << e.what() << std::endl;
         processing_ok_current_attempt = false;
         cv::Mat error_display_on_main =
@@ -1134,8 +1218,8 @@ void tournamentModeWorkflow(const std::string &game_name_final_prefix) {
             game_folder_path + "/" + std::to_string(game_step_counter) + ".jpg";
         if (!cv::imwrite(step_snapshot_path, current_raw_frame)) { /* cerr */
         } else {
-          std::cout << "  Saved step snapshot: " << step_snapshot_path
-                    << std::endl;
+          LOG_INFO << "  Saved step snapshot: " << step_snapshot_path
+                   << std::endl;
         }
 
         std::string current_step_sgf_data =
@@ -1146,7 +1230,7 @@ void tournamentModeWorkflow(const std::string &game_name_final_prefix) {
         if (step_sgf_file.is_open()) {
           step_sgf_file << current_step_sgf_data;
           step_sgf_file.close();
-          std::cout << "  Saved step SGF: " << step_sgf_path << std::endl;
+          LOG_INFO << "  Saved step SGF: " << step_sgf_path << std::endl;
         } else { /* cerr */
         }
 
@@ -1158,7 +1242,7 @@ void tournamentModeWorkflow(const std::string &game_name_final_prefix) {
           std::string error_what = e_sgf.what();
           if (error_what.find("ERROR: Invalid move detected!") !=
               std::string::npos) { //
-            std::cout << "  No change detected (determineSGFMove error). No "
+            LOG_ERROR << "  No change detected (determineSGFMove error). No "
                          "SGF move appended."
                       << std::endl; //
           } else {
@@ -1175,8 +1259,8 @@ void tournamentModeWorkflow(const std::string &game_name_final_prefix) {
           } else {
             main_sgf_appender << "\n" << move_made_sgf_node;                 //
             accumulated_tournament_sgf_content += "\n" + move_made_sgf_node; //
-            std::cout << "  Appended move: " << move_made_sgf_node << " to "
-                      << main_sgf_path << std::endl; //
+            LOG_INFO << "  Appended move: " << move_made_sgf_node << " to "
+                     << main_sgf_path << std::endl; //
             std::tie(last_move_r_to_highlight, last_move_c_to_highlight,
                      last_move_clr_to_highlight) =
                 parseSgfMoveNode(move_made_sgf_node);         //
@@ -1184,9 +1268,9 @@ void tournamentModeWorkflow(const std::string &game_name_final_prefix) {
             main_sgf_appender.close();
           }
         } else {
-          std::cout << "  No valid move node by determineSGFMove. Nothing "
-                       "appended to main SGF."
-                    << std::endl; //
+          LOG_INFO << "  No valid move node by determineSGFMove. Nothing "
+                      "appended to main SGF."
+                   << std::endl; //
           // previous_move_color remains unchanged from the last valid move
         }
 
@@ -1215,10 +1299,10 @@ void tournamentModeWorkflow(const std::string &game_name_final_prefix) {
 
         game_step_counter++; // Advance to the next step
       } else {               // processing_ok_current_attempt was false
-        std::cout << "  " << current_step_info_str
-                  << " had an issue. Please correct the board and press 'N' to "
-                     "retry, or 'ESC' to exit."
-                  << std::endl;
+        LOG_INFO << "  " << current_step_info_str
+                 << " had an issue. Please correct the board and press 'N' to "
+                    "retry, or 'ESC' to exit."
+                 << std::endl;
         // Do not increment game_step_counter. The loop will re-prompt for the
         // same step. Show the simulated board from the *previous good state*
         std::string sgf_content_for_error_display =
@@ -1251,45 +1335,42 @@ void tournamentModeWorkflow(const std::string &game_name_final_prefix) {
         }
       }
     } else { // Ignored key
-      if (bDebug)
-        std::cout << "Ignored key: " << key_input << ". Press N or ESC."
-                  << std::endl;
-    }
-  }
-
-  // Finalize SGF by adding closing parenthesis
-  if (!accumulated_tournament_sgf_content.empty()) {
-    std::ofstream main_sgf_final_stream(main_sgf_path, std::ios::app);
-    if (main_sgf_final_stream.is_open()) {
-      if (accumulated_tournament_sgf_content.find('(') == 0 &&
-          accumulated_tournament_sgf_content.back() != ')') {
-        main_sgf_final_stream << "\n)" << std::endl; //
-      } else if (accumulated_tournament_sgf_content.find('(') != 0) {
-        // This case implies the SGF was not even initialized properly.
-        // It might be better to ensure accumulated_tournament_sgf_content
-        // always starts with "(". For now, let's assume if it's not empty and
-        // doesn't start with '(', something else went wrong.
-      }
-      main_sgf_final_stream.close();
-      std::cout << "  Finalized main tournament SGF: " << main_sgf_path
+      LOG_DEBUG << "Ignored key: " << key_input << ". Press N or ESC."
                 << std::endl;
-    } else {
-      std::cerr << "CRITICAL ERROR: Failed to open main SGF for final closing: "
-                << main_sgf_path << std::endl;
     }
+
+    // Finalize SGF by adding closing parenthesis
+    if (!accumulated_tournament_sgf_content.empty()) {
+      std::ofstream main_sgf_final_stream(main_sgf_path, std::ios::app);
+      if (main_sgf_final_stream.is_open()) {
+        if (accumulated_tournament_sgf_content.find('(') == 0 &&
+            accumulated_tournament_sgf_content.back() != ')') {
+          main_sgf_final_stream << "\n)" << std::endl; //
+        } else if (accumulated_tournament_sgf_content.find('(') != 0) {
+          // This case implies the SGF was not even initialized properly.
+          // It might be better to ensure accumulated_tournament_sgf_content
+          // always starts with "(". For now, let's assume if it's not empty and
+          // doesn't start with '(', something else went wrong.
+        }
+        main_sgf_final_stream.close();
+        LOG_INFO << "  Finalized main tournament SGF: " << main_sgf_path
+                 << std::endl;
+      } else {
+        LOG_ERROR
+            << "CRITICAL ERROR: Failed to open main SGF for final closing: "
+            << main_sgf_path << std::endl;
+      }
+    }
+
+    cv::destroyAllWindows();
+    LOG_INFO << "Tournament Mode Finished. Game data saved in: "
+             << game_folder_path << std::endl;
   }
-
-  cv::destroyAllWindows();
-  std::cout << "Tournament Mode Finished. Game data saved in: "
-            << game_folder_path << std::endl;
 }
-
-// ... (rest of gem.cpp, including main function, remains the same)
-
 // Corrected drawSimulatedBoardWorkflow
 void drawSimulatedBoardWorkflow(const std::string &sgf_file_path) {
-  std::cout << "Starting Draw Simulated Board Workflow..." << std::endl;
-  std::cout << "  SGF File: " << sgf_file_path << std::endl;
+  LOG_INFO << "Starting Draw Simulated Board Workflow..." << std::endl;
+  LOG_INFO << "  SGF File: " << sgf_file_path << std::endl;
 
   std::ifstream sgf_file_stream(sgf_file_path);
   if (!sgf_file_stream.is_open()) {
@@ -1341,16 +1422,16 @@ void drawSimulatedBoardWorkflow(const std::string &sgf_file_path) {
   std::string window_title =
       Default_Go_Board_Window_Title + ": " + sgf_file_path;
   cv::imshow(window_title, board_image);
-  std::cout << "  Displaying simulated board. Press any key in the OpenCV "
-               "window to close."
-            << std::endl;
+  LOG_INFO << "  Displaying simulated board. Press any key in the OpenCV "
+              "window to close."
+           << std::endl;
   cv::waitKey(0);
   cv::destroyAllWindows();
-  std::cout << "Draw Simulated Board Workflow Finished." << std::endl;
+  LOG_INFO << "Draw Simulated Board Workflow Finished." << std::endl;
 }
 
-// Corrected studyModeWorkflow (Phase 1 structure, calls to drawSimulatedGoBoard
-// updated for Phase 2 signature)
+// Corrected studyModeWorkflow (Phase 1 structure, calls to
+// drawSimulatedGoBoard updated for Phase 2 signature)
 static int loadGameSteps(const std::string &game_folder_path,
                          std::vector<std::string> &sgf_files_out,
                          std::vector<std::string> &jpg_files_out) {
@@ -1392,21 +1473,21 @@ static int loadGameSteps(const std::string &game_folder_path,
         break;
     }
     if (sgf_files_out.empty() && max_step == -1 && bDebug)
-      std::cout
+      LOG_DEBUG
           << "Debug (loadGameSteps): No numbered SGF/JPG step files found in "
           << game_folder_path << std::endl;
     else if (sgf_files_out.empty() && max_step > -1)
       return -1;
     return actual_max_step;
   } catch (const fs::filesystem_error &e) {
-    std::cerr << "FS error loadGameSteps: " << e.what() << std::endl;
+    LOG_ERROR << "FS error loadGameSteps: " << e.what() << std::endl;
     return -1;
   }
 }
 
 void studyModeWorkflow(const std::string &game_to_study_name) {
-  std::cout << "Starting Study Mode for game: " << game_to_study_name
-            << std::endl;
+  LOG_INFO << "Starting Study Mode for game: " << game_to_study_name
+           << std::endl;
 
   std::string game_folder_path = "./share/" + game_to_study_name;
   std::vector<std::string> sgf_step_files;
@@ -1420,8 +1501,8 @@ void studyModeWorkflow(const std::string &game_to_study_name) {
         "No game steps (matching SGF/JPG pairs from 0..N) found in folder: " +
         game_folder_path);
   }
-  std::cout << "  Loaded " << max_step_idx + 1 << " game steps (0 to "
-            << max_step_idx << ")." << std::endl;
+  LOG_INFO << "  Loaded " << max_step_idx + 1 << " game steps (0 to "
+           << max_step_idx << ")." << std::endl;
 
   std::string main_tournament_sgf_path = game_folder_path + "/tournament.sgf";
   std::ifstream tournament_sgf_stream(main_tournament_sgf_path);
@@ -1454,12 +1535,12 @@ void studyModeWorkflow(const std::string &game_to_study_name) {
     if (current_display_step_idx < 0 ||
         static_cast<size_t>(current_display_step_idx) >=
             jpg_step_files.size()) {
-      std::cerr << "Error: Invalid step index " << current_display_step_idx
+      LOG_ERROR << "Error: Invalid step index " << current_display_step_idx
                 << " for display." << std::endl;
       return;
     }
 
-    std::cout << "  Displaying Step: " << current_display_step_idx << std::endl;
+    LOG_INFO << "  Displaying Step: " << current_display_step_idx << std::endl;
     cv::setWindowTitle(sim_board_window,
                        "Study: Sim Board - " + game_to_study_name + " (Step " +
                            std::to_string(current_display_step_idx) + ")");
@@ -1469,7 +1550,7 @@ void studyModeWorkflow(const std::string &game_to_study_name) {
 
     snapshot_image = cv::imread(jpg_step_files[current_display_step_idx]);
     if (snapshot_image.empty()) {
-      std::cerr << "Error loading snapshot: "
+      LOG_ERROR << "Error loading snapshot: "
                 << jpg_step_files[current_display_step_idx] << std::endl;
       cv::Mat error_img = cv::Mat::zeros(480, 640, CV_8UC3);
       cv::putText(error_img, "Snapshot Load Error", cv::Point(50, 240),
@@ -1483,8 +1564,8 @@ void studyModeWorkflow(const std::string &game_to_study_name) {
     // Arg1: full_tournament_sgf_content (string)
     // Arg2: current_display_step_idx (int) - this is 'display_up_to_move_idx'
     // Arg3: simulated_board_image (Mat&)
-    // Arg4: current_display_step_idx (int) - this is 'highlight_this_move_idx'
-    // Arg5: canvas_size_px (int)
+    // Arg4: current_display_step_idx (int) - this is
+    // 'highlight_this_move_idx' Arg5: canvas_size_px (int)
     drawSimulatedGoBoard(full_tournament_sgf_content, current_display_step_idx,
                          simulated_board_image, current_display_step_idx,
                          canvas_size_px);
@@ -1502,27 +1583,27 @@ void studyModeWorkflow(const std::string &game_to_study_name) {
         current_display_step_idx++;
         displayCurrentStudyStep();
       } else {
-        std::cout << "  Already at the last step (" << max_step_idx << ")."
-                  << std::endl;
+        LOG_INFO << "  Already at the last step (" << max_step_idx << ")."
+                 << std::endl;
       }
     } else if (key == 'b' || key == 'B') {
       if (current_display_step_idx > 0) {
         current_display_step_idx--;
         displayCurrentStudyStep();
       } else {
-        std::cout << "  Already at the first step (0)." << std::endl;
+        LOG_INFO << "  Already at the first step (0)." << std::endl;
       }
     }
   }
 
   cv::destroyAllWindows();
-  std::cout << "Study Mode Finished for game: " << game_to_study_name
-            << std::endl;
+  LOG_INFO << "Study Mode Finished for game: " << game_to_study_name
+           << std::endl;
 }
 
 void detectStonePositionWorkflow(int target_col, int target_row,
                                  const std::string &image_path_from_arg) {
-  std::cout << "Starting Stone Detection at Position Workflow..." << std::endl;
+  LOG_INFO << "Starting Stone Detection at Position Workflow..." << std::endl;
   if (target_col < 0 || target_col > 18 || target_row < 0 || target_row > 18) {
     THROWGEMERROR("Invalid target column/row. Must be between 0 and 18.");
   }
@@ -1530,13 +1611,13 @@ void detectStonePositionWorkflow(int target_col, int target_row,
   std::string image_path_to_use = image_path_from_arg;
   if (image_path_to_use.empty()) {
     image_path_to_use = g_default_input_image_path;
-    std::cout << "  No --image specified, using default: " << image_path_to_use
-              << std::endl;
+    LOG_INFO << "  No --image specified, using default: " << image_path_to_use
+             << std::endl;
   } else {
-    std::cout << "  Using image: " << image_path_to_use << std::endl;
+    LOG_INFO << "  Using image: " << image_path_to_use << std::endl;
   }
-  std::cout << "  Target position: Col=" << target_col << ", Row=" << target_row
-            << std::endl;
+  LOG_INFO << "  Target position: Col=" << target_col << ", Row=" << target_row
+           << std::endl;
 
   cv::Mat raw_image = cv::imread(image_path_to_use);
   if (raw_image.empty()) {
@@ -1544,15 +1625,15 @@ void detectStonePositionWorkflow(int target_col, int target_row,
   }
 
   // 1. Correct Perspective
-  // Ensure calibration is set up if correctPerspective relies on it implicitly
-  // or explicitly needs it.
-  // For this workflow, we'll assume correctPerspective uses CALIB_CONFIG_PATH.
+  // Ensure calibration is set up if correctPerspective relies on it
+  // implicitly or explicitly needs it. For this workflow, we'll assume
+  // correctPerspective uses CALIB_CONFIG_PATH.
   if (!setupCalibrationFromConfig()) { // Ensure globals like
                                        // g_capture_width/height are set if
                                        // needed by correctPerspective
     // setupCalibrationFromConfig might throw, or return false.
     // If it returns false without throwing, we should handle it.
-    std::cerr << "Warning: Could not setup calibration from config for "
+    LOG_ERROR << "Warning: Could not setup calibration from config for "
                  "perspective correction. Results may be inaccurate."
               << std::endl;
     // Depending on strictness, you might THROWGEMERROR here.
@@ -1630,8 +1711,8 @@ void detectStonePositionWorkflow(int target_col, int target_row,
     break;
   case EMPTY:
     result_text = "Detected: EMPTY";
-    // Optionally draw a subtle marker for empty if desired, e.g., a small green
-    // dot or cross For now, just text.
+    // Optionally draw a subtle marker for empty if desired, e.g., a small
+    // green dot or cross For now, just text.
     break;
   default:
     result_text = "Detection Error or Unknown State";
@@ -1660,20 +1741,20 @@ void detectStonePositionWorkflow(int target_col, int target_row,
       }
     }
   }
-  std::cout << "  " << result_text << " at (" << target_col << "," << target_row
-            << ")" << std::endl;
-  std::cout
-      << "  Displaying image. Press any key in the OpenCV window to close."
-      << std::endl;
+  LOG_INFO << "  " << result_text << " at (" << target_col << "," << target_row
+           << ")" << std::endl;
+  LOG_INFO << "  Displaying image. Press any key in the OpenCV window to close."
+           << std::endl;
   cv::waitKey(0);
   cv::destroyAllWindows();
-  std::cout << "Stone Detection Workflow Finished." << std::endl;
+  LOG_INFO << "Stone Detection Workflow Finished." << std::endl;
 }
 
 int main(int argc, char *argv[]) {
   // Initialize logger with default path and level.
   // This allows logging from the very start, even during option parsing if
-  // needed. The log level can be overridden by the command-line argument later.
+  // needed. The log level can be overridden by the command-line argument
+  // later.
   Logger::init(); // Uses default "share/log.txt" and LogLevel::INFO
 
   // Initial log message indicating program start
@@ -1749,7 +1830,7 @@ int main(int argc, char *argv[]) {
       switch (c) {
       case 'd':
         bDebug = true;
-        cout << "Debug mode enabled." << endl;
+        LOG_INFO << "Debug mode enabled." << endl;
         break;
       case 'O': // NEW: Log Level Option
         try {
@@ -1758,22 +1839,22 @@ int main(int argc, char *argv[]) {
               parsed_log_level_int <= static_cast<int>(LogLevel::DEBUG)) {
             Logger::setGlobalLogLevel(
                 static_cast<LogLevel>(parsed_log_level_int));
-            // The setGlobalLogLevel method will log this change itself if INFO
-            // level is active
+            // The setGlobalLogLevel method will log this change itself if
+            // INFO level is active
           } else {
             CONSOLE_ERR << "Invalid log level: " << optarg
                         << ". Must be between 0 (NONE) and 4 (DEBUG)."
                         << std::endl;
-            // Logger might not be fully set up or at a level to log this error
-            // yet. LOG_ERROR << "Invalid log level specified: " << optarg << ".
-            // Using current level." << std::endl; No change to log level if
-            // invalid
+            // Logger might not be fully set up or at a level to log this
+            // error yet. LOG_ERROR << "Invalid log level specified: " <<
+            // optarg << ". Using current level." << std::endl; No change to
+            // log level if invalid
           }
         } catch (const std::invalid_argument &ia) {
           CONSOLE_ERR << "Invalid argument for log level: " << optarg
                       << ". Expected an integer (0-4)." << std::endl;
-          // LOG_ERROR << "Invalid argument for log level: " << optarg << ". Not
-          // an integer." << std::endl;
+          // LOG_ERROR << "Invalid argument for log level: " << optarg << ".
+          // Not an integer." << std::endl;
         } catch (const std::out_of_range &oor) {
           CONSOLE_ERR << "Log level argument out of range: " << optarg << "."
                       << std::endl;
@@ -1788,9 +1869,9 @@ int main(int argc, char *argv[]) {
           auto sz = g_device_path.size() - 1;
           g_device_path.resize(sz);
           g_device_path += optarg;
-          cout << "Device:" << g_device_path << endl;
+          LOG_INFO << "Device:" << g_device_path << endl;
         } else {
-          cout << "invalid device number: " << optarg << endl;
+          LOG_INFO << "invalid device number: " << optarg << endl;
         }
       } break;
       case 'b': // Handle calibration option
@@ -1809,12 +1890,12 @@ int main(int argc, char *argv[]) {
           } else if (mode_str == "v4l2") {
             gCaptureMode = MODE_V4L2;
           } else {
-            std::cerr << "Warning: Invalid capture mode '" << mode_str
+            LOG_ERROR << "Warning: Invalid capture mode '" << mode_str
                       << "'. Using default (v4l2)." << std::endl;
             gCaptureMode = MODE_V4L2;
           }
           if (bDebug)
-            std::cout << "Debug: Capture mode set to "
+            LOG_DEBUG << "Debug: Capture mode set to "
                       << (gCaptureMode == MODE_OPENCV ? "OpenCV" : "V4L2")
                       << std::endl;
         }
@@ -1826,8 +1907,8 @@ int main(int argc, char *argv[]) {
         if (optind < argc) {
           generateSGFWorkflow(optarg, argv[optind++]);
         } else {
-          THROWGEMERROR(
-              "-g option requires an input image path and an output SGF path.");
+          THROWGEMERROR("-g option requires an input image path and an "
+                        "output SGF path.");
         }
         break;
       case 'v':
@@ -1855,27 +1936,27 @@ int main(int argc, char *argv[]) {
             g_capture_width = std::stoi(width_s);
             g_capture_height = std::stoi(height_s);
             if (g_capture_width <= 0 || g_capture_height <= 0) {
-              std::cerr
+              LOG_ERROR
                   << "Error: Frame dimensions must be positive for --size."
                   << std::endl;
               return 1;
             }
-            if (bDebug) {
-              std::cout << "Debug: Requested capture size set to "
-                        << g_capture_width << "x" << g_capture_height
-                        << " by option." << std::endl;
-            }
+
+            LOG_DEBUG << "Debug: Requested capture size set to "
+                      << g_capture_width << "x" << g_capture_height
+                      << " by option." << std::endl;
+
           } catch (const std::invalid_argument &ia) {
-            std::cerr << "Error: Invalid number format in --size argument: "
+            LOG_ERROR << "Error: Invalid number format in --size argument: "
                       << size_str << std::endl;
             return 1;
           } catch (const std::out_of_range &oor) {
-            std::cerr << "Error: Number out of range in --size argument: "
+            LOG_ERROR << "Error: Number out of range in --size argument: "
                       << size_str << std::endl;
             return 1;
           }
         } else {
-          std::cerr << "Error: Invalid format for --size. Expected "
+          LOG_ERROR << "Error: Invalid format for --size. Expected "
                        "WIDTHxHEIGHT (e.g., 640x480)."
                     << std::endl;
           return 1;
@@ -1985,14 +2066,14 @@ int main(int argc, char *argv[]) {
           detectStonePositionWorkflow(detect_stone_col, detect_stone_row,
                                       detect_stone_image_path_arg);
         } catch (const std::invalid_argument &ia) {
-          THROWGEMERROR(
-              "Invalid column/row arguments for -P option. Expected integers.");
+          THROWGEMERROR("Invalid column/row arguments for -P option. "
+                        "Expected integers.");
         } catch (const std::out_of_range &oor) {
           THROWGEMERROR("Column/row arguments for -P option are out of range.");
         }
       } else {
-        THROWGEMERROR(
-            "-P option requires <col> and <row> arguments after all options.");
+        THROWGEMERROR("-P option requires <col> and <row> arguments after "
+                      "all options.");
       }
     } else if (run_test_calibration) { // This might also need
                                        // setupCalibrationFromConfig
@@ -2014,9 +2095,9 @@ int main(int argc, char *argv[]) {
     } else if (!snapshot_output.empty()) {
       // Snapshot might or might not need full calib setup, depends on if it
       // uses g_device_path/size from config. Assuming for now it can use
-      // command-line specified or defaults if CALIB_CONFIG_PATH is not strictly
-      // enforced for it. If CALIB_CONFIG_PATH values are *required* for
-      // snapshot, then setupCalibrationFromConfig() should be called.
+      // command-line specified or defaults if CALIB_CONFIG_PATH is not
+      // strictly enforced for it. If CALIB_CONFIG_PATH values are *required*
+      // for snapshot, then setupCalibrationFromConfig() should be called.
       captureSnapshotWorkflow(snapshot_output);
     } else if (!record_sgf_output.empty()) {
       if (!setupCalibrationFromConfig()) {
@@ -2036,9 +2117,9 @@ int main(int argc, char *argv[]) {
     } else if (optind < argc) { // Unprocessed positional arguments without a
                                 // specific flag like -P
       // This indicates an error if no workflow like -p, -g, -v, -c was hit
-      // which would consume them. However, those cases already return 0 above.
-      // This path is more for "gem some_unknown_arg"
-      std::cerr << "Error: Unprocessed arguments. What is '" << argv[optind]
+      // which would consume them. However, those cases already return 0
+      // above. This path is more for "gem some_unknown_arg"
+      LOG_ERROR << "Error: Unprocessed arguments. What is '" << argv[optind]
                 << "'?" << std::endl;
       displayHelpMessage();
       return 1;
@@ -2056,13 +2137,13 @@ int main(int argc, char *argv[]) {
       return 1;
     }
   } catch (const GEMError &e) {
-    cerr << "Error: " << e.what() << endl;
+    LOG_ERROR << "Error: " << e.what() << endl;
     return 1;
   } catch (const std::exception &e) {
-    cerr << "An unexpected error occurred: " << e.what() << endl;
+    LOG_ERROR << "An unexpected error occurred: " << e.what() << endl;
     return 1;
   } catch (...) {
-    cerr << "An unknown error occurred." << endl;
+    LOG_ERROR << "An unknown error occurred." << endl;
     return 1;
   }
   return 0;
