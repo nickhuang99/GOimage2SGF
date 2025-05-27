@@ -1637,7 +1637,7 @@ void detectStonePositionWorkflow(int target_col, int target_row,
                  "perspective correction. Results may be inaccurate."
               << std::endl;
     // Depending on strictness, you might THROWGEMERROR here.
-  }  
+  }
 
   // 2. Load Calibration Data (needed for detectStoneAtPosition)
   CalibrationData calib_data = loadCalibrationData(CALIB_CONFIG_PATH);

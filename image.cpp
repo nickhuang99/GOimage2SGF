@@ -21,8 +21,22 @@
 // --- Definition of Global Constants for Lab Color Tolerances ---
 // These are declared as extern in common.h and defined here
 const float CALIB_L_TOLERANCE_STONE = 35.0f;
-const float CALIB_AB_TOLERANCE_STONE = 18.0f;
+const float CALIB_AB_TOLERANCE_STONE = 15.0f;
 
+// --- NEW CONSTANT DEFINITIONS for detectSpecificColoredRoundShape ---
+const int MORPH_OPEN_KERNEL_SIZE_STONE = 5;
+const int MORPH_OPEN_ITERATIONS_STONE = 1; // MODIFIED (was 2, less aggressive)
+const int MORPH_CLOSE_KERNEL_SIZE_STONE = 3;
+const int MORPH_CLOSE_ITERATIONS_STONE =
+    2; // MODIFIED (was 1, more aggressive for hole filling)
+const double MIN_STONE_AREA_RATIO = 0.03;
+const double MAX_STONE_AREA_RATIO = 0.85; // MODIFIED (was 0.70)
+const double MIN_STONE_CIRCULARITY_WHITE = 0.65;
+const double MIN_STONE_CIRCULARITY_BLACK =
+    0.55; // More lenient for black stones
+const int MIN_CONTOUR_POINTS_STONE = 5;
+
+const float MAX_ROI_FACTOR_FOR_CALC = 1.0f;
 struct Line {
   double value; // y for horizontal, x for vertical
   double angle;
@@ -126,9 +140,9 @@ cv::Rect calculateGridIntersectionROI(int target_col, int target_row,
   int min_practical_roi_half_width = 5;
   roi_half_width = std::max(roi_half_width, min_practical_roi_half_width);
 
-  float max_roi_factor = 1.0f;
-  int max_allowed_half_width = static_cast<int>(
-      std::min(avg_grid_spacing_x, avg_grid_spacing_y) * max_roi_factor);
+  int max_allowed_half_width =
+      static_cast<int>(std::min(avg_grid_spacing_x, avg_grid_spacing_y) *
+                       MAX_ROI_FACTOR_FOR_CALC);
   max_allowed_half_width =
       std::max(max_allowed_half_width, min_practical_roi_half_width);
   roi_half_width = std::min(roi_half_width, max_allowed_half_width);
@@ -192,11 +206,31 @@ int detectStoneAtPosition(const cv::Mat &corrected_bgr_image, int target_col,
              << corrected_bgr_image.rows << ". Assuming EMPTY." << std::endl;
     return EMPTY;
   }
+  // <<< MODIFIED: Use specific corner lab values if target is a corner, else
+  // use average >>>
+  cv::Vec3f ref_black_lab;
+  cv::Vec3f ref_white_lab;
 
-  cv::Vec3f avg_calibrated_black_lab =
-      (calib_data.lab_tl + calib_data.lab_bl) * 0.5f;
-  cv::Vec3f avg_calibrated_white_lab =
-      (calib_data.lab_tr + calib_data.lab_br) * 0.5f;
+  if (target_row == 0 && target_col == 0)
+    ref_black_lab = calib_data.lab_tl; // TL
+  else if (target_row == 18 && target_col == 0)
+    // BL (assuming row-major, (0,18) is bottom-left-most col)
+    ref_black_lab = calib_data.lab_bl;
+  else
+    ref_black_lab = (calib_data.lab_tl + calib_data.lab_bl) * 0.5f;
+  if (target_row == 0 && target_col == 18)
+    ref_white_lab = calib_data.lab_tr; // TR
+  else if (target_row == 18 && target_col == 18)
+    ref_white_lab = calib_data.lab_br; // BR
+  else
+    ref_white_lab = (calib_data.lab_tr + calib_data.lab_br) * 0.5f;
+
+  // Fallback to averages if a specific corner logic isn't perfectly matched or
+  // for non-corners
+  if (ref_black_lab[0] < 0)
+    ref_black_lab = (calib_data.lab_tl + calib_data.lab_bl) * 0.5f;
+  if (ref_white_lab[0] < 0)
+    ref_white_lab = (calib_data.lab_tr + calib_data.lab_br) * 0.5f;
 
   cv::Point2f detected_center;
   float detected_radius;
@@ -204,14 +238,12 @@ int detectStoneAtPosition(const cv::Mat &corrected_bgr_image, int target_col,
   LOG_DEBUG << "Checking for BLACK stone at (" << target_row << ","
             << target_col << ") within ROI {x:" << roi.x << ",y:" << roi.y
             << ",w:" << roi.width << ",h:" << roi.height << "}"
-            << " (Ref Lab: " << avg_calibrated_black_lab[0] << ","
-            << avg_calibrated_black_lab[1] << "," << avg_calibrated_black_lab[2]
-            << ")" << std::endl;
+            << " (Ref Lab: " << ref_black_lab[0] << "," << ref_black_lab[1]
+            << "," << ref_black_lab[2] << ")" << std::endl;
 
   if (detectSpecificColoredRoundShape(
-          corrected_bgr_image, roi, avg_calibrated_black_lab,
-          CALIB_L_TOLERANCE_STONE, CALIB_AB_TOLERANCE_STONE, detected_center,
-          detected_radius)) {
+          corrected_bgr_image, roi, ref_black_lab, CALIB_L_TOLERANCE_STONE,
+          CALIB_AB_TOLERANCE_STONE, detected_center, detected_radius)) {
     LOG_DEBUG << "Found BLACK stone at (" << target_row << "," << target_col
               << ")" << std::endl;
     return BLACK;
@@ -220,14 +252,12 @@ int detectStoneAtPosition(const cv::Mat &corrected_bgr_image, int target_col,
   LOG_DEBUG << "Checking for WHITE stone at (" << target_row << ","
             << target_col << ") within ROI {x:" << roi.x << ",y:" << roi.y
             << ",w:" << roi.width << ",h:" << roi.height << "}"
-            << " (Ref Lab: " << avg_calibrated_white_lab[0] << ","
-            << avg_calibrated_white_lab[1] << "," << avg_calibrated_white_lab[2]
-            << ")" << std::endl;
+            << " (Ref Lab: " << ref_white_lab[0] << "," << ref_white_lab[1]
+            << "," << ref_white_lab[2] << ")" << std::endl;
 
   if (detectSpecificColoredRoundShape(
-          corrected_bgr_image, roi, avg_calibrated_white_lab,
-          CALIB_L_TOLERANCE_STONE, CALIB_AB_TOLERANCE_STONE, detected_center,
-          detected_radius)) {
+          corrected_bgr_image, roi, ref_white_lab, CALIB_L_TOLERANCE_STONE,
+          CALIB_AB_TOLERANCE_STONE, detected_center, detected_radius)) {
     LOG_DEBUG << "Found WHITE stone at (" << target_row << "," << target_col
               << ")" << std::endl;
     return WHITE;
@@ -1767,15 +1797,18 @@ bool detectSpecificColoredRoundShape(const cv::Mat &inputBgrImage,
 
   cv::inRange(roiImageLab, labLower, labUpper, colorMask);
 
-  cv::Mat open_kernel =
-      cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(5, 5));
-  cv::Mat close_kernel =
-      cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(3, 3));
+  // <<< MODIFIED: Use new constants for morphology >>>
+  cv::Mat open_kernel = cv::getStructuringElement(
+      cv::MORPH_ELLIPSE,
+      cv::Size(MORPH_OPEN_KERNEL_SIZE_STONE, MORPH_OPEN_KERNEL_SIZE_STONE));
+  cv::Mat close_kernel = cv::getStructuringElement(
+      cv::MORPH_ELLIPSE,
+      cv::Size(MORPH_CLOSE_KERNEL_SIZE_STONE, MORPH_CLOSE_KERNEL_SIZE_STONE));
 
   cv::morphologyEx(colorMask, colorMask, cv::MORPH_OPEN, open_kernel,
-                   cv::Point(-1, -1), 1);
+                   cv::Point(-1, -1), MORPH_OPEN_ITERATIONS_STONE);
   cv::morphologyEx(colorMask, colorMask, cv::MORPH_CLOSE, close_kernel,
-                   cv::Point(-1, -1), 2);
+                   cv::Point(-1, -1), MORPH_CLOSE_ITERATIONS_STONE);
 
   if (Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
     std::string roi_window_name =
@@ -1803,9 +1836,12 @@ bool detectSpecificColoredRoundShape(const cv::Mat &inputBgrImage,
   }
 
   double roiArea = static_cast<double>(roi.width * roi.height);
-  double minStoneAreaInRoi = roiArea * 0.03;
-  double maxStoneAreaInRoi = roiArea * 0.85;
-  double minCircularity = 0.55;
+  // <<< MODIFIED: Use new constants for area and circularity >>>
+  double minStoneAreaInRoi = roiArea * MIN_STONE_AREA_RATIO;
+  double maxStoneAreaInRoi = roiArea * MAX_STONE_AREA_RATIO;
+  double minCircularity = (expectedAvgLabColor[0] < 100.0f)
+                              ? MIN_STONE_CIRCULARITY_BLACK
+                              : MIN_STONE_CIRCULARITY_WHITE;
 
   LOG_DEBUG << "  For ROI at (" << roi.x << "," << roi.y
             << "): ROI Area=" << roiArea
@@ -1823,7 +1859,7 @@ bool detectSpecificColoredRoundShape(const cv::Mat &inputBgrImage,
 
   for (const auto &contour : contours) {
     contour_idx++;
-    if (contour.size() < 5) {
+    if (contour.size() < MIN_CONTOUR_POINTS_STONE) {
       LOG_DEBUG << "    Contour " << contour_idx << " (ROI " << roi.x << ","
                 << roi.y << ") rejected: too few points (" << contour.size()
                 << ")." << std::endl;

@@ -27,6 +27,17 @@ extern const std::string CALIB_SNAPSHOT_RAW_PATH;
 
 extern const std::string g_default_input_image_path;
 
+// NEW: Thresholds for detectSpecificColoredRoundShape
+extern const int MORPH_OPEN_KERNEL_SIZE_STONE;
+extern const int MORPH_OPEN_ITERATIONS_STONE;
+extern const int MORPH_CLOSE_KERNEL_SIZE_STONE;
+extern const int MORPH_CLOSE_ITERATIONS_STONE;
+extern const double MIN_STONE_AREA_RATIO;
+extern const double MAX_STONE_AREA_RATIO;
+extern const double MIN_STONE_CIRCULARITY_WHITE;
+extern const double MIN_STONE_CIRCULARITY_BLACK;
+extern const int MIN_CONTOUR_POINTS_STONE;
+
 #define WHITE 2
 #define BLACK 1
 #define EMPTY 0
