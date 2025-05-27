@@ -1619,8 +1619,8 @@ void detectStonePositionWorkflow(int target_col, int target_row,
   LOG_INFO << "  Target position: Col=" << target_col << ", Row=" << target_row
            << std::endl;
 
-  cv::Mat raw_image = cv::imread(image_path_to_use);
-  if (raw_image.empty()) {
+  cv::Mat corrected_image = cv::imread(image_path_to_use);
+  if (corrected_image.empty()) {
     THROWGEMERROR("Could not load image: " + image_path_to_use);
   }
 
@@ -1637,12 +1637,7 @@ void detectStonePositionWorkflow(int target_col, int target_row,
                  "perspective correction. Results may be inaccurate."
               << std::endl;
     // Depending on strictness, you might THROWGEMERROR here.
-  }
-  cv::Mat corrected_image = correctPerspective(raw_image);
-  if (corrected_image.empty()) {
-    THROWGEMERROR(
-        "Perspective correction failed or resulted in an empty image.");
-  }
+  }  
 
   // 2. Load Calibration Data (needed for detectStoneAtPosition)
   CalibrationData calib_data = loadCalibrationData(CALIB_CONFIG_PATH);

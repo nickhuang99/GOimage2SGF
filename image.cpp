@@ -21,7 +21,7 @@
 // --- Definition of Global Constants for Lab Color Tolerances ---
 // These are declared as extern in common.h and defined here
 const float CALIB_L_TOLERANCE_STONE = 35.0f;
-const float CALIB_AB_TOLERANCE_STONE = 10.0f;
+const float CALIB_AB_TOLERANCE_STONE = 18.0f;
 
 struct Line {
   double value; // y for horizontal, x for vertical
@@ -126,7 +126,7 @@ cv::Rect calculateGridIntersectionROI(int target_col, int target_row,
   int min_practical_roi_half_width = 5;
   roi_half_width = std::max(roi_half_width, min_practical_roi_half_width);
 
-  float max_roi_factor = 0.45f;
+  float max_roi_factor = 1.0f;
   int max_allowed_half_width = static_cast<int>(
       std::min(avg_grid_spacing_x, avg_grid_spacing_y) * max_roi_factor);
   max_allowed_half_width =
@@ -1773,9 +1773,9 @@ bool detectSpecificColoredRoundShape(const cv::Mat &inputBgrImage,
       cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(3, 3));
 
   cv::morphologyEx(colorMask, colorMask, cv::MORPH_OPEN, open_kernel,
-                   cv::Point(-1, -1), 2);
-  cv::morphologyEx(colorMask, colorMask, cv::MORPH_CLOSE, close_kernel,
                    cv::Point(-1, -1), 1);
+  cv::morphologyEx(colorMask, colorMask, cv::MORPH_CLOSE, close_kernel,
+                   cv::Point(-1, -1), 2);
 
   if (Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
     std::string roi_window_name =
@@ -1805,7 +1805,7 @@ bool detectSpecificColoredRoundShape(const cv::Mat &inputBgrImage,
   double roiArea = static_cast<double>(roi.width * roi.height);
   double minStoneAreaInRoi = roiArea * 0.03;
   double maxStoneAreaInRoi = roiArea * 0.85;
-  double minCircularity = 0.65;
+  double minCircularity = 0.55;
 
   LOG_DEBUG << "  For ROI at (" << roi.x << "," << roi.y
             << "): ROI Area=" << roiArea
