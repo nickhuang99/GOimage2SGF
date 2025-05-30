@@ -307,6 +307,7 @@ bool detectSpecificColoredRoundShape(const cv::Mat &inputBgrImage,
                                      const cv::Rect &regionOfInterest,
                                      const cv::Vec3f &expectedAvgLabColor,
                                      float l_tolerance, float ab_tolerance,
+                                     float expectedPixelRadius,
                                      cv::Point2f &detectedCenter,
                                      float &detectedRadius);
 

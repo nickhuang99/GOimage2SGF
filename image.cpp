@@ -29,8 +29,10 @@ const int MORPH_OPEN_ITERATIONS_STONE = 1; // MODIFIED (was 2, less aggressive)
 const int MORPH_CLOSE_KERNEL_SIZE_STONE = 3;
 const int MORPH_CLOSE_ITERATIONS_STONE =
     2; // MODIFIED (was 1, more aggressive for hole filling)
-const double MIN_STONE_AREA_RATIO = 0.03;
-const double MAX_STONE_AREA_RATIO = 0.85; // MODIFIED (was 0.70)
+const double ABS_STONE_AREA_MIN_FACTOR = 1.0;
+const double ABS_STONE_AREA_MAX_FACTOR = 2.5;
+
+
 const double MIN_STONE_CIRCULARITY_WHITE = 0.65;
 const double MIN_STONE_CIRCULARITY_BLACK =
     0.55; // More lenient for black stones
@@ -240,10 +242,13 @@ int detectStoneAtPosition(const cv::Mat &corrected_bgr_image, int target_col,
             << ",w:" << roi.width << ",h:" << roi.height << "}"
             << " (Ref Lab: " << ref_black_lab[0] << "," << ref_black_lab[1]
             << "," << ref_black_lab[2] << ")" << std::endl;
+  float expected_stone_radius_for_detection = calculateAdaptiveSampleRadius(
+      corrected_bgr_image.cols, corrected_bgr_image.rows);
 
   if (detectSpecificColoredRoundShape(
           corrected_bgr_image, roi, ref_black_lab, CALIB_L_TOLERANCE_STONE,
-          CALIB_AB_TOLERANCE_STONE, detected_center, detected_radius)) {
+          CALIB_AB_TOLERANCE_STONE, expected_stone_radius_for_detection,
+          detected_center, detected_radius)) {
     LOG_DEBUG << "Found BLACK stone at (" << target_row << "," << target_col
               << ")" << std::endl;
     return BLACK;
@@ -257,7 +262,8 @@ int detectStoneAtPosition(const cv::Mat &corrected_bgr_image, int target_col,
 
   if (detectSpecificColoredRoundShape(
           corrected_bgr_image, roi, ref_white_lab, CALIB_L_TOLERANCE_STONE,
-          CALIB_AB_TOLERANCE_STONE, detected_center, detected_radius)) {
+          CALIB_AB_TOLERANCE_STONE, expected_stone_radius_for_detection,
+          detected_center, detected_radius)) {
     LOG_DEBUG << "Found WHITE stone at (" << target_row << "," << target_col
               << ")" << std::endl;
     return WHITE;
@@ -1746,6 +1752,7 @@ bool detectSpecificColoredRoundShape(const cv::Mat &inputBgrImage,
                                      const cv::Rect &regionOfInterest,
                                      const cv::Vec3f &expectedAvgLabColor,
                                      float l_tolerance, float ab_tolerance,
+                                     float expectedPixelRadius,
                                      cv::Point2f &detectedCenter,
                                      float &detectedRadius) {
 
@@ -1756,8 +1763,26 @@ bool detectSpecificColoredRoundShape(const cv::Mat &inputBgrImage,
             << "} Target Lab: " << expectedAvgLabColor[0] << ","
             << expectedAvgLabColor[1] << "," << expectedAvgLabColor[2]
             << " L_tol: " << l_tolerance << ", AB_tol: " << ab_tolerance
-            << std::endl;
-
+            << " expectedPixelRadius: " << expectedPixelRadius << std::endl;
+  if (expectedPixelRadius <= 0) {
+    LOG_ERROR << "  detectSpecificColoredRoundShape: expectedPixelRadius must "
+                 "be positive. Got: "
+              << expectedPixelRadius << std::endl;
+    return false; // Or handle with a default if appropriate, but for now,
+                  // require it.
+  }
+  double expectedStoneArea = CV_PI * expectedPixelRadius * expectedPixelRadius;
+  double minAbsStoneArea = expectedStoneArea * ABS_STONE_AREA_MIN_FACTOR;
+  double maxAbsStoneArea = expectedStoneArea * ABS_STONE_AREA_MAX_FACTOR;
+  double minCircularity = (expectedAvgLabColor[0] < 100.0f)
+                              ? MIN_STONE_CIRCULARITY_BLACK
+                              : MIN_STONE_CIRCULARITY_WHITE;
+  LOG_DEBUG << "  For ROI at (" << regionOfInterest.x << ","
+            << regionOfInterest.y << "): ExpectedRadius=" << expectedPixelRadius
+            << ", ExpectedArea=" << expectedStoneArea
+            << ", MinAbsArea=" << minAbsStoneArea
+            << ", MaxAbsArea=" << maxAbsStoneArea
+            << ", MinCircularity=" << minCircularity << std::endl;
   if (inputBgrImage.empty()) {
     LOG_ERROR << "Input BGR image is empty in detectSpecificColoredRoundShape."
               << std::endl;
@@ -1834,20 +1859,10 @@ bool detectSpecificColoredRoundShape(const cv::Mat &inputBgrImage,
               << "): No contours found after color masking." << std::endl;
     return false;
   }
+ 
+ 
 
-  double roiArea = static_cast<double>(roi.width * roi.height);
-  // <<< MODIFIED: Use new constants for area and circularity >>>
-  double minStoneAreaInRoi = roiArea * MIN_STONE_AREA_RATIO;
-  double maxStoneAreaInRoi = roiArea * MAX_STONE_AREA_RATIO;
-  double minCircularity = (expectedAvgLabColor[0] < 100.0f)
-                              ? MIN_STONE_CIRCULARITY_BLACK
-                              : MIN_STONE_CIRCULARITY_WHITE;
-
-  LOG_DEBUG << "  For ROI at (" << roi.x << "," << roi.y
-            << "): ROI Area=" << roiArea
-            << ", MinStoneAreaInRoi=" << minStoneAreaInRoi
-            << ", MaxStoneAreaInRoi=" << maxStoneAreaInRoi
-            << ", MinCircularity=" << minCircularity << std::endl;
+  LOG_DEBUG << " MinCircularity=" << minCircularity << std::endl;
 
   std::vector<cv::Point> bestContour;
   double bestContourScore = 0.0f;
@@ -1879,15 +1894,16 @@ bool detectSpecificColoredRoundShape(const cv::Mat &inputBgrImage,
               << roi.y << ") evaluating: Area=" << area
               << ", Circ=" << circularity << std::endl;
 
-    if (area < minStoneAreaInRoi || area > maxStoneAreaInRoi) {
-      LOG_DEBUG
-          << "      -> Contour " << contour_idx << " (ROI " << roi.x << ","
-          << roi.y << ") REJECTED by area " << area
-          << (area < minStoneAreaInRoi
-                  ? " (too small, min=" + Num2Str(minStoneAreaInRoi).str() + ")"
-                  : " (too large, max=" + Num2Str(maxStoneAreaInRoi).str() +
-                        ")")
-          << std::endl;
+    if (area < minAbsStoneArea || area > maxAbsStoneArea) {
+      LOG_DEBUG << "      -> Contour " << contour_idx << " (ROI " << roi.x
+                << "," << roi.y << ") REJECTED by area " << area
+                << (area < minAbsStoneArea
+                        ? " (too small, min=" + Num2Str(minAbsStoneArea).str() +
+                              ")"
+                        : " (too large, max=" + Num2Str(maxAbsStoneArea).str() +
+                              ")")
+                << ", Expected Area: " << Num2Str(expectedStoneArea).str()
+                << std::endl;
       if (Logger::getGlobalLogLevel() >= LogLevel::DEBUG)
         cv::drawContours(roi_contour_vis_canvas,
                          std::vector<std::vector<cv::Point>>{contour}, -1,
@@ -2047,10 +2063,13 @@ bool detectFourCornersGoBoard(
       continue;
     }
 
+    float expected_stone_radius_for_detection = calculateAdaptiveSampleRadius(
+        corrected_bgr_image.cols, corrected_bgr_image.rows);
     if (detectSpecificColoredRoundShape(
             corrected_bgr_image, roi_corrected, corner_lab_refs[i],
             CALIB_L_TOLERANCE_STONE, CALIB_AB_TOLERANCE_STONE,
-            detected_center_corrected, detected_radius_corrected)) {
+            expected_stone_radius_for_detection, detected_center_corrected,
+            detected_radius_corrected)) {
 
       std::vector<cv::Point2f> point_to_transform = {detected_center_corrected};
 
@@ -2265,10 +2284,18 @@ bool experimental_detectStoneInQuadrant(
             << ", " << target_lab_color[1] << ", " << target_lab_color[2]
             << "] for detection." << std::endl;
 
+  float expected_stone_radius_for_detection = calculateAdaptiveSampleRadius(
+      roughly_corrected_display_img.cols, roughly_corrected_display_img.rows);
+
+  LOG_DEBUG
+      << "Experimental: Expected stone radius in corrected view for detection: "
+      << expected_stone_radius_for_detection << std::endl;
+
   // 3. Attempt to detect the stone in the specified quadrant
   bool found = detectSpecificColoredRoundShape(
       roughly_corrected_display_img, used_roi_in_corrected_img,
       target_lab_color, CALIB_L_TOLERANCE_STONE, CALIB_AB_TOLERANCE_STONE,
+      expected_stone_radius_for_detection,
       detected_center_in_corrected_img, detected_radius_in_corrected_img);
 
   if (found) {
