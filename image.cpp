@@ -2127,3 +2127,159 @@ bool detectFourCornersGoBoard(
     return false;
   }
 }
+
+// --- NEW EXPERIMENTAL FUNCTION ---
+/**
+ * @brief Experimental function to detect a stone in a specified quadrant of a
+ * roughly perspective-corrected image.
+ *
+ * This function first applies a perspective correction to the rawBgrImage using
+ * corners obtained from getBoardCorners (which uses config or defaults).
+ * Then, it attempts to find a stone of a specified color in the target quadrant
+ * of this roughly-corrected image, using Lab color references from calibData.
+ *
+ * @param rawBgrImage The input raw BGR image of the Go board.
+ * @param targetQuadrant The quadrant (TOP_LEFT, TOP_RIGHT, etc.) to search in.
+ * @param calibData Loaded calibration data, used for Lab color references.
+ * @param detected_center_in_corrected_img Output: If a stone is found, its
+ * center coordinates in the roughly-corrected image.
+ * @param detected_radius_in_corrected_img Output: If a stone is found, its
+ * radius in the roughly-corrected image.
+ * @param roughly_corrected_display_img Output: The roughly
+ * perspective-corrected BGR image (for visualization).
+ * @param used_roi_in_corrected_img Output: The cv::Rect defining the quadrant
+ * searched in the roughly_corrected_display_img.
+ * @return true If a stone matching the criteria is found in the quadrant.
+ * @return false Otherwise.
+ */
+bool experimental_detectStoneInQuadrant(
+    const cv::Mat &rawBgrImage, CornerQuadrant targetQuadrant,
+    const CalibrationData &calibData,
+    cv::Point2f &detected_center_in_corrected_img,
+    float &detected_radius_in_corrected_img,
+    cv::Mat &roughly_corrected_display_img,
+    cv::Rect &used_roi_in_corrected_img) {
+
+  LOG_INFO << "--- Starting Experimental Stone Detection in Quadrant ---"
+           << std::endl;
+  LOG_INFO << "Target Quadrant: "
+           << (targetQuadrant == CornerQuadrant::TOP_LEFT      ? "TOP_LEFT"
+               : targetQuadrant == CornerQuadrant::TOP_RIGHT   ? "TOP_RIGHT"
+               : targetQuadrant == CornerQuadrant::BOTTOM_LEFT ? "BOTTOM_LEFT"
+                                                               : "BOTTOM_RIGHT")
+           << std::endl;
+
+  if (rawBgrImage.empty()) {
+    LOG_ERROR << "Experimental: Raw BGR image is empty." << std::endl;
+    return false;
+  }
+  if (!calibData.colors_loaded) {
+    LOG_ERROR
+        << "Experimental: Calibration color data not loaded. Cannot proceed."
+        << std::endl;
+    return false;
+  }
+
+  // 1. Perform a "guess" perspective correction
+  // Use corners from config if available and dimensions match, otherwise
+  // default percentages.
+  std::vector<cv::Point2f> source_points_raw = getBoardCorners(rawBgrImage);
+  if (source_points_raw.size() != 4) {
+    LOG_ERROR << "Experimental: Failed to get 4 source points for initial "
+                 "perspective "
+                 "correction. Found "
+              << source_points_raw.size() << "." << std::endl;
+    return false;
+  }
+
+  std::vector<cv::Point2f> dest_points_corrected =
+      getBoardCornersCorrected(rawBgrImage.cols, rawBgrImage.rows);
+  cv::Mat transform_matrix =
+      cv::getPerspectiveTransform(source_points_raw, dest_points_corrected);
+  cv::warpPerspective(rawBgrImage, roughly_corrected_display_img,
+                      transform_matrix, rawBgrImage.size());
+
+  if (roughly_corrected_display_img.empty()) {
+    LOG_ERROR << "Experimental: Rough perspective correction resulted in an "
+                 "empty image."
+              << std::endl;
+    return false;
+  }
+  LOG_DEBUG << "Experimental: Rough perspective correction applied."
+            << std::endl;
+
+  // 2. Define the ROI for the target quadrant in the corrected image
+  int corrected_width = roughly_corrected_display_img.cols;
+  int corrected_height = roughly_corrected_display_img.rows;
+  int quad_w = corrected_width / 2;
+  int quad_h = corrected_height / 2;
+
+  cv::Vec3f target_lab_color;
+  int expected_stone_macro = EMPTY; // For logging
+
+  switch (targetQuadrant) {
+  case CornerQuadrant::TOP_LEFT:
+    used_roi_in_corrected_img = cv::Rect(0, 0, quad_w, quad_h);
+    target_lab_color = calibData.lab_tl;
+    expected_stone_macro = BLACK;
+    LOG_INFO << "Experimental: Searching for BLACK stone in TOP_LEFT quadrant."
+             << std::endl;
+    break;
+  case CornerQuadrant::TOP_RIGHT:
+    used_roi_in_corrected_img = cv::Rect(quad_w, 0, quad_w, quad_h);
+    target_lab_color = calibData.lab_tr;
+    expected_stone_macro = WHITE;
+    LOG_INFO << "Experimental: Searching for WHITE stone in TOP_RIGHT quadrant."
+             << std::endl;
+    break;
+  case CornerQuadrant::BOTTOM_LEFT:
+    used_roi_in_corrected_img = cv::Rect(0, quad_h, quad_w, quad_h);
+    target_lab_color = calibData.lab_bl;
+    expected_stone_macro = BLACK;
+    LOG_INFO
+        << "Experimental: Searching for BLACK stone in BOTTOM_LEFT quadrant."
+        << std::endl;
+    break;
+  case CornerQuadrant::BOTTOM_RIGHT:
+    used_roi_in_corrected_img = cv::Rect(quad_w, quad_h, quad_w, quad_h);
+    target_lab_color = calibData.lab_br;
+    expected_stone_macro = WHITE;
+    LOG_INFO
+        << "Experimental: Searching for WHITE stone in BOTTOM_RIGHT quadrant."
+        << std::endl;
+    break;
+  default:
+    LOG_ERROR << "Experimental: Invalid target quadrant specified."
+              << std::endl;
+    return false;
+  }
+
+  // Ensure the Lab color reference is valid
+  if (target_lab_color[0] < 0) { // L-channel is a good indicator of validity
+    LOG_ERROR << "Experimental: Invalid Lab color reference for target "
+                 "quadrant from calibData. L="
+              << target_lab_color[0] << std::endl;
+    return false;
+  }
+  LOG_DEBUG << "Experimental: Using Lab reference [" << target_lab_color[0]
+            << ", " << target_lab_color[1] << ", " << target_lab_color[2]
+            << "] for detection." << std::endl;
+
+  // 3. Attempt to detect the stone in the specified quadrant
+  bool found = detectSpecificColoredRoundShape(
+      roughly_corrected_display_img, used_roi_in_corrected_img,
+      target_lab_color, CALIB_L_TOLERANCE_STONE, CALIB_AB_TOLERANCE_STONE,
+      detected_center_in_corrected_img, detected_radius_in_corrected_img);
+
+  if (found) {
+    LOG_INFO << "Experimental: Successfully detected a stone in the target "
+                "quadrant. Center (in corrected img): "
+             << detected_center_in_corrected_img
+             << ", Radius: " << detected_radius_in_corrected_img << std::endl;
+  } else {
+    LOG_INFO << "Experimental: Failed to detect a stone in the target quadrant."
+             << std::endl;
+  }
+  LOG_INFO << "--- Experimental Stone Detection Finished ---" << std::endl;
+  return found;
+}

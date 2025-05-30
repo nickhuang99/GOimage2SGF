@@ -72,6 +72,10 @@ void displayHelpMessage() {
          "config, draw corners."
       << endl;
   CONSOLE_OUT
+      << "      --exp-detect-tl                 : (Dev) Experimental TL "
+         "quadrant stone detection." // NEW OPTION
+      << endl;
+  CONSOLE_OUT
       << "  -p, --process-image <image_path>   : Process the Go board image."
       << endl;
   CONSOLE_OUT
@@ -1745,6 +1749,102 @@ void detectStonePositionWorkflow(int target_col, int target_row,
   LOG_INFO << "Stone Detection Workflow Finished." << std::endl;
 }
 
+// --- NEW EXPERIMENTAL WORKFLOW ---
+void experimentalDetectTLQuadrantWorkflow() {
+  LOG_INFO
+      << "--- Starting Experimental Top-Left Quadrant Detection Workflow ---"
+      << std::endl;
+
+  // 1. Load the raw snapshot image
+  std::string raw_snapshot_path = CALIB_SNAPSHOT_RAW_PATH;
+  LOG_INFO << "Loading raw snapshot image: " << raw_snapshot_path << std::endl;
+  cv::Mat raw_image = cv::imread(raw_snapshot_path);
+  if (raw_image.empty()) {
+    THROWGEMERROR("Failed to load raw snapshot image: " + raw_snapshot_path);
+  }
+
+  // 2. Load calibration data (primarily for Lab color reference)
+  LOG_INFO << "Loading calibration data from: " << CALIB_CONFIG_PATH
+           << std::endl;
+  CalibrationData calib_data = loadCalibrationData(CALIB_CONFIG_PATH);
+  if (!calib_data.colors_loaded || calib_data.lab_tl[0] < 0) {
+    THROWGEMERROR("Calibration data (specifically lab_tl for black stone) not "
+                  "loaded or invalid from: " +
+                  CALIB_CONFIG_PATH);
+  }
+  if (!calib_data.corners_loaded) {
+    LOG_WARN << "Calibration corner data not loaded. Perspective correction "
+                "will use default guesses."
+             << std::endl;
+    // The getBoardCorners function called by experimental_detectStoneInQuadrant
+    // will fall back to defaults if config corners are not loaded or dimensions
+    // mismatch.
+  }
+
+  // 3. Call the experimental detection function for the TOP_LEFT quadrant
+  cv::Point2f detected_center_corrected;
+  float detected_radius_corrected;
+  cv::Mat roughly_corrected_img;
+  cv::Rect roi_used_corrected;
+
+  bool found = experimental_detectStoneInQuadrant(
+      raw_image, CornerQuadrant::TOP_LEFT, calib_data,
+      detected_center_corrected, detected_radius_corrected,
+      roughly_corrected_img, roi_used_corrected);
+
+  // 4. Display results
+  if (roughly_corrected_img.empty()) {
+    LOG_ERROR << "Experimental detection returned an empty corrected image."
+              << std::endl;
+    return;
+  }
+
+  std::string result_text;
+  cv::Scalar text_color = cv::Scalar(0, 0, 255); // Red for failure by default
+
+  if (found) {
+    result_text = "SUCCESS: Black stone DETECTED in TL quadrant.";
+    text_color = cv::Scalar(0, 255, 0); // Green for success
+    // Draw detected stone
+    cv::circle(roughly_corrected_img, detected_center_corrected,
+               static_cast<int>(detected_radius_corrected),
+               cv::Scalar(0, 255, 0), 2);
+    cv::circle(roughly_corrected_img, detected_center_corrected, 2,
+               cv::Scalar(0, 0, 255), -1); // Center dot
+    LOG_INFO << result_text
+             << " Center (corrected): " << detected_center_corrected
+             << ", Radius (corrected): " << detected_radius_corrected
+             << std::endl;
+
+  } else {
+    result_text = "FAILURE: Black stone NOT detected in TL quadrant.";
+    LOG_WARN << result_text << std::endl;
+  }
+
+  // Draw ROI
+  cv::rectangle(roughly_corrected_img, roi_used_corrected,
+                cv::Scalar(255, 0, 0), 1); // Blue ROI
+  cv::putText(roughly_corrected_img, "TL Quadrant ROI",
+              cv::Point(roi_used_corrected.x + 5, roi_used_corrected.y + 20),
+              cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 0, 0), 1);
+
+  cv::putText(roughly_corrected_img, result_text, cv::Point(10, 30),
+              cv::FONT_HERSHEY_SIMPLEX, 0.6, text_color, 2);
+  cv::putText(roughly_corrected_img,
+              "Roughly Corrected View (Default/Config Guesses)",
+              cv::Point(10, roughly_corrected_img.rows - 10),
+              cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(200, 200, 200), 1);
+
+  std::string window_name = "Experimental TL Quadrant Detection";
+  cv::imshow(window_name, roughly_corrected_img);
+  LOG_INFO << "Displaying experimental result. Press any key to close."
+           << std::endl;
+  cv::waitKey(0);
+  cv::destroyAllWindows();
+  LOG_INFO << "--- Experimental TL Quadrant Detection Workflow Finished ---"
+           << std::endl;
+}
+
 int main(int argc, char *argv[]) {
   // Initialize logger with default path and level.
   // This allows logging from the very start, even during option parsing if
@@ -1778,14 +1878,16 @@ int main(int argc, char *argv[]) {
     bool run_tournament_mode = false;     // Flag for new tournament mode
     bool run_study_mode = false;
     bool run_detect_stone_position_workflow = false;  // NEW Flag
+    bool run_experimental_detect_tl_workflow = false; // NEW flag
     int detect_stone_col = -1, detect_stone_row = -1; // NEW Args for -P
 
     auto isWorkflowSelected = [&]() -> bool {
       return run_probe_devices || run_calibration ||
              run_detect_stone_position_workflow || run_test_calibration ||
              run_study_mode || run_tournament_mode ||
-             !snapshot_output.empty() || !record_sgf_output.empty() ||
-             run_draw_board_workflow || !test_perspective_image_path.empty();
+             run_experimental_detect_tl_workflow || !snapshot_output.empty() ||
+             !record_sgf_output.empty() || run_draw_board_workflow ||
+             !test_perspective_image_path.empty();
     };
     struct option long_options[] = {
         {"image", required_argument, nullptr,
@@ -1814,8 +1916,8 @@ int main(int argc, char *argv[]) {
         {"size", required_argument, nullptr,
          'S'}, // Use S as a unique identifier for --size
         {"draw-board", required_argument, nullptr, 0}, // NEW OPTION
-        {"test-calibration-config", no_argument, nullptr,
-         'f'}, // Use f as unique value
+        {"test-calibration-config", no_argument, nullptr, 'f'},
+        {"exp-detect-tl", no_argument, nullptr, 0}, // NEW long option
         {nullptr, 0, nullptr, 0}};
 
     int c;
@@ -2014,6 +2116,9 @@ int main(int argc, char *argv[]) {
             THROWGEMERROR(
                 "--draw-board option requires an SGF file path argument.");
           }
+        } else if (long_options[option_index].name ==
+                   std::string("exp-detect-tl")) { // NEW
+          run_experimental_detect_tl_workflow = true;
         }
         break;
       case '?':
@@ -2044,6 +2149,9 @@ int main(int argc, char *argv[]) {
       // Calibration might implicitly use setupCalibrationFromConfig or handle
       // its own config needs
       calibrationWorkflow(run_interactive_calibration);
+    } else if (run_experimental_detect_tl_workflow) { // NEW: Handle
+                                                      // experimental workflow
+      experimentalDetectTLQuadrantWorkflow();
     } else if (
         run_detect_stone_position_workflow) { // Check this before generic
                                               // workflows that might also use

@@ -45,6 +45,9 @@ extern const int MIN_CONTOUR_POINTS_STONE;
 extern const float CALIB_L_TOLERANCE_STONE;
 extern const float CALIB_AB_TOLERANCE_STONE;
 
+// NEW Enum for specifying corner quadrant
+enum class CornerQuadrant { TOP_LEFT, TOP_RIGHT, BOTTOM_LEFT, BOTTOM_RIGHT };
+
 // Custom exception class for GEM errors
 class GEMError : public std::runtime_error {
 public:
@@ -307,4 +310,14 @@ bool detectSpecificColoredRoundShape(const cv::Mat &inputBgrImage,
                                      cv::Point2f &detectedCenter,
                                      float &detectedRadius);
 
+// --- EXPERIMENTAL FUNCTION DECLARATION ---
+bool experimental_detectStoneInQuadrant(
+    const cv::Mat &rawBgrImage, CornerQuadrant targetQuadrant,
+    const CalibrationData &calibData,
+    cv::Point2f &detected_center_in_corrected_img,
+    float &detected_radius_in_corrected_img,
+    cv::Mat &roughly_corrected_display_img,
+    cv::Rect &used_roi_in_corrected_img);
+
+std::vector<cv::Point2f> getBoardCorners(const cv::Mat &inputImage);
 #endif // UTILITY_H
