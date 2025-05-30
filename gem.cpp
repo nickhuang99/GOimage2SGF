@@ -72,7 +72,7 @@ void displayHelpMessage() {
          "config, draw corners."
       << endl;
   CONSOLE_OUT
-      << "      --exp-detect-tl                 : (Dev) Experimental TL "
+      << "  --exp-detect-tl                   : (Dev) Experimental TL "
          "quadrant stone detection." // NEW OPTION
       << endl;
   CONSOLE_OUT
