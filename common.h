@@ -25,7 +25,7 @@ extern const std::string CALIB_SNAPSHOT_PATH;
 extern const std::string CALIB_SNAPSHOT_DEBUG_PATH;
 extern const std::string CALIB_SNAPSHOT_RAW_PATH;
 
-extern const std::string g_default_input_image_path;
+extern std::string g_default_input_image_path;
 
 // NEW: Thresholds for detectSpecificColoredRoundShape
 extern const int MORPH_OPEN_KERNEL_SIZE_STONE;

@@ -1614,7 +1614,7 @@ void detectStonePositionWorkflow(int target_col, int target_row,
 
   std::string image_path_to_use = image_path_from_arg;
   if (image_path_to_use.empty()) {
-    image_path_to_use = g_default_input_image_path;
+    image_path_to_use = CALIB_SNAPSHOT_PATH;
     LOG_INFO << "  No --image specified, using default: " << image_path_to_use
              << std::endl;
   } else {
@@ -1756,7 +1756,7 @@ void experimentalDetectTLQuadrantWorkflow() {
       << std::endl;
 
   // 1. Load the raw snapshot image
-  std::string raw_snapshot_path = CALIB_SNAPSHOT_RAW_PATH;
+  std::string raw_snapshot_path = g_default_input_image_path;
   LOG_INFO << "Loading raw snapshot image: " << raw_snapshot_path << std::endl;
   cv::Mat raw_image = cv::imread(raw_snapshot_path);
   if (raw_image.empty()) {

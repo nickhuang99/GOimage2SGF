@@ -39,7 +39,7 @@ const std::string CALIB_SNAPSHOT_RAW_PATH =
 const std::string CALIB_SNAPSHOT_DEBUG_PATH =
     "./share/snapshot_osd.jpg"; // Snapshot with OSD/debug info
 
-const std::string g_default_input_image_path = CALIB_SNAPSHOT_PATH;
+std::string g_default_input_image_path = CALIB_SNAPSHOT_RAW_PATH;
 
 const std::string WINDOW_RAW_FEED =
     "Raw Camera - Adjust Corners (1-4, ijkl, s, esc)";

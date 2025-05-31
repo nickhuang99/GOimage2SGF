@@ -2210,6 +2210,13 @@ bool experimental_detectStoneInQuadrant(
               << source_points_raw.size() << "." << std::endl;
     return false;
   }
+  if (bDebug) {
+    for (auto i = 0; i < source_points_raw.size(); i++) {
+      LOG_DEBUG << "source_points_raw[" << i << "].x:" << source_points_raw[i].x
+                << " source_points_raw[" << i << "].y:" << source_points_raw[i].y;                
+    }
+    LOG_DEBUG << std::endl;
+  }
 
   std::vector<cv::Point2f> dest_points_corrected =
       getBoardCornersCorrected(rawBgrImage.cols, rawBgrImage.rows);
@@ -2223,6 +2230,23 @@ bool experimental_detectStoneInQuadrant(
                  "empty image."
               << std::endl;
     return false;
+  }
+  float expected_stone_radius_for_detection = calculateAdaptiveSampleRadius(
+      roughly_corrected_display_img.cols, roughly_corrected_display_img.rows);
+
+  LOG_DEBUG
+      << "Experimental: Expected stone radius in corrected view for detection: "
+      << expected_stone_radius_for_detection << std::endl;
+
+  if (bDebug) {
+    cv::Mat debug_roughly_corrected_img = roughly_corrected_display_img.clone();
+
+    cv::circle(debug_roughly_corrected_img, dest_points_corrected[0],
+                     expected_stone_radius_for_detection,
+                     cv::Scalar(0, 255, 0), 2);
+    cv::imshow("roughly_corrected_display_img", debug_roughly_corrected_img);
+    cv::waitKey(0);
+    cv::destroyWindow("roughly_corrected_display_img");
   }
   LOG_DEBUG << "Experimental: Rough perspective correction applied."
             << std::endl;
@@ -2284,13 +2308,7 @@ bool experimental_detectStoneInQuadrant(
             << ", " << target_lab_color[1] << ", " << target_lab_color[2]
             << "] for detection." << std::endl;
 
-  float expected_stone_radius_for_detection = calculateAdaptiveSampleRadius(
-      roughly_corrected_display_img.cols, roughly_corrected_display_img.rows);
-
-  LOG_DEBUG
-      << "Experimental: Expected stone radius in corrected view for detection: "
-      << expected_stone_radius_for_detection << std::endl;
-
+ 
   // 3. Attempt to detect the stone in the specified quadrant
   bool found = detectSpecificColoredRoundShape(
       roughly_corrected_display_img, used_roi_in_corrected_img,
