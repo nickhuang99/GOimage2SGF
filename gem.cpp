@@ -2083,6 +2083,7 @@ int main(int argc, char *argv[]) {
         break;
       case 0: // Long-only options (val was 0)
         if (long_options[option_index].name == std::string("image")) {
+          g_default_input_image_path = optarg;
           detect_stone_image_path_arg = optarg; // Store path for -P
         } else if (long_options[option_index].name ==
                    std::string("game-name")) {
