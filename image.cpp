@@ -29,13 +29,13 @@ const int MORPH_OPEN_ITERATIONS_STONE = 1; // MODIFIED (was 2, less aggressive)
 const int MORPH_CLOSE_KERNEL_SIZE_STONE = 3;
 const int MORPH_CLOSE_ITERATIONS_STONE =
     2; // MODIFIED (was 1, more aggressive for hole filling)
-const double ABS_STONE_AREA_MIN_FACTOR = 1.0;
+const double ABS_STONE_AREA_MIN_FACTOR = 0.4;
 const double ABS_STONE_AREA_MAX_FACTOR = 2.5;
 
 
 const double MIN_STONE_CIRCULARITY_WHITE = 0.65;
 const double MIN_STONE_CIRCULARITY_BLACK =
-    0.55; // More lenient for black stones
+    0.50; // More lenient for black stones
 const int MIN_CONTOUR_POINTS_STONE = 5;
 
 const float MAX_ROI_FACTOR_FOR_CALC = 1.0f;
