@@ -32,7 +32,6 @@ const int MORPH_CLOSE_ITERATIONS_STONE =
 const double ABS_STONE_AREA_MIN_FACTOR = 0.4;
 const double ABS_STONE_AREA_MAX_FACTOR = 2.5;
 
-
 const double MIN_STONE_CIRCULARITY_WHITE = 0.65;
 const double MIN_STONE_CIRCULARITY_BLACK =
     0.50; // More lenient for black stones
@@ -1835,7 +1834,7 @@ bool detectSpecificColoredRoundShape(const cv::Mat &inputBgrImage,
   cv::morphologyEx(colorMask, colorMask, cv::MORPH_CLOSE, close_kernel,
                    cv::Point(-1, -1), MORPH_CLOSE_ITERATIONS_STONE);
 
-  if (Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
+  if (bDebug) {
     std::string roi_window_name =
         "Color Mask ROI (L:" +
         std::to_string(static_cast<int>(expectedAvgLabColor[0])) + " X" +
@@ -1859,8 +1858,6 @@ bool detectSpecificColoredRoundShape(const cv::Mat &inputBgrImage,
               << "): No contours found after color masking." << std::endl;
     return false;
   }
- 
- 
 
   LOG_DEBUG << " MinCircularity=" << minCircularity << std::endl;
 
@@ -1868,7 +1865,7 @@ bool detectSpecificColoredRoundShape(const cv::Mat &inputBgrImage,
   double bestContourScore = 0.0f;
   int contour_idx = 0;
   cv::Mat roi_contour_vis_canvas;
-  if (Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
+  if (bDebug) {
     roi_contour_vis_canvas = roiImageBgr.clone();
   }
 
@@ -1904,7 +1901,7 @@ bool detectSpecificColoredRoundShape(const cv::Mat &inputBgrImage,
                               ")")
                 << ", Expected Area: " << Num2Str(expectedStoneArea).str()
                 << std::endl;
-      if (Logger::getGlobalLogLevel() >= LogLevel::DEBUG)
+      if (bDebug)
         cv::drawContours(roi_contour_vis_canvas,
                          std::vector<std::vector<cv::Point>>{contour}, -1,
                          cv::Scalar(0, 165, 255), 1);
@@ -1914,7 +1911,7 @@ bool detectSpecificColoredRoundShape(const cv::Mat &inputBgrImage,
       LOG_DEBUG << "      -> Contour " << contour_idx << " (ROI " << roi.x
                 << "," << roi.y << ") REJECTED by circularity " << circularity
                 << " (min_circ=" << minCircularity << ")" << std::endl;
-      if (Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
+      if (bDebug) {
         cv::drawContours(roi_contour_vis_canvas,
                          std::vector<std::vector<cv::Point>>{contour}, -1,
                          cv::Scalar(255, 0, 0), 1);
@@ -1929,7 +1926,7 @@ bool detectSpecificColoredRoundShape(const cv::Mat &inputBgrImage,
               << roi.y
               << ") PASSED filters. Current best area: " << bestContourScore
               << std::endl;
-    if (Logger::getGlobalLogLevel() >= LogLevel::DEBUG)
+    if (bDebug)
       cv::drawContours(roi_contour_vis_canvas,
                        std::vector<std::vector<cv::Point>>{contour}, -1,
                        cv::Scalar(0, 255, 255), 1);
@@ -1942,7 +1939,7 @@ bool detectSpecificColoredRoundShape(const cv::Mat &inputBgrImage,
     }
   }
 
-  if (Logger::getGlobalLogLevel() >= LogLevel::DEBUG && !contours.empty()) {
+  if (bDebug && !contours.empty()) {
     std::string roi_contours_win_name = "Evaluated Contours (ROI X" +
                                         std::to_string(roi.x) + " Y" +
                                         std::to_string(roi.y) + ")";
@@ -2171,160 +2168,267 @@ bool detectFourCornersGoBoard(
  * @return true If a stone matching the criteria is found in the quadrant.
  * @return false Otherwise.
  */
-bool experimental_detectStoneInQuadrant(
-    const cv::Mat &rawBgrImage, CornerQuadrant targetQuadrant,
-    const CalibrationData &calibData,
-    cv::Point2f &detected_center_in_corrected_img,
-    float &detected_radius_in_corrected_img,
-    cv::Mat &roughly_corrected_display_img,
-    cv::Rect &used_roi_in_corrected_img) {
+// --- NEW SCANNING EXPERIMENTAL FUNCTION ---
+bool experimental_scan_for_quadrant_stone(
+    const cv::Mat &rawBgrImage, CornerQuadrant targetScanQuadrant,
+    const CalibrationData &calibData, cv::Point2f &out_best_raw_scan_point,
+    cv::Mat &out_best_corrected_image,
+    cv::Point2f &out_detected_stone_center_in_corrected,
+    float &out_detected_stone_radius_in_corrected,
+    cv::Rect &out_roi_in_corrected) {
 
-  LOG_INFO << "--- Starting Experimental Stone Detection in Quadrant ---"
-           << std::endl;
-  LOG_INFO << "Target Quadrant: "
-           << (targetQuadrant == CornerQuadrant::TOP_LEFT      ? "TOP_LEFT"
-               : targetQuadrant == CornerQuadrant::TOP_RIGHT   ? "TOP_RIGHT"
-               : targetQuadrant == CornerQuadrant::BOTTOM_LEFT ? "BOTTOM_LEFT"
-                                                               : "BOTTOM_RIGHT")
+  LOG_INFO << "--- Starting Experimental SCAN for Stone in Quadrant ---"
            << std::endl;
 
-  if (rawBgrImage.empty()) {
-    LOG_ERROR << "Experimental: Raw BGR image is empty." << std::endl;
-    return false;
-  }
+  std::string quadrant_name_str;
+  cv::Vec3f target_lab_color;
+
   if (!calibData.colors_loaded) {
-    LOG_ERROR
-        << "Experimental: Calibration color data not loaded. Cannot proceed."
-        << std::endl;
-    return false;
-  }
-
-  // 1. Perform a "guess" perspective correction
-  // Use corners from config if available and dimensions match, otherwise
-  // default percentages.
-  std::vector<cv::Point2f> source_points_raw = getBoardCorners(rawBgrImage);
-  if (source_points_raw.size() != 4) {
-    LOG_ERROR << "Experimental: Failed to get 4 source points for initial "
-                 "perspective "
-                 "correction. Found "
-              << source_points_raw.size() << "." << std::endl;
-    return false;
-  }
-  if (bDebug) {
-    for (auto i = 0; i < source_points_raw.size(); i++) {
-      LOG_DEBUG << "source_points_raw[" << i << "].x:" << source_points_raw[i].x
-                << " source_points_raw[" << i << "].y:" << source_points_raw[i].y;                
-    }
-    LOG_DEBUG << std::endl;
-  }
-
-  std::vector<cv::Point2f> dest_points_corrected =
-      getBoardCornersCorrected(rawBgrImage.cols, rawBgrImage.rows);
-  cv::Mat transform_matrix =
-      cv::getPerspectiveTransform(source_points_raw, dest_points_corrected);
-  cv::warpPerspective(rawBgrImage, roughly_corrected_display_img,
-                      transform_matrix, rawBgrImage.size());
-
-  if (roughly_corrected_display_img.empty()) {
-    LOG_ERROR << "Experimental: Rough perspective correction resulted in an "
-                 "empty image."
+    LOG_ERROR << "Scan: Calibration color data not loaded. Cannot proceed."
               << std::endl;
     return false;
   }
-  float expected_stone_radius_for_detection = calculateAdaptiveSampleRadius(
-      roughly_corrected_display_img.cols, roughly_corrected_display_img.rows);
 
-  LOG_DEBUG
-      << "Experimental: Expected stone radius in corrected view for detection: "
-      << expected_stone_radius_for_detection << std::endl;
-
-  if (bDebug) {
-    cv::Mat debug_roughly_corrected_img = roughly_corrected_display_img.clone();
-
-    cv::circle(debug_roughly_corrected_img, dest_points_corrected[0],
-                     expected_stone_radius_for_detection,
-                     cv::Scalar(0, 255, 0), 2);
-    cv::imshow("roughly_corrected_display_img", debug_roughly_corrected_img);
-    cv::waitKey(0);
-    cv::destroyWindow("roughly_corrected_display_img");
-  }
-  LOG_DEBUG << "Experimental: Rough perspective correction applied."
-            << std::endl;
-
-  // 2. Define the ROI for the target quadrant in the corrected image
-  int corrected_width = roughly_corrected_display_img.cols;
-  int corrected_height = roughly_corrected_display_img.rows;
-  int quad_w = corrected_width / 2;
-  int quad_h = corrected_height / 2;
-
-  cv::Vec3f target_lab_color;
-  int expected_stone_macro = EMPTY; // For logging
-
-  switch (targetQuadrant) {
+  switch (targetScanQuadrant) {
   case CornerQuadrant::TOP_LEFT:
-    used_roi_in_corrected_img = cv::Rect(0, 0, quad_w, quad_h);
+    quadrant_name_str = "TOP_LEFT";
     target_lab_color = calibData.lab_tl;
-    expected_stone_macro = BLACK;
-    LOG_INFO << "Experimental: Searching for BLACK stone in TOP_LEFT quadrant."
-             << std::endl;
     break;
   case CornerQuadrant::TOP_RIGHT:
-    used_roi_in_corrected_img = cv::Rect(quad_w, 0, quad_w, quad_h);
+    quadrant_name_str = "TOP_RIGHT";
     target_lab_color = calibData.lab_tr;
-    expected_stone_macro = WHITE;
-    LOG_INFO << "Experimental: Searching for WHITE stone in TOP_RIGHT quadrant."
-             << std::endl;
     break;
   case CornerQuadrant::BOTTOM_LEFT:
-    used_roi_in_corrected_img = cv::Rect(0, quad_h, quad_w, quad_h);
+    quadrant_name_str = "BOTTOM_LEFT";
     target_lab_color = calibData.lab_bl;
-    expected_stone_macro = BLACK;
-    LOG_INFO
-        << "Experimental: Searching for BLACK stone in BOTTOM_LEFT quadrant."
-        << std::endl;
     break;
   case CornerQuadrant::BOTTOM_RIGHT:
-    used_roi_in_corrected_img = cv::Rect(quad_w, quad_h, quad_w, quad_h);
+    quadrant_name_str = "BOTTOM_RIGHT";
     target_lab_color = calibData.lab_br;
-    expected_stone_macro = WHITE;
-    LOG_INFO
-        << "Experimental: Searching for WHITE stone in BOTTOM_RIGHT quadrant."
-        << std::endl;
     break;
   default:
-    LOG_ERROR << "Experimental: Invalid target quadrant specified."
-              << std::endl;
+    LOG_ERROR << "Scan: Invalid target quadrant specified." << std::endl;
     return false;
   }
+  LOG_INFO << "Scan: Target Quadrant: " << quadrant_name_str << std::endl;
 
-  // Ensure the Lab color reference is valid
   if (target_lab_color[0] < 0) { // L-channel is a good indicator of validity
-    LOG_ERROR << "Experimental: Invalid Lab color reference for target "
-                 "quadrant from calibData. L="
-              << target_lab_color[0] << std::endl;
+    LOG_ERROR << "Scan: Invalid Lab color reference for target quadrant "
+              << quadrant_name_str
+              << " from calibData. L=" << target_lab_color[0] << std::endl;
     return false;
   }
-  LOG_DEBUG << "Experimental: Using Lab reference [" << target_lab_color[0]
-            << ", " << target_lab_color[1] << ", " << target_lab_color[2]
+  LOG_DEBUG << "Scan: Using Lab reference [" << target_lab_color[0] << ", "
+            << target_lab_color[1] << ", " << target_lab_color[2]
             << "] for detection." << std::endl;
 
- 
-  // 3. Attempt to detect the stone in the specified quadrant
-  bool found = detectSpecificColoredRoundShape(
-      roughly_corrected_display_img, used_roi_in_corrected_img,
-      target_lab_color, CALIB_L_TOLERANCE_STONE, CALIB_AB_TOLERANCE_STONE,
-      expected_stone_radius_for_detection,
-      detected_center_in_corrected_img, detected_radius_in_corrected_img);
-
-  if (found) {
-    LOG_INFO << "Experimental: Successfully detected a stone in the target "
-                "quadrant. Center (in corrected img): "
-             << detected_center_in_corrected_img
-             << ", Radius: " << detected_radius_in_corrected_img << std::endl;
-  } else {
-    LOG_INFO << "Experimental: Failed to detect a stone in the target quadrant."
-             << std::endl;
+  if (rawBgrImage.empty()) {
+    LOG_ERROR << "Scan: Raw BGR image is empty." << std::endl;
+    return false;
   }
-  LOG_INFO << "--- Experimental Stone Detection Finished ---" << std::endl;
-  return found;
+
+  std::vector<cv::Point2f> ideal_corrected_dest_points =
+      getBoardCornersCorrected(rawBgrImage.cols, rawBgrImage.rows);
+
+  float scan_x_start = 0.0f, scan_x_end = 0.0f, scan_y_start = 0.0f,
+        scan_y_end = 0.0f;
+
+  // Define scan area in raw image based on target quadrant
+  switch (targetScanQuadrant) {
+  case CornerQuadrant::TOP_LEFT:
+    scan_x_start = 0.0f;
+    scan_x_end = static_cast<float>(rawBgrImage.cols) * 0.5f;
+    scan_y_start = 0.0f;
+    scan_y_end = static_cast<float>(rawBgrImage.rows) * 0.5f;
+    break;
+  case CornerQuadrant::TOP_RIGHT:
+    scan_x_start = static_cast<float>(rawBgrImage.cols) * 0.5f;
+    scan_x_end = static_cast<float>(rawBgrImage.cols);
+    scan_y_start = 0.0f;
+    scan_y_end = static_cast<float>(rawBgrImage.rows) * 0.5f;
+    break;
+  case CornerQuadrant::BOTTOM_LEFT:
+    scan_x_start = 0.0f;
+    scan_x_end = static_cast<float>(rawBgrImage.cols) * 0.5f;
+    scan_y_start = static_cast<float>(rawBgrImage.rows) * 0.5f;
+    scan_y_end = static_cast<float>(rawBgrImage.rows);
+    break;
+  case CornerQuadrant::BOTTOM_RIGHT:
+    scan_x_start = static_cast<float>(rawBgrImage.cols) * 0.5f;
+    scan_x_end = static_cast<float>(rawBgrImage.cols);
+    scan_y_start = static_cast<float>(rawBgrImage.rows) * 0.5f;
+    scan_y_end = static_cast<float>(rawBgrImage.rows);
+    break;
+  }
+
+  float step_raw =
+      std::max(5.0f, std::min(static_cast<float>(rawBgrImage.cols),
+                              static_cast<float>(rawBgrImage.rows)) /
+                         100.0f);
+  LOG_DEBUG << "Scan: Raw Scan Area for " << quadrant_name_str << " X["
+            << scan_x_start << "-" << scan_x_end << "], Y[" << scan_y_start
+            << "-" << scan_y_end << "], Step: " << step_raw << std::endl;
+
+  int scan_count = 0;
+  for (float y_raw = scan_y_start; y_raw < scan_y_end; y_raw += step_raw) {
+    for (float x_raw = scan_x_start; x_raw < scan_x_end; x_raw += step_raw) {
+      scan_count++;
+      cv::Point2f current_raw_scanned_corner(x_raw, y_raw);
+
+      if (scan_count % 50 == 0) { // Log progress periodically
+        LOG_DEBUG << "Scan Iteration: " << scan_count << ", Testing raw "
+                  << quadrant_name_str
+                  << " anchor at: " << current_raw_scanned_corner << std::endl;
+      }
+
+      std::vector<cv::Point2f> iter_source_points_raw(4);
+      float est_board_span_x = static_cast<float>(rawBgrImage.cols) * 0.75f;
+      float est_board_span_y = static_cast<float>(rawBgrImage.rows) * 0.75f;
+
+      // Construct a plausible quad based on current_raw_scanned_corner being
+      // the target corner
+      switch (targetScanQuadrant) {
+      case CornerQuadrant::TOP_LEFT:
+        iter_source_points_raw[0] = current_raw_scanned_corner;
+        iter_source_points_raw[1] =
+            cv::Point2f(x_raw + est_board_span_x, y_raw);
+        iter_source_points_raw[3] =
+            cv::Point2f(x_raw, y_raw + est_board_span_y);
+        iter_source_points_raw[2] =
+            cv::Point2f(x_raw + est_board_span_x, y_raw + est_board_span_y);
+        break;
+      case CornerQuadrant::TOP_RIGHT:
+        iter_source_points_raw[1] = current_raw_scanned_corner;
+        iter_source_points_raw[0] =
+            cv::Point2f(x_raw - est_board_span_x, y_raw);
+        iter_source_points_raw[2] =
+            cv::Point2f(x_raw, y_raw + est_board_span_y);
+        iter_source_points_raw[3] =
+            cv::Point2f(x_raw - est_board_span_x, y_raw + est_board_span_y);
+        break;
+      case CornerQuadrant::BOTTOM_LEFT:
+        iter_source_points_raw[3] = current_raw_scanned_corner;
+        iter_source_points_raw[0] =
+            cv::Point2f(x_raw, y_raw - est_board_span_y);
+        iter_source_points_raw[2] =
+            cv::Point2f(x_raw + est_board_span_x, y_raw);
+        iter_source_points_raw[1] =
+            cv::Point2f(x_raw + est_board_span_x, y_raw - est_board_span_y);
+        break;
+      case CornerQuadrant::BOTTOM_RIGHT:
+        iter_source_points_raw[2] = current_raw_scanned_corner;
+        iter_source_points_raw[1] =
+            cv::Point2f(x_raw, y_raw - est_board_span_y);
+        iter_source_points_raw[3] =
+            cv::Point2f(x_raw - est_board_span_x, y_raw);
+        iter_source_points_raw[0] =
+            cv::Point2f(x_raw - est_board_span_x, y_raw - est_board_span_y);
+        break;
+      }
+
+      for (cv::Point2f &pt : iter_source_points_raw) {
+        pt.x = std::max(
+            0.0f, std::min(static_cast<float>(rawBgrImage.cols - 1), pt.x));
+        pt.y = std::max(
+            0.0f, std::min(static_cast<float>(rawBgrImage.rows - 1), pt.y));
+      }
+
+      if (cv::contourArea(iter_source_points_raw) <
+          (est_board_span_x * est_board_span_y * 0.05)) {
+        if (Logger::getGlobalLogLevel() >= LogLevel::DEBUG &&
+            scan_count % 100 == 0)
+          LOG_DEBUG << "Scan iter " << scan_count
+                    << ": Degenerate raw quad guess, skipping.";
+        continue;
+      }
+
+      cv::Mat iter_transform_matrix = cv::getPerspectiveTransform(
+          iter_source_points_raw, ideal_corrected_dest_points);
+      if (iter_transform_matrix.empty() ||
+          cv::determinant(iter_transform_matrix) == 0) {
+        if (Logger::getGlobalLogLevel() >= LogLevel::DEBUG &&
+            scan_count % 100 == 0)
+          LOG_DEBUG << "Scan iter " << scan_count
+                    << ": Degenerate transform matrix, skipping.";
+        continue;
+      }
+
+      cv::Mat image_iter_corrected;
+      cv::warpPerspective(rawBgrImage, image_iter_corrected,
+                          iter_transform_matrix, rawBgrImage.size());
+
+      cv::Rect roi_target_quad_corrected;
+      int c_w = image_iter_corrected.cols, c_h = image_iter_corrected.rows;
+      switch (targetScanQuadrant) {
+      case CornerQuadrant::TOP_LEFT:
+        roi_target_quad_corrected = cv::Rect(0, 0, c_w / 2, c_h / 2);
+        break;
+      case CornerQuadrant::TOP_RIGHT:
+        roi_target_quad_corrected = cv::Rect(c_w / 2, 0, c_w / 2, c_h / 2);
+        break;
+      case CornerQuadrant::BOTTOM_LEFT:
+        roi_target_quad_corrected = cv::Rect(0, c_h / 2, c_w / 2, c_h / 2);
+        break;
+      case CornerQuadrant::BOTTOM_RIGHT:
+        roi_target_quad_corrected =
+            cv::Rect(c_w / 2, c_h / 2, c_w / 2, c_h / 2);
+        break;
+      }
+
+      std::vector<cv::Point2f> current_ideal_corners =
+          getBoardCornersCorrected(c_w, c_h);
+      float current_board_w =
+          current_ideal_corners[1].x - current_ideal_corners[0].x;
+      float current_board_h =
+          current_ideal_corners[3].y - current_ideal_corners[0].y;
+      if (current_board_w < 19.0f || current_board_h < 19.0f) {
+        if (Logger::getGlobalLogLevel() >= LogLevel::DEBUG &&
+            scan_count % 100 == 0)
+          LOG_DEBUG << "Scan iter " << scan_count
+                    << ": Corrected board in this iter too small ("
+                    << current_board_w << "x" << current_board_h
+                    << "), skipping.";
+        continue;
+      }
+      float current_avg_spacing =
+          ((current_board_w / 18.0f) + (current_board_h / 18.0f)) * 0.5f;
+      float expected_radius_iter = current_avg_spacing * 0.47f;
+
+      if (expected_radius_iter < 2.0f) {
+        if (Logger::getGlobalLogLevel() >= LogLevel::DEBUG &&
+            scan_count % 100 == 0)
+          LOG_DEBUG << "Scan iter " << scan_count
+                    << ": Expected radius in corrected view too small ("
+                    << expected_radius_iter << "), skipping.";
+        continue;
+      }
+
+      cv::Point2f detected_center_iter_corrected;
+      float detected_radius_iter_corrected;
+      bool stone_found_this_iter = detectSpecificColoredRoundShape(
+          image_iter_corrected, roi_target_quad_corrected, target_lab_color,
+          CALIB_L_TOLERANCE_STONE, CALIB_AB_TOLERANCE_STONE,
+          expected_radius_iter, detected_center_iter_corrected,
+          detected_radius_iter_corrected);
+
+      if (stone_found_this_iter) {
+        out_best_raw_scan_point = current_raw_scanned_corner;
+        out_best_corrected_image = image_iter_corrected.clone();
+        out_detected_stone_center_in_corrected = detected_center_iter_corrected;
+        out_detected_stone_radius_in_corrected = detected_radius_iter_corrected;
+        out_roi_in_corrected = roi_target_quad_corrected;
+        LOG_INFO << "Scan SUCCESS: Found target stone for " << quadrant_name_str
+                 << ". Raw guess for its corner: " << current_raw_scanned_corner
+                 << ". Detected in its corrected view at: "
+                 << detected_center_iter_corrected << " with radius "
+                 << detected_radius_iter_corrected << " (expected ~"
+                 << expected_radius_iter << ")" << std::endl;
+        return true;
+      }
+    }
+  }
+  LOG_WARN << "Scan FAILED: No stone found for target quadrant "
+           << quadrant_name_str << " after " << scan_count << " iterations."
+           << std::endl;
+  return false;
 }

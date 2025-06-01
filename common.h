@@ -311,14 +311,16 @@ bool detectSpecificColoredRoundShape(const cv::Mat &inputBgrImage,
                                      cv::Point2f &detectedCenter,
                                      float &detectedRadius);
 
-// --- EXPERIMENTAL FUNCTION DECLARATION ---
-bool experimental_detectStoneInQuadrant(
-    const cv::Mat &rawBgrImage, CornerQuadrant targetQuadrant,
+// Renamed experimental function for clarity
+bool experimental_scan_for_quadrant_stone(
+    const cv::Mat &rawBgrImage,
+    CornerQuadrant targetScanQuadrant,
     const CalibrationData &calibData,
-    cv::Point2f &detected_center_in_corrected_img,
-    float &detected_radius_in_corrected_img,
-    cv::Mat &roughly_corrected_display_img,
-    cv::Rect &used_roi_in_corrected_img);
+    cv::Point2f &out_best_raw_scan_point,
+    cv::Mat &out_best_corrected_image,
+    cv::Point2f &out_detected_stone_center_in_corrected,
+    float &out_detected_stone_radius_in_corrected,
+    cv::Rect &out_roi_in_corrected);
 
 std::vector<cv::Point2f> getBoardCorners(const cv::Mat &inputImage);
 #endif // UTILITY_H
