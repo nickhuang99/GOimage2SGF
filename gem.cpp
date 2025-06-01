@@ -1748,113 +1748,103 @@ void detectStonePositionWorkflow(int target_col, int target_row,
   cv::destroyAllWindows();
   LOG_INFO << "Stone Detection Workflow Finished." << std::endl;
 }
-
-// --- NEW EXPERIMENTAL WORKFLOW ---
 void experimentalDetectTLQuadrantWorkflow() {
   LOG_INFO
-      << "--- Starting Experimental SCAN-BASED Top-Left Quadrant Detection Workflow ---"
-      << std::endl;
+      << "--- Starting Experimental FIXED GUESS + Refine V3 for TL Quadrant Detection ---";
 
-  std::string raw_snapshot_path = g_default_input_image_path; // Use the global default path
-  LOG_INFO << "Loading raw snapshot image: " << raw_snapshot_path << std::endl;
+  std::string raw_snapshot_path = g_default_input_image_path; 
+  LOG_INFO << "Loading raw snapshot image: " << raw_snapshot_path;
   cv::Mat raw_image = cv::imread(raw_snapshot_path);
   if (raw_image.empty()) {
     THROWGEMERROR("Failed to load raw snapshot image: " + raw_snapshot_path);
   }
 
   LOG_INFO << "Loading calibration data from: " << CALIB_CONFIG_PATH
-           << " (primarily for Lab color reference)" << std::endl;
+           << " (primarily for Lab color reference)";
   CalibrationData calib_data = loadCalibrationData(CALIB_CONFIG_PATH);
-  if (!calib_data.colors_loaded || calib_data.lab_tl[0] < 0) {
-      // For this experiment, we need at least the TL black stone color.
-      // If not available, we could use a hardcoded default or fail.
-      // For now, require it from config or a valid default in CalibrationData struct.
+  
+  // Fallback for TL Lab color if not properly loaded for this experiment
+  if (!calib_data.colors_loaded || (calib_data.lab_tl[0] < 0) ) { 
       LOG_WARN << "Warning: TL Lab color (for black stone) not loaded or invalid from: " << CALIB_CONFIG_PATH 
-               << ". Using a default fallback Lab for black: L=50, A=128, B=128." << std::endl;
-      calib_data.lab_tl = cv::Vec3f(50,128,128); // Example fallback
-      calib_data.colors_loaded = true; // Assume we can proceed with this fallback
-    // THROWGEMERROR("Calibration data (specifically lab_tl for black stone) not loaded or invalid from: " + CALIB_CONFIG_PATH);
+               << ". Using a default fallback Lab for black: L=50, A=128, B=128 for this experiment.";
+      calib_data.lab_tl = cv::Vec3f(50,128,128); 
+      if(!calib_data.colors_loaded) calib_data.colors_loaded = true; 
   }
 
+  cv::Point2f raw_corner_guess_point_used; 
+  cv::Mat final_corrected_image_from_refine;   
+  cv::Point2f detected_center_final_corrected; 
+  float detected_radius_final_corrected;   
+  cv::Rect focused_roi_used_final;    
 
-  cv::Point2f best_raw_scan_pt;
-  cv::Mat best_corrected_disp_img;
-  cv::Point2f detected_center_in_best_corrected;
-  float detected_radius_in_best_corrected;
-  cv::Rect roi_in_best_corrected;
-
-  // Call the new scanning function, specifically for TOP_LEFT
-  bool found = experimental_scan_for_quadrant_stone(
+  bool found = experimental_scan_for_quadrant_stone( 
       raw_image,
-      CornerQuadrant::TOP_LEFT,
+      CornerQuadrant::TOP_LEFT, 
       calib_data,
-      best_raw_scan_pt, // Output
-      best_corrected_disp_img, // Output
-      detected_center_in_best_corrected, // Output
-      detected_radius_in_best_corrected, // Output
-      roi_in_best_corrected // Output
+      raw_corner_guess_point_used, 
+      final_corrected_image_from_refine, 
+      detected_center_final_corrected, 
+      detected_radius_final_corrected, 
+      focused_roi_used_final 
   );
 
-  if (best_corrected_disp_img.empty() && !found) {
-      LOG_ERROR << "Experimental scan returned no image and no detection. Cannot display results." << std::endl;
-      // Attempt to show raw image if corrected is empty
-      if(!raw_image.empty()){
-        cv::putText(raw_image, "Scan FAILED, no corrected view generated.", cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(0,0,255), 2);
-        cv::imshow("Experimental Scan - Raw Input", raw_image);
-        cv::waitKey(0);
-        cv::destroyAllWindows();
-      }
-      return;
+  cv::Mat display_img_main; 
+  if (!final_corrected_image_from_refine.empty()) {
+      display_img_main = final_corrected_image_from_refine.clone();
+  } else { 
+      display_img_main = raw_image.clone();
+      LOG_WARN << "FixedGuessV3: No corrected image was generated from the process (e.g. early fail), showing raw image.";
   }
-  // If not found, but an image was processed (e.g. last attempt), show that.
-  // If found, best_corrected_disp_img should be populated.
-  // If scan failed very early, best_corrected_disp_img might be empty.
-   cv::Mat display_img_main = found ? best_corrected_disp_img : (best_corrected_disp_img.empty() ? raw_image.clone() : best_corrected_disp_img);
 
 
   std::string result_text;
   cv::Scalar text_color = cv::Scalar(0,0,255); 
 
   if (found) {
-    result_text = "SUCCESS: Black stone DETECTED in TL scan.";
+    result_text = "SUCCESS: Stone DETECTED (Fixed Guess + Refine).";
     text_color = cv::Scalar(0,255,0); 
-    cv::circle(display_img_main, detected_center_in_best_corrected, static_cast<int>(detected_radius_in_best_corrected), cv::Scalar(0, 255, 0), 2);
-    cv::circle(display_img_main, detected_center_in_best_corrected, 2, cv::Scalar(0, 0, 255), -1); 
-    cv::rectangle(display_img_main, roi_in_best_corrected, cv::Scalar(0, 255, 255), 1); // Yellow ROI
-    cv::putText(display_img_main, "TL ROI (Success)", cv::Point(roi_in_best_corrected.x + 5, roi_in_best_corrected.y - 5), cv::FONT_HERSHEY_SIMPLEX, 0.4, cv::Scalar(0,255,255), 1);
+    cv::circle(display_img_main, detected_center_final_corrected, static_cast<int>(detected_radius_final_corrected), cv::Scalar(0, 255, 0), 2);
+    cv::circle(display_img_main, detected_center_final_corrected, 3, cv::Scalar(0, 0, 255), -1); 
+    cv::rectangle(display_img_main, focused_roi_used_final, cv::Scalar(0, 255, 255), 1); // Yellow focused ROI
+    cv::putText(display_img_main, "Focused ROI (Success)", cv::Point(focused_roi_used_final.x + 5, focused_roi_used_final.y - 5), cv::FONT_HERSHEY_SIMPLEX, 0.4, cv::Scalar(0,255,255),1);
 
-    LOG_INFO << result_text << " Best Raw Scan Point: " << best_raw_scan_pt
-             << ", Detected Center (in its corrected view): " << detected_center_in_best_corrected 
-             << ", Radius: " << detected_radius_in_best_corrected << std::endl;
+    LOG_INFO << result_text << " Raw Corner Guess (TL): " << raw_corner_guess_point_used
+             << ", Final Detected Center (in final corrected view): " << detected_center_final_corrected 
+             << ", Radius: " << detected_radius_final_corrected;
     
-    // Also show the raw image with the best raw scan point marked
-    cv::Mat raw_image_display = raw_image.clone();
-    cv::circle(raw_image_display, best_raw_scan_pt, 10, cv::Scalar(0,255,0), 2);
-    cv::putText(raw_image_display, "Best Raw TL Scan: (" + std::to_string((int)best_raw_scan_pt.x) + "," + std::to_string((int)best_raw_scan_pt.y) + ")", 
-                best_raw_scan_pt + cv::Point2f(15,0), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0,255,0),1);
-    cv::imshow("Experimental Scan - Raw Input with Best Scan Point", raw_image_display);
-
+    cv::Mat raw_image_display_with_guess = raw_image.clone();
+    cv::circle(raw_image_display_with_guess, raw_corner_guess_point_used, 10, cv::Scalar(255,0,0), 2); // Blue circle for the guess point used for Pass2 warp
+    cv::line(raw_image_display_with_guess, cv::Point(raw_corner_guess_point_used.x -15, raw_corner_guess_point_used.y), cv::Point(raw_corner_guess_point_used.x+15, raw_corner_guess_point_used.y), cv::Scalar(255,0,255),1);
+    cv::line(raw_image_display_with_guess, cv::Point(raw_corner_guess_point_used.x, raw_corner_guess_point_used.y-15), cv::Point(raw_corner_guess_point_used.x, raw_corner_guess_point_used.y+15), cv::Scalar(255,0,255),1);
+    cv::putText(raw_image_display_with_guess, "Raw Corner for Final Warp: (" + std::to_string((int)raw_corner_guess_point_used.x) + "," + std::to_string((int)raw_corner_guess_point_used.y) + ")", 
+                raw_corner_guess_point_used + cv::Point2f(15,0), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255,0,255),1); 
+    cv::imshow("Experimental Fixed Guess - Raw Input with Final Guess Point", raw_image_display_with_guess);
 
   } else {
-    result_text = "FAILURE: Black stone NOT detected in TL scan.";
-    LOG_WARN << result_text << std::endl;
-    if (!best_corrected_disp_img.empty() && roi_in_best_corrected.area() > 0) { // If some image was processed
-        cv::rectangle(display_img_main, roi_in_best_corrected, cv::Scalar(255, 0, 0), 1); 
-        cv::putText(display_img_main, "TL ROI (Fail)", cv::Point(roi_in_best_corrected.x + 5, roi_in_best_corrected.y + 20), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255,0,0), 1);
-    } else if (best_corrected_disp_img.empty()){
-         result_text += " (No valid corrected view to show)";
+    result_text = "FAILURE: Stone NOT detected (Fixed Guess + Refine).";
+    LOG_WARN << result_text << " Raw corner guess used for final attempt was: " << raw_corner_guess_point_used;
+    if (display_img_main.data == raw_image.data) { 
+        result_text += " (Showing raw image)";
+    } else if (!final_corrected_image_from_refine.empty() && focused_roi_used_final.area() > 0) { 
+        cv::rectangle(display_img_main, focused_roi_used_final, cv::Scalar(255, 0, 0), 1); 
+        cv::putText(display_img_main, "Focused ROI (Fail)", cv::Point(focused_roi_used_final.x + 5, focused_roi_used_final.y - 5), cv::FONT_HERSHEY_SIMPLEX, 0.4, cv::Scalar(255,0,0), 1);
+    } else if (final_corrected_image_from_refine.empty()){
+         result_text += " (No corrected view from attempt)";
     }
   }
   
   cv::putText(display_img_main, result_text, cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 0.6, text_color, 2);
-  cv::putText(display_img_main, "View from Best/Last Scan Attempt", cv::Point(10, display_img_main.rows - 10), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(200,200,200), 1);
+  std::string bottom_text = "View from Final (Pass 2) Perspective Attempt";
+  if (!found && final_corrected_image_from_refine.empty()) bottom_text = "Raw Image (All Perspective Attempts Failed)";
 
-  std::string window_name = "Experimental Scan TL Quadrant Result";
+  cv::putText(display_img_main, bottom_text , cv::Point(10, display_img_main.rows - 10), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(200,200,200), 1);
+
+  std::string window_name = "Experimental Fixed Guess + Refine Result";
   cv::imshow(window_name, display_img_main);
-  LOG_INFO << "Displaying experimental scan result. Press any key to close." << std::endl;
+  LOG_INFO << "Displaying experimental fixed guess + refine result. Press any key to close.";
   cv::waitKey(0);
   cv::destroyAllWindows();
-  LOG_INFO << "--- Experimental Scan Workflow Finished ---" << std::endl;
+  LOG_INFO << "--- Experimental Fixed Guess + Refine Workflow Finished ---";
 }
 
 int main(int argc, char *argv[]) {
