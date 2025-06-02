@@ -71,10 +71,9 @@ void displayHelpMessage() {
       << "  --test-calibration-config         : Load calibration snapshot and "
          "config, draw corners."
       << endl;
-  CONSOLE_OUT
-      << "  --exp-detect-tl                   : (Dev) Experimental TL "
-         "quadrant stone detection." // NEW OPTION
-      << endl;
+  CONSOLE_OUT << "  --exp-detect-tl                   : (Dev) Experimental TL "
+                 "quadrant stone detection." // NEW OPTION
+              << endl;
   CONSOLE_OUT
       << "  -p, --process-image <image_path>   : Process the Go board image."
       << endl;
@@ -1748,11 +1747,14 @@ void detectStonePositionWorkflow(int target_col, int target_row,
   cv::destroyAllWindows();
   LOG_INFO << "Stone Detection Workflow Finished." << std::endl;
 }
-void experimentalDetectTLQuadrantWorkflow() {
-  LOG_INFO
-      << "--- Starting Experimental FIXED GUESS + Refine V3 for TL Quadrant Detection ---";
 
-  std::string raw_snapshot_path = g_default_input_image_path; 
+// --- EXPERIMENTAL WORKFLOW (Calls the V5 logic
+// experimental_scan_for_quadrant_stone) ---
+void experimentalDetectTLQuadrantWorkflow() {
+  LOG_INFO << "--- Starting Experimental FIXED GUESS + ITERATIVE REFINE V5 for "
+              "TL Quadrant ---";
+
+  std::string raw_snapshot_path = g_default_input_image_path;
   LOG_INFO << "Loading raw snapshot image: " << raw_snapshot_path;
   cv::Mat raw_image = cv::imread(raw_snapshot_path);
   if (raw_image.empty()) {
@@ -1762,89 +1764,133 @@ void experimentalDetectTLQuadrantWorkflow() {
   LOG_INFO << "Loading calibration data from: " << CALIB_CONFIG_PATH
            << " (primarily for Lab color reference)";
   CalibrationData calib_data = loadCalibrationData(CALIB_CONFIG_PATH);
-  
-  // Fallback for TL Lab color if not properly loaded for this experiment
-  if (!calib_data.colors_loaded || (calib_data.lab_tl[0] < 0) ) { 
-      LOG_WARN << "Warning: TL Lab color (for black stone) not loaded or invalid from: " << CALIB_CONFIG_PATH 
-               << ". Using a default fallback Lab for black: L=50, A=128, B=128 for this experiment.";
-      calib_data.lab_tl = cv::Vec3f(50,128,128); 
-      if(!calib_data.colors_loaded) calib_data.colors_loaded = true; 
+
+  if (!calib_data.colors_loaded || (calib_data.lab_tl[0] < 0)) {
+    LOG_WARN << "Warning: TL Lab color (for black stone) not loaded or invalid "
+                "from: "
+             << CALIB_CONFIG_PATH
+             << ". Using a default fallback Lab for black: L=50, A=128, B=128 "
+                "for this experiment.";
+    calib_data.lab_tl = cv::Vec3f(50, 128, 128);
+    if (!calib_data.colors_loaded)
+      calib_data.colors_loaded = true;
   }
 
-  cv::Point2f raw_corner_guess_point_used; 
-  cv::Mat final_corrected_image_from_refine;   
-  cv::Point2f detected_center_final_corrected; 
-  float detected_radius_final_corrected;   
-  cv::Rect focused_roi_used_final;    
+  // Parameters match the updated common.h signature for
+  // experimental_scan_for_quadrant_stone
+  cv::Point2f final_raw_corner_guess_point_used;
+  cv::Mat final_corrected_image_to_display;
+  cv::Point2f detected_center_in_final_img;
+  float detected_radius_in_final_img;
+  cv::Rect focused_roi_used_in_final_img;
 
-  bool found = experimental_scan_for_quadrant_stone( 
-      raw_image,
-      CornerQuadrant::TOP_LEFT, 
-      calib_data,
-      raw_corner_guess_point_used, 
-      final_corrected_image_from_refine, 
-      detected_center_final_corrected, 
-      detected_radius_final_corrected, 
-      focused_roi_used_final 
+  bool found = experimental_scan_for_quadrant_stone(
+      raw_image, CornerQuadrant::TOP_LEFT, calib_data,
+      final_raw_corner_guess_point_used, // out_final_raw_corner_guess
+      final_corrected_image_to_display,  // out_final_corrected_image
+      detected_center_in_final_img, // out_detected_stone_center_in_final_corrected
+      detected_radius_in_final_img, // out_detected_stone_radius_in_final_corrected
+      focused_roi_used_in_final_img // out_focused_roi_in_final_corrected
   );
 
-  cv::Mat display_img_main; 
-  if (!final_corrected_image_from_refine.empty()) {
-      display_img_main = final_corrected_image_from_refine.clone();
-  } else { 
-      display_img_main = raw_image.clone();
-      LOG_WARN << "FixedGuessV3: No corrected image was generated from the process (e.g. early fail), showing raw image.";
+  cv::Mat display_img_main;
+  if (!final_corrected_image_to_display.empty()) {
+    display_img_main = final_corrected_image_to_display.clone();
+  } else {
+    display_img_main = raw_image.clone();
+    LOG_WARN << "FixedGuessV5: No corrected image was generated from the "
+                "process (e.g. early fail), showing raw image.";
   }
-
 
   std::string result_text;
-  cv::Scalar text_color = cv::Scalar(0,0,255); 
+  cv::Scalar text_color = cv::Scalar(0, 0, 255);
 
   if (found) {
-    result_text = "SUCCESS: Stone DETECTED (Fixed Guess + Refine).";
-    text_color = cv::Scalar(0,255,0); 
-    cv::circle(display_img_main, detected_center_final_corrected, static_cast<int>(detected_radius_final_corrected), cv::Scalar(0, 255, 0), 2);
-    cv::circle(display_img_main, detected_center_final_corrected, 3, cv::Scalar(0, 0, 255), -1); 
-    cv::rectangle(display_img_main, focused_roi_used_final, cv::Scalar(0, 255, 255), 1); // Yellow focused ROI
-    cv::putText(display_img_main, "Focused ROI (Success)", cv::Point(focused_roi_used_final.x + 5, focused_roi_used_final.y - 5), cv::FONT_HERSHEY_SIMPLEX, 0.4, cv::Scalar(0,255,255),1);
+    result_text =
+        "SUCCESS: Stone DETECTED (Fixed Guess + Iterative Refine V5).";
+    text_color = cv::Scalar(0, 255, 0);
+    cv::circle(display_img_main, detected_center_in_final_img,
+               static_cast<int>(detected_radius_in_final_img),
+               cv::Scalar(0, 255, 0), 2);
+    cv::circle(display_img_main, detected_center_in_final_img, 3,
+               cv::Scalar(0, 0, 255), -1);
+    cv::rectangle(display_img_main, focused_roi_used_in_final_img,
+                  cv::Scalar(0, 255, 255), 1);
+    cv::putText(display_img_main, "Focused ROI (Success)",
+                cv::Point(focused_roi_used_in_final_img.x + 5,
+                          focused_roi_used_in_final_img.y - 5),
+                cv::FONT_HERSHEY_SIMPLEX, 0.4, cv::Scalar(0, 255, 255), 1);
 
-    LOG_INFO << result_text << " Raw Corner Guess (TL): " << raw_corner_guess_point_used
-             << ", Final Detected Center (in final corrected view): " << detected_center_final_corrected 
-             << ", Radius: " << detected_radius_final_corrected;
-    
+    LOG_INFO << result_text << " Final Raw Corner Guess (TL): "
+             << final_raw_corner_guess_point_used
+             << ", Final Detected Center (in its corrected view): "
+             << detected_center_in_final_img
+             << ", Radius: " << detected_radius_in_final_img;
+
     cv::Mat raw_image_display_with_guess = raw_image.clone();
-    cv::circle(raw_image_display_with_guess, raw_corner_guess_point_used, 10, cv::Scalar(255,0,0), 2); // Blue circle for the guess point used for Pass2 warp
-    cv::line(raw_image_display_with_guess, cv::Point(raw_corner_guess_point_used.x -15, raw_corner_guess_point_used.y), cv::Point(raw_corner_guess_point_used.x+15, raw_corner_guess_point_used.y), cv::Scalar(255,0,255),1);
-    cv::line(raw_image_display_with_guess, cv::Point(raw_corner_guess_point_used.x, raw_corner_guess_point_used.y-15), cv::Point(raw_corner_guess_point_used.x, raw_corner_guess_point_used.y+15), cv::Scalar(255,0,255),1);
-    cv::putText(raw_image_display_with_guess, "Raw Corner for Final Warp: (" + std::to_string((int)raw_corner_guess_point_used.x) + "," + std::to_string((int)raw_corner_guess_point_used.y) + ")", 
-                raw_corner_guess_point_used + cv::Point2f(15,0), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255,0,255),1); 
-    cv::imshow("Experimental Fixed Guess - Raw Input with Final Guess Point", raw_image_display_with_guess);
+    cv::circle(raw_image_display_with_guess, final_raw_corner_guess_point_used,
+               10, cv::Scalar(0, 0, 255), 2);
+    cv::line(raw_image_display_with_guess,
+             cv::Point(final_raw_corner_guess_point_used.x - 15,
+                       final_raw_corner_guess_point_used.y),
+             cv::Point(final_raw_corner_guess_point_used.x + 15,
+                       final_raw_corner_guess_point_used.y),
+             cv::Scalar(0, 255, 0), 1);
+    cv::line(raw_image_display_with_guess,
+             cv::Point(final_raw_corner_guess_point_used.x,
+                       final_raw_corner_guess_point_used.y - 15),
+             cv::Point(final_raw_corner_guess_point_used.x,
+                       final_raw_corner_guess_point_used.y + 15),
+             cv::Scalar(0, 255, 0), 1);
+    cv::putText(
+        raw_image_display_with_guess,
+        "Final Raw TL Guess: (" +
+            std::to_string((int)final_raw_corner_guess_point_used.x) + "," +
+            std::to_string((int)final_raw_corner_guess_point_used.y) + ")",
+        final_raw_corner_guess_point_used + cv::Point2f(15, 0),
+        cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 0), 1);
+    cv::imshow("Experimental Iterative Refine - Raw Input with Final Guess",
+               raw_image_display_with_guess);
 
   } else {
-    result_text = "FAILURE: Stone NOT detected (Fixed Guess + Refine).";
-    LOG_WARN << result_text << " Raw corner guess used for final attempt was: " << raw_corner_guess_point_used;
-    if (display_img_main.data == raw_image.data) { 
-        result_text += " (Showing raw image)";
-    } else if (!final_corrected_image_from_refine.empty() && focused_roi_used_final.area() > 0) { 
-        cv::rectangle(display_img_main, focused_roi_used_final, cv::Scalar(255, 0, 0), 1); 
-        cv::putText(display_img_main, "Focused ROI (Fail)", cv::Point(focused_roi_used_final.x + 5, focused_roi_used_final.y - 5), cv::FONT_HERSHEY_SIMPLEX, 0.4, cv::Scalar(255,0,0), 1);
-    } else if (final_corrected_image_from_refine.empty()){
-         result_text += " (No corrected view from attempt)";
+    result_text =
+        "FAILURE: Stone NOT detected (Fixed Guess + Iterative Refine V5).";
+    LOG_WARN << result_text << " Last raw corner guess used was: "
+             << final_raw_corner_guess_point_used;
+    if (display_img_main.data == raw_image.data) {
+      result_text += " (Showing raw image)";
+    } else if (!final_corrected_image_to_display.empty() &&
+               focused_roi_used_in_final_img.area() > 0) {
+      cv::rectangle(display_img_main, focused_roi_used_in_final_img,
+                    cv::Scalar(255, 0, 0), 1);
+      cv::putText(display_img_main, "Focused ROI (Fail)",
+                  cv::Point(focused_roi_used_in_final_img.x + 5,
+                            focused_roi_used_in_final_img.y - 5),
+                  cv::FONT_HERSHEY_SIMPLEX, 0.4, cv::Scalar(255, 0, 0), 1);
+    } else if (final_corrected_image_to_display.empty()) {
+      result_text += " (No corrected view from final attempt)";
     }
   }
-  
-  cv::putText(display_img_main, result_text, cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 0.6, text_color, 2);
+
+  cv::putText(display_img_main, result_text, cv::Point(10, 30),
+              cv::FONT_HERSHEY_SIMPLEX, 0.6, text_color, 2);
   std::string bottom_text = "View from Final (Pass 2) Perspective Attempt";
-  if (!found && final_corrected_image_from_refine.empty()) bottom_text = "Raw Image (All Perspective Attempts Failed)";
+  if (!found && final_corrected_image_to_display.empty())
+    bottom_text = "Raw Image (All Perspective Attempts Failed)";
+  else if (!found && !final_corrected_image_to_display.empty())
+    bottom_text = "View from Final (Pass 2) Perspective (Detection Failed)";
 
-  cv::putText(display_img_main, bottom_text , cv::Point(10, display_img_main.rows - 10), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(200,200,200), 1);
+  cv::putText(display_img_main, bottom_text,
+              cv::Point(10, display_img_main.rows - 10),
+              cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(200, 200, 200), 1);
 
-  std::string window_name = "Experimental Fixed Guess + Refine Result";
+  std::string window_name = "Experimental Iterative Refine TL Result (V5)";
   cv::imshow(window_name, display_img_main);
-  LOG_INFO << "Displaying experimental fixed guess + refine result. Press any key to close.";
+  LOG_INFO << "Displaying experimental iterative refine (V5) result. Press any "
+              "key to close.";
   cv::waitKey(0);
   cv::destroyAllWindows();
-  LOG_INFO << "--- Experimental Fixed Guess + Refine Workflow Finished ---";
+  LOG_INFO << "--- Experimental Iterative Refine (V5) Workflow Finished ---";
 }
 
 int main(int argc, char *argv[]) {
