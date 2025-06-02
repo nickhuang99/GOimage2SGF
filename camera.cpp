@@ -972,27 +972,22 @@ void runCaptureCalibration() {
   LOG_INFO << "Attempting to auto-detect corners and save calibration..."
            << std::endl;
   std::vector<cv::Point2f> detected_corners_raw;
-  std::vector<float> detected_radii_raw;
 
   // detectFourCornersGoBoard is expected to populate detected_corners_raw with
   // points in the raw_frame's coordinate system
-  if (detectFourCornersGoBoard(raw_frame, detected_corners_raw,
-                               detected_radii_raw)) {
+  if (detectFourCornersGoBoard(raw_frame, detected_corners_raw)) {
     LOG_INFO << "detectFourCornersGoBoard successful. Detected raw corners."
              << std::endl;
     if (bDebug) { // Show detected corners if debug is on
       cv::Mat raw_frame_detected_dbg = raw_frame.clone();
+      int width = detected_corners_raw[1].x - detected_corners_raw[0].x;
+      int height = detected_corners_raw[2].y - detected_corners_raw[0].y;
+      int radius = calculateAdaptiveSampleRadius(width, height);
       for (size_t i = 0; i < detected_corners_raw.size(); ++i) {
-        if (i < detected_radii_raw.size() &&
-            detected_radii_raw[i] > 0) { // Check for valid radius
-          cv::circle(raw_frame_detected_dbg, detected_corners_raw[i],
-                     std::max(5.0f, detected_radii_raw[i]),
-                     cv::Scalar(0, 255, 0), 2);
-        } else {
-          cv::circle(raw_frame_detected_dbg, detected_corners_raw[i], 5,
-                     cv::Scalar(0, 0, 255), 2); // Fallback if radius is bad
-        }
+        cv::circle(raw_frame_detected_dbg, detected_corners_raw[i], radius,
+                   cv::Scalar(0, 0, 255), 2); // Fallback if radius is bad
       }
+
       cv::imshow("Capture Calibration - Auto Detected Corners on Raw",
                  raw_frame_detected_dbg);
       LOG_DEBUG

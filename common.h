@@ -240,8 +240,8 @@ bool processAndSaveCalibration(
 
 bool detectFourCornersGoBoard(
     const cv::Mat &input_image,
-    std::vector<cv::Point2f> &detected_corners_tl_tr_br_bl,
-    std::vector<float> &detected_radius);
+    std::vector<cv::Point2f> &detected_corners_tl_tr_br_bl);
+    
 bool detectColoredRoundShape(
     const cv::Mat &inputImage, // BGR image
     const cv::Rect &regionOfInterest,
@@ -324,4 +324,22 @@ bool experimental_scan_for_quadrant_stone( // Name kept, but logic will be V5
     cv::Rect &out_focused_roi_in_final_corrected);
 
 std::vector<cv::Point2f> getBoardCorners(const cv::Mat &inputImage);
+
+bool findSingleCornerStone_Refined(
+    const cv::Mat &rawBgrImage,
+    CornerQuadrant targetQuadrant,    // TL, TR, BL, BR
+    const CalibrationData &calibData, // For Lab color references (can have
+                                      // defaults if config fails)
+    const std::vector<cv::Point2f>
+        &known_raw_corners, // Input: current known raw corners (TL,TR,BR,BL),
+                            // use (-1,-1) for unknown
+    // Outputs:
+    cv::Point2f &out_found_raw_corner, // The refined raw board corner position
+    cv::Mat &out_debug_final_corrected_image, // The Pass 2 corrected image for
+                                              // this corner
+    cv::Point2f &out_debug_stone_center,      // Stone center in
+                                              // out_debug_final_corrected_image
+    float &out_debug_stone_radius             // Stone radius in
+                                              // out_debug_final_corrected_image
+);
 #endif // UTILITY_H
