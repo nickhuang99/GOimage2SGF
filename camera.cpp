@@ -952,16 +952,16 @@ void runInteractiveCalibration(int camera_index) {
 
 void runCaptureCalibration() {
   LOG_INFO << "Starting AUTOMATED Capture Calibration from snapshot: "
-           << CALIB_SNAPSHOT_PATH << std::endl;
-  cv::Mat raw_frame = cv::imread(CALIB_SNAPSHOT_PATH);
+           << g_default_input_image_path << std::endl;
+  cv::Mat raw_frame = cv::imread(g_default_input_image_path);
   if (raw_frame.empty()) {
     LOG_ERROR << "Failed to load snapshot image for calibration: "
-              << CALIB_SNAPSHOT_PATH << std::endl;
+              << g_default_input_image_path << std::endl;
     THROWGEMERROR("Failed to load snapshot image for calibration: " +
-                  CALIB_SNAPSHOT_PATH);
+                  g_default_input_image_path);
   }
-  LOG_INFO << "Loaded image: " << CALIB_SNAPSHOT_PATH << " (" << raw_frame.cols
-           << "x" << raw_frame.rows << ")" << std::endl;
+  LOG_INFO << "Loaded image: " << g_default_input_image_path << " ("
+           << raw_frame.cols << "x" << raw_frame.rows << ")" << std::endl;
 
   if (bDebug) {
     cv::imshow("Calibration Input Snapshot", raw_frame);

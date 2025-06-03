@@ -1792,7 +1792,6 @@ void experimentalDetectTLQuadrantWorkflow() {
       detected_radius_in_final_img, // out_detected_stone_radius_in_final_corrected
       focused_roi_used_in_final_img // out_focused_roi_in_final_corrected
   );
-
   cv::Mat display_img_main;
   if (!final_corrected_image_to_display.empty()) {
     display_img_main = final_corrected_image_to_display.clone();

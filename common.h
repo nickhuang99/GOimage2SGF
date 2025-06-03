@@ -46,7 +46,16 @@ extern const float CALIB_L_TOLERANCE_STONE;
 extern const float CALIB_AB_TOLERANCE_STONE;
 
 // NEW Enum for specifying corner quadrant
-enum class CornerQuadrant { TOP_LEFT, TOP_RIGHT, BOTTOM_LEFT, BOTTOM_RIGHT };
+enum class CornerQuadrant {
+  TOP_LEFT = 0,
+  TOP_RIGHT,
+  BOTTOM_LEFT,
+  BOTTOM_RIGHT
+};
+
+constexpr const char *toString(CornerQuadrant quadrant);
+
+std::ostream &operator<<(std::ostream &os, CornerQuadrant quadrant);
 
 // Custom exception class for GEM errors
 class GEMError : public std::runtime_error {
@@ -241,7 +250,7 @@ bool processAndSaveCalibration(
 bool detectFourCornersGoBoard(
     const cv::Mat &input_image,
     std::vector<cv::Point2f> &detected_corners_tl_tr_br_bl);
-    
+
 bool detectColoredRoundShape(
     const cv::Mat &inputImage, // BGR image
     const cv::Rect &regionOfInterest,
@@ -322,6 +331,13 @@ bool experimental_scan_for_quadrant_stone( // Name kept, but logic will be V5
     cv::Point2f &out_detected_stone_center_in_final_corrected,
     float &out_detected_stone_radius_in_final_corrected,
     cv::Rect &out_focused_roi_in_final_corrected);
+
+bool adaptive_detect_stone(const cv::Mat &rawBgrImage,
+                           CornerQuadrant targetScanQuadrant,
+                           const CalibrationData &calibData,
+                           cv::Point2f &out_final_raw_corner_guess,
+                           cv::Mat &out_final_corrected_image,
+                           float &out_detected_stone_radius_in_final_corrected);
 
 std::vector<cv::Point2f> getBoardCorners(const cv::Mat &inputImage);
 
