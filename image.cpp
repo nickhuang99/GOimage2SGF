@@ -62,20 +62,6 @@ struct LineMatch {
   }
 };
 
-constexpr const char *toString(CornerQuadrant quadrant) {
-  switch (quadrant) {
-  case CornerQuadrant::TOP_LEFT:
-    return "TOP_LEFT";
-  case CornerQuadrant::TOP_RIGHT:
-    return "TOP_RIGHT";
-  case CornerQuadrant::BOTTOM_LEFT:
-    return "BOTTOM_LEFT";
-  case CornerQuadrant::BOTTOM_RIGHT:
-    return "BOTTOM_RIGHT";
-  default:
-    return "UNKNOWN"; // 处理未定义值（可选）
-  }
-}
 
 std::ostream &operator<<(std::ostream &os, CornerQuadrant quadrant) {
   os << toString(quadrant);
@@ -1992,7 +1978,7 @@ bool detectSpecificColoredRoundShape(const cv::Mat &inputBgrImage,
   return false;
 }
 
-static bool find_largest_color_blob_in_roi(
+bool find_largest_color_blob_in_roi(
     const cv::Mat &image_to_search_bgr, const cv::Rect &roi_in_image,
     const cv::Vec3f &target_lab_color, float l_tol, float ab_tol,
     // Outputs:

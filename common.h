@@ -53,7 +53,20 @@ enum class CornerQuadrant {
   BOTTOM_RIGHT
 };
 
-constexpr const char *toString(CornerQuadrant quadrant);
+constexpr const char *toString(CornerQuadrant quadrant) {
+  switch (quadrant) {
+  case CornerQuadrant::TOP_LEFT:
+    return "TOP_LEFT";
+  case CornerQuadrant::TOP_RIGHT:
+    return "TOP_RIGHT";
+  case CornerQuadrant::BOTTOM_LEFT:
+    return "BOTTOM_LEFT";
+  case CornerQuadrant::BOTTOM_RIGHT:
+    return "BOTTOM_RIGHT";
+  default:
+    return "UNKNOWN"; // 处理未定义值（可选）
+  }
+}
 
 std::ostream &operator<<(std::ostream &os, CornerQuadrant quadrant);
 
@@ -358,4 +371,12 @@ bool findSingleCornerStone_Refined(
     float &out_debug_stone_radius             // Stone radius in
                                               // out_debug_final_corrected_image
 );
+
+bool find_largest_color_blob_in_roi(
+    const cv::Mat &image_to_search_bgr, const cv::Rect &roi_in_image,
+    const cv::Vec3f &target_lab_color, float l_tol, float ab_tol,
+    // Outputs:
+    cv::Point2f
+        &out_blob_center_in_image_coords, // Relative to image_to_search_bgr
+    double &out_blob_area);
 #endif // UTILITY_H
