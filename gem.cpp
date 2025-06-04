@@ -1926,172 +1926,265 @@ void experimentalDetectTLQuadrantWorkflow() {
 }
 
 void experimentalFindBlobWorkflow() {
-    LOG_INFO << "--- Starting Experimental Find Blob Workflow ---";
-    CornerQuadrant targetQuadrant = CornerQuadrant::TOP_RIGHT; // Default
+  LOG_INFO << "--- Starting Experimental Find Blob Workflow ---";
+  CornerQuadrant targetQuadrant = CornerQuadrant::TOP_RIGHT; // Default
 
-    if (g_exp_find_blob_quadrant_str == "TL" || g_exp_find_blob_quadrant_str == "TOP_LEFT") targetQuadrant = CornerQuadrant::TOP_LEFT;
-    else if (g_exp_find_blob_quadrant_str == "TR" || g_exp_find_blob_quadrant_str == "TOP_RIGHT") targetQuadrant = CornerQuadrant::TOP_RIGHT;
-    else if (g_exp_find_blob_quadrant_str == "BL" || g_exp_find_blob_quadrant_str == "BOTTOM_LEFT") targetQuadrant = CornerQuadrant::BOTTOM_LEFT;
-    else if (g_exp_find_blob_quadrant_str == "BR" || g_exp_find_blob_quadrant_str == "BOTTOM_RIGHT") targetQuadrant = CornerQuadrant::BOTTOM_RIGHT;
-    else if (!g_exp_find_blob_quadrant_str.empty()) {
-        LOG_WARN << "Invalid quadrant string for --exp-find-blob: " << g_exp_find_blob_quadrant_str << ". Defaulting to TOP_RIGHT.";
-    }
+  if (g_exp_find_blob_quadrant_str == "TL" ||
+      g_exp_find_blob_quadrant_str == "TOP_LEFT")
+    targetQuadrant = CornerQuadrant::TOP_LEFT;
+  else if (g_exp_find_blob_quadrant_str == "TR" ||
+           g_exp_find_blob_quadrant_str == "TOP_RIGHT")
+    targetQuadrant = CornerQuadrant::TOP_RIGHT;
+  else if (g_exp_find_blob_quadrant_str == "BL" ||
+           g_exp_find_blob_quadrant_str == "BOTTOM_LEFT")
+    targetQuadrant = CornerQuadrant::BOTTOM_LEFT;
+  else if (g_exp_find_blob_quadrant_str == "BR" ||
+           g_exp_find_blob_quadrant_str == "BOTTOM_RIGHT")
+    targetQuadrant = CornerQuadrant::BOTTOM_RIGHT;
+  else if (!g_exp_find_blob_quadrant_str.empty()) {
+    LOG_WARN << "Invalid quadrant string for --exp-find-blob: "
+             << g_exp_find_blob_quadrant_str << ". Defaulting to TOP_RIGHT.";
+  }
 
+  LOG_INFO << "  Target Quadrant: "
+           << toString(targetQuadrant); // Make sure toString(CornerQuadrant) is
+                                        // available or implement it
+  LOG_INFO << "  Image Path: " << g_exp_find_blob_image_path;
+  LOG_INFO << "  L-Tolerance Range: " << g_exp_find_blob_l_tol_start << " to "
+           << g_exp_find_blob_l_tol_end
+           << ", Step: " << g_exp_find_blob_l_tol_step;
+  LOG_INFO << "  AB-Tolerance (fixed): " << g_exp_find_blob_ab_tol;
 
-    LOG_INFO << "  Target Quadrant: " << toString(targetQuadrant); // Make sure toString(CornerQuadrant) is available or implement it
-    LOG_INFO << "  Image Path: " << g_exp_find_blob_image_path;
-    LOG_INFO << "  L-Tolerance Range: " << g_exp_find_blob_l_tol_start << " to " << g_exp_find_blob_l_tol_end << ", Step: " << g_exp_find_blob_l_tol_step;
-    LOG_INFO << "  AB-Tolerance (fixed): " << g_exp_find_blob_ab_tol;
+  cv::Mat rawBgrImage = cv::imread(g_exp_find_blob_image_path);
+  if (rawBgrImage.empty()) {
+    THROWGEMERROR("Failed to load image for --exp-find-blob: " +
+                  g_exp_find_blob_image_path);
+  }
 
-    cv::Mat rawBgrImage = cv::imread(g_exp_find_blob_image_path);
-    if (rawBgrImage.empty()) {
-        THROWGEMERROR("Failed to load image for --exp-find-blob: " + g_exp_find_blob_image_path);
-    }
+  CalibrationData calibData =
+      loadCalibrationData(CALIB_CONFIG_PATH); // To get target_lab_color
 
-    CalibrationData calibData = loadCalibrationData(CALIB_CONFIG_PATH); // To get target_lab_color
+  // --- Setup similar to adaptive_detect_stone Pass 1 ---
+  cv::Vec3f target_lab_color_for_quad;
+  cv::Point2f
+      p1_raw_corner_initial_guess_for_quad; // Only for M1 transform, not
+                                            // directly for ROI definition here.
 
-    // --- Setup similar to adaptive_detect_stone Pass 1 ---
-    cv::Vec3f target_lab_color_for_quad;
-    cv::Point2f p1_raw_corner_initial_guess_for_quad; // Only for M1 transform, not directly for ROI definition here.
-    
-    bool colors_available = calibData.colors_loaded;
-    switch (targetQuadrant) {
-        case CornerQuadrant::TOP_LEFT:
-            if (colors_available && calibData.lab_tl[0] >= 0) target_lab_color_for_quad = calibData.lab_tl;
-            else target_lab_color_for_quad = cv::Vec3f(50, 128, 128);
-            p1_raw_corner_initial_guess_for_quad = cv::Point2f(static_cast<float>(rawBgrImage.cols) * 0.25f, static_cast<float>(rawBgrImage.rows) * 0.25f);
-            break;
-        case CornerQuadrant::TOP_RIGHT:
-            if (colors_available && calibData.lab_tr[0] >= 0) target_lab_color_for_quad = calibData.lab_tr;
-            else target_lab_color_for_quad = cv::Vec3f(220, 128, 128);
-            p1_raw_corner_initial_guess_for_quad = cv::Point2f(static_cast<float>(rawBgrImage.cols) * 0.75f, static_cast<float>(rawBgrImage.rows) * 0.25f);
-            break;
-        case CornerQuadrant::BOTTOM_LEFT:
-            if (colors_available && calibData.lab_bl[0] >= 0) target_lab_color_for_quad = calibData.lab_bl;
-            else target_lab_color_for_quad = cv::Vec3f(50, 128, 128);
-            p1_raw_corner_initial_guess_for_quad = cv::Point2f(static_cast<float>(rawBgrImage.cols) * 0.25f, static_cast<float>(rawBgrImage.rows) * 0.75f);
-            break;
-        case CornerQuadrant::BOTTOM_RIGHT:
-            if (colors_available && calibData.lab_br[0] >= 0) target_lab_color_for_quad = calibData.lab_br;
-            else target_lab_color_for_quad = cv::Vec3f(220, 128, 128);
-            p1_raw_corner_initial_guess_for_quad = cv::Point2f(static_cast<float>(rawBgrImage.cols) * 0.75f, static_cast<float>(rawBgrImage.rows) * 0.75f);
-            break;
-    }
-    LOG_INFO << "  Reference Lab for " << toString(targetQuadrant) << ": " << target_lab_color_for_quad;
+  bool colors_available = calibData.colors_loaded;
+  switch (targetQuadrant) {
+  case CornerQuadrant::TOP_LEFT:
+    if (colors_available && calibData.lab_tl[0] >= 0)
+      target_lab_color_for_quad = calibData.lab_tl;
+    else
+      target_lab_color_for_quad = cv::Vec3f(50, 128, 128);
+    p1_raw_corner_initial_guess_for_quad =
+        cv::Point2f(static_cast<float>(rawBgrImage.cols) * 0.25f,
+                    static_cast<float>(rawBgrImage.rows) * 0.25f);
+    break;
+  case CornerQuadrant::TOP_RIGHT:
+    if (colors_available && calibData.lab_tr[0] >= 0)
+      target_lab_color_for_quad = calibData.lab_tr;
+    else
+      target_lab_color_for_quad = cv::Vec3f(220, 128, 128);
+    p1_raw_corner_initial_guess_for_quad =
+        cv::Point2f(static_cast<float>(rawBgrImage.cols) * 0.75f,
+                    static_cast<float>(rawBgrImage.rows) * 0.25f);
+    break;
+  case CornerQuadrant::BOTTOM_LEFT:
+    if (colors_available && calibData.lab_bl[0] >= 0)
+      target_lab_color_for_quad = calibData.lab_bl;
+    else
+      target_lab_color_for_quad = cv::Vec3f(50, 128, 128);
+    p1_raw_corner_initial_guess_for_quad =
+        cv::Point2f(static_cast<float>(rawBgrImage.cols) * 0.25f,
+                    static_cast<float>(rawBgrImage.rows) * 0.75f);
+    break;
+  case CornerQuadrant::BOTTOM_RIGHT:
+    if (colors_available && calibData.lab_br[0] >= 0)
+      target_lab_color_for_quad = calibData.lab_br;
+    else
+      target_lab_color_for_quad = cv::Vec3f(220, 128, 128);
+    p1_raw_corner_initial_guess_for_quad =
+        cv::Point2f(static_cast<float>(rawBgrImage.cols) * 0.75f,
+                    static_cast<float>(rawBgrImage.rows) * 0.75f);
+    break;
+  }
+  LOG_INFO << "  Reference Lab for " << toString(targetQuadrant) << ": "
+           << target_lab_color_for_quad;
 
-    std::vector<cv::Point2f> ideal_corrected_dest_points = getBoardCornersCorrected(rawBgrImage.cols, rawBgrImage.rows);
-    std::vector<cv::Point2f> p1_source_points_raw(4);
-    float p1_est_board_span_x = static_cast<float>(rawBgrImage.cols) * 0.75f;
-    float p1_est_board_span_y = static_cast<float>(rawBgrImage.rows) * 0.75f;
-    cv::Point2f guess = p1_raw_corner_initial_guess_for_quad;
+  std::vector<cv::Point2f> ideal_corrected_dest_points =
+      getBoardCornersCorrected(rawBgrImage.cols, rawBgrImage.rows);
+  std::vector<cv::Point2f> p1_source_points_raw(4);
+  float p1_est_board_span_x = static_cast<float>(rawBgrImage.cols) * 0.75f;
+  float p1_est_board_span_y = static_cast<float>(rawBgrImage.rows) * 0.75f;
+  cv::Point2f guess = p1_raw_corner_initial_guess_for_quad;
 
-    // Construct p1_source_points_raw (copied from adaptive_detect_stone)
-    if (targetQuadrant == CornerQuadrant::TOP_LEFT) {
-        p1_source_points_raw[0] = guess; p1_source_points_raw[1] = cv::Point2f(guess.x + p1_est_board_span_x, guess.y);
-        p1_source_points_raw[2] = cv::Point2f(guess.x + p1_est_board_span_x, guess.y + p1_est_board_span_y); p1_source_points_raw[3] = cv::Point2f(guess.x, guess.y + p1_est_board_span_y);
-    } else if (targetQuadrant == CornerQuadrant::TOP_RIGHT) {
-        p1_source_points_raw[1] = guess; p1_source_points_raw[0] = cv::Point2f(guess.x - p1_est_board_span_x, guess.y);
-        p1_source_points_raw[3] = cv::Point2f(guess.x - p1_est_board_span_x, guess.y + p1_est_board_span_y); p1_source_points_raw[2] = cv::Point2f(guess.x, guess.y + p1_est_board_span_y);
-    } else if (targetQuadrant == CornerQuadrant::BOTTOM_RIGHT) {
-        p1_source_points_raw[2] = guess; p1_source_points_raw[3] = cv::Point2f(guess.x - p1_est_board_span_x, guess.y);
-        p1_source_points_raw[0] = cv::Point2f(guess.x - p1_est_board_span_x, guess.y - p1_est_board_span_y); p1_source_points_raw[1] = cv::Point2f(guess.x, guess.y - p1_est_board_span_y);
-    } else { // BOTTOM_LEFT
-        p1_source_points_raw[3] = guess; p1_source_points_raw[2] = cv::Point2f(guess.x + p1_est_board_span_x, guess.y);
-        p1_source_points_raw[0] = cv::Point2f(guess.x, guess.y - p1_est_board_span_y); p1_source_points_raw[1] = cv::Point2f(guess.x + p1_est_board_span_x, guess.y - p1_est_board_span_y);
-    }
-     for (cv::Point2f &pt : p1_source_points_raw) {
-        pt.x = std::max(0.0f, std::min(static_cast<float>(rawBgrImage.cols - 1), pt.x));
-        pt.y = std::max(0.0f, std::min(static_cast<float>(rawBgrImage.rows - 1), pt.y));
-    }
+  // Construct p1_source_points_raw (copied from adaptive_detect_stone)
+  if (targetQuadrant == CornerQuadrant::TOP_LEFT) {
+    p1_source_points_raw[0] = guess;
+    p1_source_points_raw[1] =
+        cv::Point2f(guess.x + p1_est_board_span_x, guess.y);
+    p1_source_points_raw[2] = cv::Point2f(guess.x + p1_est_board_span_x,
+                                          guess.y + p1_est_board_span_y);
+    p1_source_points_raw[3] =
+        cv::Point2f(guess.x, guess.y + p1_est_board_span_y);
+  } else if (targetQuadrant == CornerQuadrant::TOP_RIGHT) {
+    p1_source_points_raw[1] = guess;
+    p1_source_points_raw[0] =
+        cv::Point2f(guess.x - p1_est_board_span_x, guess.y);
+    p1_source_points_raw[3] = cv::Point2f(guess.x - p1_est_board_span_x,
+                                          guess.y + p1_est_board_span_y);
+    p1_source_points_raw[2] =
+        cv::Point2f(guess.x, guess.y + p1_est_board_span_y);
+  } else if (targetQuadrant == CornerQuadrant::BOTTOM_RIGHT) {
+    p1_source_points_raw[2] = guess;
+    p1_source_points_raw[3] =
+        cv::Point2f(guess.x - p1_est_board_span_x, guess.y);
+    p1_source_points_raw[0] = cv::Point2f(guess.x - p1_est_board_span_x,
+                                          guess.y - p1_est_board_span_y);
+    p1_source_points_raw[1] =
+        cv::Point2f(guess.x, guess.y - p1_est_board_span_y);
+  } else { // BOTTOM_LEFT
+    p1_source_points_raw[3] = guess;
+    p1_source_points_raw[2] =
+        cv::Point2f(guess.x + p1_est_board_span_x, guess.y);
+    p1_source_points_raw[0] =
+        cv::Point2f(guess.x, guess.y - p1_est_board_span_y);
+    p1_source_points_raw[1] = cv::Point2f(guess.x + p1_est_board_span_x,
+                                          guess.y - p1_est_board_span_y);
+  }
+  for (cv::Point2f &pt : p1_source_points_raw) {
+    pt.x = std::max(0.0f,
+                    std::min(static_cast<float>(rawBgrImage.cols - 1), pt.x));
+    pt.y = std::max(0.0f,
+                    std::min(static_cast<float>(rawBgrImage.rows - 1), pt.y));
+  }
 
-    cv::Mat M1 = cv::getPerspectiveTransform(p1_source_points_raw, ideal_corrected_dest_points);
-    if (M1.empty() || cv::determinant(M1) < 1e-6) {
-        THROWGEMERROR("Failed to get perspective transform M1 for --exp-find-blob.");
-    }
-    cv::Mat image_pass1_corrected;
-    cv::warpPerspective(rawBgrImage, image_pass1_corrected, M1, rawBgrImage.size());
-    if (image_pass1_corrected.empty()) {
-        THROWGEMERROR("Warped image_pass1_corrected is empty for --exp-find-blob.");
-    }
+  cv::Mat M1 = cv::getPerspectiveTransform(p1_source_points_raw,
+                                           ideal_corrected_dest_points);
+  if (M1.empty() || cv::determinant(M1) < 1e-6) {
+    THROWGEMERROR(
+        "Failed to get perspective transform M1 for --exp-find-blob.");
+  }
+  cv::Mat image_pass1_corrected;
+  cv::warpPerspective(rawBgrImage, image_pass1_corrected, M1,
+                      rawBgrImage.size());
+  if (image_pass1_corrected.empty()) {
+    THROWGEMERROR("Warped image_pass1_corrected is empty for --exp-find-blob.");
+  }
 
-    // Define ROI relative to the board area in image_pass1_corrected (from adaptive_detect_stone)
-    cv::Rect roi_quadrant_pass1_for_exp;
-    cv::Point2f board_tl_in_p1_corrected = ideal_corrected_dest_points[0];
-    cv::Point2f board_tr_in_p1_corrected = ideal_corrected_dest_points[1];
-    cv::Point2f board_bl_in_p1_corrected = ideal_corrected_dest_points[3];
-    float board_width_in_p1_corrected = board_tr_in_p1_corrected.x - board_tl_in_p1_corrected.x;
-    float board_height_in_p1_corrected = board_bl_in_p1_corrected.y - board_tl_in_p1_corrected.y;
+  // Define ROI relative to the board area in image_pass1_corrected (from
+  // adaptive_detect_stone)
+  cv::Rect roi_quadrant_pass1_for_exp;
+  float board_width_in_p1_corrected = image_pass1_corrected.cols;
+  float board_height_in_p1_corrected = image_pass1_corrected.rows;
 
-    if (board_width_in_p1_corrected <= 0 || board_height_in_p1_corrected <=0) {
-        THROWGEMERROR("Board dimensions in P1 corrected image are non-positive for --exp-find-blob.");
-    }
-    switch (targetQuadrant) {
-        case CornerQuadrant::TOP_LEFT:
-            roi_quadrant_pass1_for_exp = cv::Rect(static_cast<int>(board_tl_in_p1_corrected.x), static_cast<int>(board_tl_in_p1_corrected.y), static_cast<int>(board_width_in_p1_corrected / 2.0f), static_cast<int>(board_height_in_p1_corrected / 2.0f));
-            break;
-        case CornerQuadrant::TOP_RIGHT:
-            roi_quadrant_pass1_for_exp = cv::Rect(static_cast<int>(board_tl_in_p1_corrected.x + board_width_in_p1_corrected / 2.0f), static_cast<int>(board_tl_in_p1_corrected.y), static_cast<int>(board_width_in_p1_corrected / 2.0f), static_cast<int>(board_height_in_p1_corrected / 2.0f));
-            break;
-        case CornerQuadrant::BOTTOM_LEFT:
-            roi_quadrant_pass1_for_exp = cv::Rect(static_cast<int>(board_tl_in_p1_corrected.x), static_cast<int>(board_tl_in_p1_corrected.y + board_height_in_p1_corrected / 2.0f), static_cast<int>(board_width_in_p1_corrected / 2.0f), static_cast<int>(board_height_in_p1_corrected / 2.0f));
-            break;
-        case CornerQuadrant::BOTTOM_RIGHT:
-            roi_quadrant_pass1_for_exp = cv::Rect(static_cast<int>(board_tl_in_p1_corrected.x + board_width_in_p1_corrected / 2.0f), static_cast<int>(board_tl_in_p1_corrected.y + board_height_in_p1_corrected / 2.0f), static_cast<int>(board_width_in_p1_corrected / 2.0f), static_cast<int>(board_height_in_p1_corrected / 2.0f));
-            break;
-    }
-    roi_quadrant_pass1_for_exp &= cv::Rect(0,0, image_pass1_corrected.cols, image_pass1_corrected.rows);
-    if (roi_quadrant_pass1_for_exp.width <=0 || roi_quadrant_pass1_for_exp.height <=0) {
-        THROWGEMERROR("Invalid board-relative ROI for --exp-find-blob after clamping.");
-    }
-    LOG_INFO << "  Searching within ROI in corrected image: " << roi_quadrant_pass1_for_exp;
+  cv::Point2f tl_roi(0.0f,0.0f);
+  switch (targetQuadrant) {
+  case CornerQuadrant::TOP_LEFT:
+    roi_quadrant_pass1_for_exp =
+        cv::Rect(static_cast<int>(tl_roi.x),
+                 static_cast<int>(tl_roi.y),
+                 static_cast<int>(board_width_in_p1_corrected / 2.0f),
+                 static_cast<int>(board_height_in_p1_corrected / 2.0f));
+    break;
+  case CornerQuadrant::TOP_RIGHT:
+    roi_quadrant_pass1_for_exp =
+        cv::Rect(static_cast<int>(tl_roi.x +
+                                  board_width_in_p1_corrected / 2.0f),
+                 static_cast<int>(tl_roi.y),
+                 static_cast<int>(board_width_in_p1_corrected / 2.0f),
+                 static_cast<int>(board_height_in_p1_corrected / 2.0f));
+    break;
+  case CornerQuadrant::BOTTOM_LEFT:
+    roi_quadrant_pass1_for_exp =
+        cv::Rect(static_cast<int>(tl_roi.x),
+                 static_cast<int>(tl_roi.y +
+                                  board_height_in_p1_corrected / 2.0f),
+                 static_cast<int>(board_width_in_p1_corrected / 2.0f),
+                 static_cast<int>(board_height_in_p1_corrected / 2.0f));
+    break;
+  case CornerQuadrant::BOTTOM_RIGHT:
+    roi_quadrant_pass1_for_exp =
+        cv::Rect(static_cast<int>(tl_roi.x +
+                                  board_width_in_p1_corrected / 2.0f),
+                 static_cast<int>(tl_roi.y +
+                                  board_height_in_p1_corrected / 2.0f),
+                 static_cast<int>(board_width_in_p1_corrected / 2.0f),
+                 static_cast<int>(board_height_in_p1_corrected / 2.0f));
+    break;
+  }
+  roi_quadrant_pass1_for_exp &=
+      cv::Rect(0, 0, image_pass1_corrected.cols, image_pass1_corrected.rows);
+  if (roi_quadrant_pass1_for_exp.width <= 0 ||
+      roi_quadrant_pass1_for_exp.height <= 0) {
+    THROWGEMERROR(
+        "Invalid board-relative ROI for --exp-find-blob after clamping.");
+  }
+  LOG_INFO << "  Searching within ROI in corrected image: "
+           << roi_quadrant_pass1_for_exp;
 
+  // --- Iteration Logic ---
+  for (float current_l_tol = g_exp_find_blob_l_tol_start;
+       (g_exp_find_blob_l_tol_step > 0
+            ? current_l_tol <= g_exp_find_blob_l_tol_end
+            : current_l_tol >= g_exp_find_blob_l_tol_end);
+       current_l_tol += g_exp_find_blob_l_tol_step) {
 
-    // --- Iteration Logic ---
-    for (float current_l_tol = g_exp_find_blob_l_tol_start; 
-         (g_exp_find_blob_l_tol_step > 0 ? current_l_tol <= g_exp_find_blob_l_tol_end : current_l_tol >= g_exp_find_blob_l_tol_end); 
-         current_l_tol += g_exp_find_blob_l_tol_step) {
+    LOG_INFO << "  Trying L-Tolerance: " << current_l_tol
+             << ", AB-Tolerance: " << g_exp_find_blob_ab_tol;
+    cv::Point2f blob_center;
+    double blob_area;
+
+    // find_largest_color_blob_in_roi expects the image to search, the ROI
+    // within that image, target Lab, L_tol, AB_tol
+    bool found = find_largest_color_blob_in_roi(
+        image_pass1_corrected, roi_quadrant_pass1_for_exp,
+        target_lab_color_for_quad, current_l_tol, g_exp_find_blob_ab_tol,
+        blob_center, blob_area);
+
+    if (found) {
+      LOG_INFO << "    SUCCESS: Blob found! Area: " << blob_area
+               << ", Center (in corrected image): " << blob_center;
+      if (bDebug) {
+        cv::Mat display_copy = image_pass1_corrected.clone();
+        cv::rectangle(display_copy, roi_quadrant_pass1_for_exp,
+                      cv::Scalar(255, 0, 0), 1); // ROI
+        cv::circle(display_copy, blob_center, 5, cv::Scalar(0, 255, 0),
+                   -1); // Blob center
+        cv::putText(display_copy, "L_Tol: " + std::to_string(current_l_tol),
+                    cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 0.7,
+                    cv::Scalar(0, 255, 0), 2);
+        cv::imshow("Exp Find Blob - Iteration", display_copy);
+        if (cv::waitKey(0) == 27)
+          break; // ESC to stop iteration
         
-        LOG_INFO << "  Trying L-Tolerance: " << current_l_tol << ", AB-Tolerance: " << g_exp_find_blob_ab_tol;
-        cv::Point2f blob_center;
-        double blob_area;
-
-        // find_largest_color_blob_in_roi expects the image to search, the ROI within that image, target Lab, L_tol, AB_tol
-        bool found = find_largest_color_blob_in_roi(
-            image_pass1_corrected, 
-            roi_quadrant_pass1_for_exp, 
-            target_lab_color_for_quad, 
-            current_l_tol, 
-            g_exp_find_blob_ab_tol,
-            blob_center, 
-            blob_area
-        );
-
-        if (found) {
-            LOG_INFO << "    SUCCESS: Blob found! Area: " << blob_area << ", Center (in corrected image): " << blob_center;
-            if (bDebug) {
-                cv::Mat display_copy = image_pass1_corrected.clone();
-                cv::rectangle(display_copy, roi_quadrant_pass1_for_exp, cv::Scalar(255,0,0), 1); // ROI
-                cv::circle(display_copy, blob_center, 5, cv::Scalar(0,255,0), -1); // Blob center
-                cv::putText(display_copy, "L_Tol: " + std::to_string(current_l_tol), cv::Point(10,30), cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0,255,0),2);
-                cv::imshow("Exp Find Blob - Iteration", display_copy);
-                if(cv::waitKey(0) == 27) break; // ESC to stop iteration
-            }
-        } else {
-            LOG_INFO << "    FAILURE: No blob found with L-Tolerance: " << current_l_tol;
-             if (bDebug) { // Show the ROI even if no blob found, with current L_Tol
-                cv::Mat display_copy = image_pass1_corrected.clone();
-                cv::rectangle(display_copy, roi_quadrant_pass1_for_exp, cv::Scalar(0,0,255), 1); // ROI in red
-                cv::putText(display_copy, "L_Tol: " + std::to_string(current_l_tol) + " (No Blob)", cv::Point(10,30), cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0,0,255),2);
-                cv::imshow("Exp Find Blob - Iteration", display_copy);
-                if(cv::waitKey(0) == 27) break; // ESC to stop iteration
-            }
-        }
-        if (g_exp_find_blob_l_tol_step == 0 && g_exp_find_blob_l_tol_start == g_exp_find_blob_l_tol_end) break; // Run once if step is 0 and start=end
+      }
+    } else {
+      LOG_INFO << "    FAILURE: No blob found with L-Tolerance: "
+               << current_l_tol;
+      if (bDebug) { // Show the ROI even if no blob found, with current L_Tol
+        cv::Mat display_copy = image_pass1_corrected.clone();
+        cv::rectangle(display_copy, roi_quadrant_pass1_for_exp,
+                      cv::Scalar(0, 0, 255), 1); // ROI in red
+        cv::putText(display_copy,
+                    "L_Tol: " + std::to_string(current_l_tol) + " (No Blob)",
+                    cv::Point(10, 30), cv::FONT_HERSHEY_SIMPLEX, 0.7,
+                    cv::Scalar(0, 0, 255), 2);
+        cv::imshow("Exp Find Blob - Iteration", display_copy);
+        if (cv::waitKey(0) == 27)
+          break; // ESC to stop iteration
+        //else continue;
+      }
     }
-    if (bDebug) cv::destroyAllWindows();
-    LOG_INFO << "--- Experimental Find Blob Workflow Finished ---";
+    if (g_exp_find_blob_l_tol_step == 0 &&
+        g_exp_find_blob_l_tol_start == g_exp_find_blob_l_tol_end)
+      break; // Run once if step is 0 and start=end
+  }
+  if (bDebug)
+    cv::destroyAllWindows();
+  LOG_INFO << "--- Experimental Find Blob Workflow Finished ---";
 }
-
 
 int main(int argc, char *argv[]) {
   // Initialize logger with default path and level.
@@ -2127,7 +2220,7 @@ int main(int argc, char *argv[]) {
     bool run_study_mode = false;
     bool run_detect_stone_position_workflow = false;  // NEW Flag
     bool run_experimental_detect_tl_workflow = false; // NEW flag
-     bool run_exp_find_blob_workflow = false; // New flag
+    bool run_exp_find_blob_workflow = false;          // New flag
 
     int detect_stone_col = -1, detect_stone_row = -1; // NEW Args for -P
 
