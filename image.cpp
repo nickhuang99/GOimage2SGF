@@ -3674,8 +3674,8 @@ bool adaptive_detect_stone_robust(
     quadrant_name_str = "BOTTOM_RIGHT";
     target_ideal_dest_corner_idx = 2;
     p1_raw_corner_initial_guess =
-        cv::Point2f(static_cast<float>(rawBgrImage.cols) * 0.75f,
-                    static_cast<float>(rawBgrImage.rows) * 0.75f);
+        cv::Point2f(static_cast<float>(rawBgrImage.cols) * 0.95f,
+                    static_cast<float>(rawBgrImage.rows) * 0.85f);
     
     ideal_grid_col_for_roi_pass2 = 18;
     ideal_grid_row_for_roi_pass2 = 18;
@@ -3688,8 +3688,8 @@ bool adaptive_detect_stone_robust(
     quadrant_name_str = "BOTTOM_LEFT";
     target_ideal_dest_corner_idx = 3;
     p1_raw_corner_initial_guess =
-        cv::Point2f(static_cast<float>(rawBgrImage.cols) * 0.25f,
-                    static_cast<float>(rawBgrImage.rows) * 0.75f);
+        cv::Point2f(static_cast<float>(rawBgrImage.cols) * 0.05f,
+                    static_cast<float>(rawBgrImage.rows) * 0.85f);
     
     ideal_grid_col_for_roi_pass2 = 0;
     ideal_grid_row_for_roi_pass2 = 18;
