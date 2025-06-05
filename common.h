@@ -45,6 +45,8 @@ extern const int MIN_CONTOUR_POINTS_STONE;
 extern const float CALIB_L_TOLERANCE_STONE;
 extern const float CALIB_AB_TOLERANCE_STONE;
 
+extern bool g_use_robust_corner_detection;
+
 // NEW Enum for specifying corner quadrant
 enum class CornerQuadrant {
   TOP_LEFT = 0,

@@ -36,10 +36,12 @@ std::string g_device_path = "/dev/video0";
 static std::string g_exp_find_blob_quadrant_str;
 static float g_exp_find_blob_l_tol_start = CALIB_L_TOLERANCE_STONE; // Default
 static float g_exp_find_blob_l_tol_end = CALIB_L_TOLERANCE_STONE;   // Default
-static float g_exp_find_blob_l_tol_step = 5.0f;                   // Default
-static float g_exp_find_blob_ab_tol = CALIB_AB_TOLERANCE_STONE; // Default
-static std::string& g_exp_find_blob_image_path = g_default_input_image_path;
+static float g_exp_find_blob_l_tol_step = 5.0f;                     // Default
+static float g_exp_find_blob_ab_tol = CALIB_AB_TOLERANCE_STONE;     // Default
+static std::string &g_exp_find_blob_image_path = g_default_input_image_path;
 
+bool g_use_robust_corner_detection =
+    false; // Defined in gem.cpp, declared extern in common.h
 
 // Forward declaration for the new workflow function
 void experimentalFindBlobWorkflow();
@@ -107,6 +109,9 @@ void displayHelpMessage() {
   CONSOLE_OUT << "      --ab_tol <float>              : Fixed AB-tolerance for "
                  "--exp-find-blob (default: "
               << CALIB_AB_TOLERANCE_STONE << ")." << endl;
+  CONSOLE_OUT << "  --robust-corners                : (Dev) Use robust "
+                 "iterative shape and L-value probing for corner detection."
+              << endl;
   CONSOLE_OUT
       << "  -p, --process-image <image_path>   : Process the Go board image."
       << endl;
@@ -2079,39 +2084,34 @@ void experimentalFindBlobWorkflow() {
   float board_width_in_p1_corrected = image_pass1_corrected.cols;
   float board_height_in_p1_corrected = image_pass1_corrected.rows;
 
-  cv::Point2f tl_roi(0.0f,0.0f);
+  cv::Point2f tl_roi(0.0f, 0.0f);
   switch (targetQuadrant) {
   case CornerQuadrant::TOP_LEFT:
     roi_quadrant_pass1_for_exp =
-        cv::Rect(static_cast<int>(tl_roi.x),
-                 static_cast<int>(tl_roi.y),
+        cv::Rect(static_cast<int>(tl_roi.x), static_cast<int>(tl_roi.y),
                  static_cast<int>(board_width_in_p1_corrected / 2.0f),
                  static_cast<int>(board_height_in_p1_corrected / 2.0f));
     break;
   case CornerQuadrant::TOP_RIGHT:
-    roi_quadrant_pass1_for_exp =
-        cv::Rect(static_cast<int>(tl_roi.x +
-                                  board_width_in_p1_corrected / 2.0f),
-                 static_cast<int>(tl_roi.y),
-                 static_cast<int>(board_width_in_p1_corrected / 2.0f),
-                 static_cast<int>(board_height_in_p1_corrected / 2.0f));
+    roi_quadrant_pass1_for_exp = cv::Rect(
+        static_cast<int>(tl_roi.x + board_width_in_p1_corrected / 2.0f),
+        static_cast<int>(tl_roi.y),
+        static_cast<int>(board_width_in_p1_corrected / 2.0f),
+        static_cast<int>(board_height_in_p1_corrected / 2.0f));
     break;
   case CornerQuadrant::BOTTOM_LEFT:
-    roi_quadrant_pass1_for_exp =
-        cv::Rect(static_cast<int>(tl_roi.x),
-                 static_cast<int>(tl_roi.y +
-                                  board_height_in_p1_corrected / 2.0f),
-                 static_cast<int>(board_width_in_p1_corrected / 2.0f),
-                 static_cast<int>(board_height_in_p1_corrected / 2.0f));
+    roi_quadrant_pass1_for_exp = cv::Rect(
+        static_cast<int>(tl_roi.x),
+        static_cast<int>(tl_roi.y + board_height_in_p1_corrected / 2.0f),
+        static_cast<int>(board_width_in_p1_corrected / 2.0f),
+        static_cast<int>(board_height_in_p1_corrected / 2.0f));
     break;
   case CornerQuadrant::BOTTOM_RIGHT:
-    roi_quadrant_pass1_for_exp =
-        cv::Rect(static_cast<int>(tl_roi.x +
-                                  board_width_in_p1_corrected / 2.0f),
-                 static_cast<int>(tl_roi.y +
-                                  board_height_in_p1_corrected / 2.0f),
-                 static_cast<int>(board_width_in_p1_corrected / 2.0f),
-                 static_cast<int>(board_height_in_p1_corrected / 2.0f));
+    roi_quadrant_pass1_for_exp = cv::Rect(
+        static_cast<int>(tl_roi.x + board_width_in_p1_corrected / 2.0f),
+        static_cast<int>(tl_roi.y + board_height_in_p1_corrected / 2.0f),
+        static_cast<int>(board_width_in_p1_corrected / 2.0f),
+        static_cast<int>(board_height_in_p1_corrected / 2.0f));
     break;
   }
   roi_quadrant_pass1_for_exp &=
@@ -2158,7 +2158,6 @@ void experimentalFindBlobWorkflow() {
         cv::imshow("Exp Find Blob - Iteration", display_copy);
         if (cv::waitKey(0) == 27)
           break; // ESC to stop iteration
-        
       }
     } else {
       LOG_INFO << "    FAILURE: No blob found with L-Tolerance: "
@@ -2174,7 +2173,7 @@ void experimentalFindBlobWorkflow() {
         cv::imshow("Exp Find Blob - Iteration", display_copy);
         if (cv::waitKey(0) == 27)
           break; // ESC to stop iteration
-        //else continue;
+        // else continue;
       }
     }
     if (g_exp_find_blob_l_tol_step == 0 &&
@@ -2221,6 +2220,7 @@ int main(int argc, char *argv[]) {
     bool run_detect_stone_position_workflow = false;  // NEW Flag
     bool run_experimental_detect_tl_workflow = false; // NEW flag
     bool run_exp_find_blob_workflow = false;          // New flag
+    bool run_test_robust_detection_workflow = false;
 
     int detect_stone_col = -1, detect_stone_row = -1; // NEW Args for -P
 
@@ -2261,7 +2261,8 @@ int main(int argc, char *argv[]) {
          'S'}, // Use S as a unique identifier for --size
         {"draw-board", required_argument, nullptr, 0}, // NEW OPTION
         {"test-calibration-config", no_argument, nullptr, 'f'},
-        {"exp-detect-tl", no_argument, nullptr, 0}, // NEW long option
+        {"exp-detect-tl", no_argument, nullptr, 0},  // NEW long option
+        {"robust-corners", no_argument, nullptr, 0}, // Or a unique int value
         // Assign a unique int > 255 or use 0 and check by name
         {"exp-find-blob", no_argument, nullptr, 1},
         {"quadrant", required_argument, nullptr, 2},
@@ -2492,6 +2493,17 @@ int main(int argc, char *argv[]) {
         } else if (long_options[option_index].name ==
                    std::string("exp-detect-tl")) { // NEW
           run_experimental_detect_tl_workflow = true;
+        } else if (long_options[option_index].name ==
+                   std::string("robust-corners")) {
+          g_use_robust_corner_detection = true;
+          // Decide which workflow this should trigger, e.g., a test or
+          // auto-calibration For now, let's assume it modifies the behavior of
+          // runCaptureCalibration run_calibration = true; // If you want it to
+          // run the auto-calib with this new method run_interactive_calibration
+          // = false;
+          run_test_robust_detection_workflow = true;
+          LOG_INFO << "Robust corner detection mode ENABLED for subsequent "
+                      "operations.";
         }
         break;
       case 1: // --exp-find-blob
@@ -2539,7 +2551,67 @@ int main(int argc, char *argv[]) {
 
     // --- Workflow Execution Logic ---
     // (Prioritize more specific/terminal workflows first)
-    if (run_exp_find_blob_workflow) {
+    if (run_test_robust_detection_workflow) {
+      LOG_INFO << "--- Starting Test Robust Corner Detection Workflow (using "
+                  "--robust-corners flag) ---";
+      std::vector<cv::Point2f> detected_corners;
+      cv::Mat raw_image = cv::imread(g_default_input_image_path);
+      if (raw_image.empty())
+        THROWGEMERROR("Failed to load image for robust detection test: " +
+                      g_default_input_image_path);
+
+      // detectFourCornersGoBoard will internally check
+      // g_use_robust_corner_detection
+      bool success = detectFourCornersGoBoard(raw_image, detected_corners);
+      if (success) {
+        LOG_INFO << "Robust corner detection test successful. All 4 corners "
+                    "verified.";
+        for (size_t i = 0; i < detected_corners.size(); ++i) {
+          // Get quadrant name for logging - assuming TL, TR, BR, BL order from
+          // detectFourCornersGoBoard
+          std::string q_name = (i == 0)   ? "TOP_LEFT"
+                               : (i == 1) ? "TOP_RIGHT"
+                               : (i == 2) ? "BOTTOM_RIGHT"
+                                          : "BOTTOM_LEFT";
+          LOG_INFO << "  Corner " << q_name << " (" << i
+                   << "): " << detected_corners[i];
+        }
+
+        cv::Mat display_robust = raw_image.clone();
+
+        // Copied drawing logic from detectFourCornersGoBoard's debug
+        // section
+        std::string quadrant_names_for_draw[] = {"TOP_LEFT", "TOP_RIGHT",
+                                                 "BOTTOM_RIGHT", "BOTTOM_LEFT"};
+        cv::line(display_robust, detected_corners[0], detected_corners[1],
+                 cv::Scalar(0, 255, 0), 2); // TL-TR
+        cv::line(display_robust, detected_corners[1], detected_corners[2],
+                 cv::Scalar(0, 255, 0), 2); // TR-BR
+        cv::line(display_robust, detected_corners[2], detected_corners[3],
+                 cv::Scalar(0, 255, 0), 2); // BR-BL
+        cv::line(display_robust, detected_corners[3], detected_corners[0],
+                 cv::Scalar(0, 255, 0), 2); // BL-TL
+
+        for (size_t i = 0; i < 4; ++i) {
+          cv::circle(display_robust, detected_corners[i], 7,
+                     cv::Scalar(0, 0, 255), -1); // Red circle for corner
+          cv::putText(display_robust, quadrant_names_for_draw[i],
+                      detected_corners[i] + cv::Point2f(10, 10),
+                      cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(255, 0, 0),
+                      2); // Blue text
+        }
+
+        cv::imshow("Robust Corner Detection Test Result (gem.cpp)",
+                   display_robust);
+        cv::waitKey(0);
+        cv::destroyAllWindows();
+
+      } else {
+        LOG_ERROR << "Robust corner detection test FAILED (one or more corners "
+                     "did not pass full verification).";
+      }
+      LOG_INFO << "--- Test Robust Corner Detection Workflow Finished ---";
+    } else if (run_exp_find_blob_workflow) {
       experimentalFindBlobWorkflow();
     } else if (run_probe_devices) {
       probeVideoDevicesWorkflow();
