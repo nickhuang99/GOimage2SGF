@@ -2182,6 +2182,59 @@ void experimentalFindBlobWorkflow() {
   LOG_INFO << "--- Experimental Find Blob Workflow Finished ---";
 }
 
+void runAutoCalibrationWorkflow() {
+  LOG_INFO << "Attempting to capture frame for auto-calibration...";
+  cv::Mat frame;
+
+  if (!captureFrame(g_device_path, frame)) {
+    LOG_ERROR
+        << "Auto-Calibration FAILED: Could not capture frame from webcam.";
+    return;
+  }
+  LOG_INFO << "Frame captured successfully. Image size: " << frame.cols << "x"
+           << frame.rows;
+
+  std::vector<cv::Point2f> detected_corners;
+  if (detectFourCornersGoBoard(frame, detected_corners)) {
+    LOG_INFO << "Robust corner detection successful.";
+
+    CalibrationData calibData;
+    calibData.corners = detected_corners;
+    calibData.corners_loaded = true;
+    calibData.image_width = frame.cols;
+    calibData.image_height = frame.rows;
+    calibData.dimensions_loaded = true;
+
+    // Now, sample colors based on the detected corners
+    if (!sampleCalibrationColors(frame, calibData)) {
+      LOG_ERROR
+          << "Auto-Calibration FAILED: Could not sample stone/board colors.";
+      return;
+    }
+
+    LOG_INFO << "Passing generated calibration data for verification before "
+                "saving...";
+    if (verifyCalibrationBeforeSave(calibData, frame)) {
+      LOG_INFO << "Auto-calibration successful! New configuration has been "
+                  "verified and saved."
+               << std::endl;
+      // Save a snapshot for verification purposes
+      LOG_INFO << "also update snapshot image for reference." << std::endl;
+      cv::imwrite(CALIB_SNAPSHOT_RAW_PATH, frame);
+      cv::Mat corrected_image = correctPerspective(frame);
+      cv::imwrite(CALIB_SNAPSHOT_PATH, corrected_image);
+    } else {
+      LOG_ERROR << "Auto-Calibration FAILED: The generated calibration data "
+                   "did not pass verification.";
+      CONSOLE_ERR << "Error: Verification failed. The board position may be "
+                     "unreliable. Old configuration (if any) has been restored."
+                  << std::endl;
+    }
+  } else {
+    LOG_ERROR << "Auto-Calibration FAILED: Robust corner detection failed.";
+  }
+}
+
 int main(int argc, char *argv[]) {
   // Initialize logger with default path and level.
   // This allows logging from the very start, even during option parsing if

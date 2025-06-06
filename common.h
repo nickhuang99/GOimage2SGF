@@ -358,5 +358,9 @@ bool find_largest_color_blob_in_roi(
 void runAutoCalibrationWorkflow();
 bool verifyCalibrationBeforeSave(const CalibrationData &calibData,
                                  const cv::Mat &image_to_verify);
-
+bool sampleCalibrationColors(const cv::Mat &raw_image,
+                             CalibrationData &calibData);
+void saveCalibrationData(const CalibrationData &data,
+                         const std::string &config_path);
+bool verifyCalibrationAfterSave(const cv::Mat &raw_image_for_verification);
 #endif // UTILITY_H

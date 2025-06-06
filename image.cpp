@@ -3530,25 +3530,73 @@ bool adaptive_detect_stone_robust(
   return true;
 }
 
-bool verifyCalibrationBeforeSave(const CalibrationData &calibData,
-                                 const cv::Mat &image_to_verify) {
-  LOG_INFO << "Verifying generated calibration data...";
-
-  if (calibData.corners.size() != 4) {
-    LOG_ERROR
-        << "Verification failed: Calibration data does not contain 4 corners.";
+// Add this new helper function to image.cpp
+bool sampleCalibrationColors(const cv::Mat &raw_image,
+                             CalibrationData &calibData) {
+  if (!calibData.corners_loaded || calibData.corners.size() != 4) {
+    LOG_ERROR << "Cannot sample colors, corner data is missing.";
     return false;
   }
 
-  // --- Stubbed Logic ---
-  // In the next phase, this function will perform a full analysis using the
-  // provided data. It will check if a valid 19x19 grid can be processed and if
-  // the four corner stones can be correctly classified (e.g. TL=Black, TR=White
-  // etc). For now, it just checks for the presence of 4 corner points.
+  LOG_INFO << "Sampling stone and board colors...";
 
-  LOG_WARN << "verifyCalibrationBeforeSave is currently a stub. It only checks "
-              "for 4 corners.";
-  LOG_INFO << "Verification check passed (stubbed).";
+  // Create a corrected, top-down view of the board
+  std::vector<cv::Point2f> output_corners =
+      getBoardCornersCorrected(raw_image.cols, raw_image.rows);
+  cv::Mat perspective_matrix =
+      cv::getPerspectiveTransform(calibData.corners, output_corners);
+  cv::Mat corrected_image;
+  cv::warpPerspective(raw_image, corrected_image, perspective_matrix,
+                      raw_image.size());
+  cv::Mat lab_image;
+  cv::cvtColor(corrected_image, lab_image, cv::COLOR_BGR2Lab);
 
+  int w = corrected_image.cols;
+  int h = corrected_image.rows;
+  int sample_radius = calculateAdaptiveSampleRadius(w, h);
+
+  // Define sample points for corners in the *corrected* image
+  std::vector<cv::Point2f> corrected_corners = getBoardCornersCorrected(w, h);
+  cv::Point2f tl_pos = corrected_corners[0];
+  cv::Point2f tr_pos = corrected_corners[1];
+  cv::Point2f br_pos = corrected_corners[2];
+  cv::Point2f bl_pos = corrected_corners[3];
+
+  calibData.lab_tl = getAverageLab(lab_image, tl_pos, sample_radius);
+  calibData.lab_tr = getAverageLab(lab_image, tr_pos, sample_radius);
+  calibData.lab_br = getAverageLab(lab_image, br_pos, sample_radius);
+  calibData.lab_bl = getAverageLab(lab_image, bl_pos, sample_radius);
+  calibData.colors_loaded = true;
+
+  // Sample board color from the center
+  calibData.lab_board_avg = getAverageLab(
+      lab_image, cv::Point2f(w / 2.0f, h / 2.0f), sample_radius * 2);
+  calibData.board_color_loaded = true;
+
+  LOG_INFO << "Color sampling complete.";
   return true;
+}
+
+bool verifyCalibrationBeforeSave(const CalibrationData &calibData,
+                                 const cv::Mat &image_to_verify) {
+  LOG_INFO << "Verifying generated calibration data using backup-and-restore "
+              "method...";
+
+  CalibrationData old_cal_data = loadCalibrationData(CALIB_CONFIG_PATH);
+
+  // 2. Save the new calibration data to the main config path
+  saveCalibrationData(calibData, CALIB_CONFIG_PATH);
+
+  // 3. Run the verification function
+  bool is_verified = verifyCalibrationAfterSave(image_to_verify);
+
+  // 4. Handle success or failure
+  if (is_verified) {
+    LOG_INFO << "Verification PASSED. New configuration is now active.";
+    return true;
+  } else {
+    LOG_ERROR << "Verification FAILED. Rolling back configuration.";
+    saveCalibrationData(old_cal_data, CALIB_CONFIG_PATH);
+    return false;
+  }
 }

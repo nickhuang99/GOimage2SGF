@@ -606,8 +606,7 @@ void sampleDataForConfig(const cv::Mat &final_corrected_lab,
             << ", BoardAvg=" << output_lab_values[4] << std::endl;
 }
 
-static bool
-verifyCalibrationAfterSave(const cv::Mat &raw_image_for_verification) {
+bool verifyCalibrationAfterSave(const cv::Mat &raw_image_for_verification) {
   LOG_INFO
       << "Verifying calibration settings (strict check) using current config..."
       << std::endl;
@@ -1050,61 +1049,49 @@ void runCaptureCalibration() {
            << std::endl;
 }
 
-void runAutoCalibrationWorkflow() {
-  LOG_INFO << "Attempting to capture frame for auto-calibration...";
-  cv::Mat frame;
-
-  // 1. Leverage existing capture logic
-  if (!captureFrame(g_device_path, frame)) {
-    LOG_ERROR
-        << "Auto-Calibration FAILED: Could not capture frame from webcam.";
-    CONSOLE_ERR << "Error: Frame capture failed. Check camera connection and "
-                   "permissions."
-                << std::endl;
+void saveCalibrationData(const CalibrationData &data,
+                         const std::string &config_path) {
+  LOG_INFO << "Saving calibration data to: " << config_path;
+  std::ofstream configFile(config_path);
+  if (!configFile.is_open()) {
+    LOG_ERROR << "Failed to open config file for writing: " << config_path;
     return;
   }
-  LOG_INFO << "Frame captured successfully. Image size: " << frame.cols << "x"
-           << frame.rows;
 
-  // 2. Pass to corner detection
-  std::vector<cv::Point2f> detected_corners;
-  if (detectFourCornersGoBoard(frame, detected_corners)) {
-    LOG_INFO << "Robust corner detection successful.";
+  configFile << std::fixed
+             << std::setprecision(3); // Set precision for floating point values
 
-    // --- Stubbed Logic ---
-    // In the next phase, we will:
-    // a. Create a CalibrationData object
-    // b. Populate it with corners, dimensions, and SAMPLED colors
-    // c. Call the new verification function
-
-    CalibrationData temp_calib_data; // Create a temporary object
-    temp_calib_data.corners = detected_corners;
-    temp_calib_data.image_width = frame.cols;
-    temp_calib_data.image_height = frame.rows;
-    // Color sampling logic will be added here later
-
-    LOG_INFO << "Passing generated calibration data for verification before "
-                "saving...";
-    if (verifyCalibrationBeforeSave(temp_calib_data, frame)) {
-      LOG_INFO << "Verification successful! (stubbed)";
-      // In the next phase, we will save the verified data to config.txt
-      // saveCalibrationData(temp_calib_data);
-      CONSOLE_OUT << "Auto-calibration successful (stubbed). Configuration "
-                     "would be saved."
-                  << std::endl;
-    } else {
-      LOG_ERROR << "Auto-Calibration FAILED: The generated calibration data "
-                   "did not pass verification.";
-      CONSOLE_ERR << "Error: Verification failed. The board position may be "
-                     "unreliable. Try interactive calibration."
-                  << std::endl;
-    }
-
-  } else {
-    LOG_ERROR << "Auto-Calibration FAILED: Robust corner detection failed.";
-    CONSOLE_ERR
-        << "Error: Could not automatically detect board corners. Please ensure "
-           "the board and all four corner stones are clearly visible."
-        << std::endl;
+  if (data.device_path_loaded)
+    configFile << "DevicePath=" << data.device_path << std::endl;
+  if (data.dimensions_loaded) {
+    configFile << "ImageWidth=" << data.image_width << std::endl;
+    configFile << "ImageHeight=" << data.image_height << std::endl;
   }
+  if (data.corners_loaded) {
+    configFile << "TL_X_PX=" << data.corners[0].x << std::endl;
+    configFile << "TL_Y_PX=" << data.corners[0].y << std::endl;
+    configFile << "TR_X_PX=" << data.corners[1].x << std::endl;
+    configFile << "TR_Y_PX=" << data.corners[1].y << std::endl;
+    configFile << "BR_X_PX=" << data.corners[2].x << std::endl;
+    configFile << "BR_Y_PX=" << data.corners[2].y << std::endl;
+    configFile << "BL_X_PX=" << data.corners[3].x << std::endl;
+    configFile << "BL_Y_PX=" << data.corners[3].y << std::endl;
+  }
+  if (data.colors_loaded) {
+    configFile << "TL_L=" << data.lab_tl[0] << "; TL_A=" << data.lab_tl[1]
+               << "; TL_B=" << data.lab_tl[2] << std::endl;
+    configFile << "TR_L=" << data.lab_tr[0] << "; TR_A=" << data.lab_tr[1]
+               << "; TR_B=" << data.lab_tr[2] << std::endl;
+    configFile << "BR_L=" << data.lab_br[0] << "; BR_A=" << data.lab_br[1]
+               << "; BR_B=" << data.lab_br[2] << std::endl;
+    configFile << "BL_L=" << data.lab_bl[0] << "; BL_A=" << data.lab_bl[1]
+               << "; BL_B=" << data.lab_bl[2] << std::endl;
+  }
+  if (data.board_color_loaded) {
+    configFile << "BOARD_L_AVG=" << data.lab_board_avg[0] << std::endl;
+    configFile << "BOARD_A_AVG=" << data.lab_board_avg[1] << std::endl;
+    configFile << "BOARD_B_AVG=" << data.lab_board_avg[2] << std::endl;
+  }
+  configFile.close();
+  LOG_INFO << "Calibration data successfully saved.";
 }
