@@ -2491,7 +2491,7 @@ int main(int argc, char *argv[]) {
                    std::string("exp-detect-tl")) { // NEW
           run_experimental_detect_tl_workflow = true;
         } else if (long_options[option_index].name ==
-                   std::string("robust-corners")) {         
+                   std::string("robust-corners")) {
           // Decide which workflow this should trigger, e.g., a test or
           // auto-calibration For now, let's assume it modifies the behavior of
           // runCaptureCalibration run_calibration = true; // If you want it to
@@ -2556,7 +2556,7 @@ int main(int argc, char *argv[]) {
         THROWGEMERROR("Failed to load image for robust detection test: " +
                       g_default_input_image_path);
 
-      // detectFourCornersGoBoard will internally check     
+      // detectFourCornersGoBoard will internally check
       bool success = detectFourCornersGoBoard(raw_image, detected_corners);
       if (success) {
         LOG_INFO << "Robust corner detection test successful. All 4 corners "

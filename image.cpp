@@ -63,10 +63,6 @@ struct LineMatch {
   }
 };
 
-// Helper struct for find_best_round_shape_iterative
-// Helper struct for find_best_round_shape_iterative
-// Helper struct for find_best_round_shape_iterative
-// Helper struct for find_best_round_shape_iterative
 struct CandidateBlob {
   cv::Point2f center_in_roi_coords; // Center within the ROI it was found
   double area;
@@ -2140,7 +2136,7 @@ bool detectFourCornersGoBoard(
     calibData.lab_tl = {60.0f, 124.0f, 118.0f};
     calibData.lab_tr = {235.0f, 113.0f, 117.0f};
     calibData.lab_br = {206.0f, 117.0f, 116.0f};
-    calibData.lab_bl = {72.0f, 121.0f, 118.0f};              
+    calibData.lab_bl = {72.0f, 121.0f, 118.0f};
   }
 
   cv::Mat temp_corrected_image; // Not used by caller, but adaptive_detect_stone
@@ -2681,7 +2677,6 @@ bool experimental_scan_for_quadrant_stone(
   }
 }
 
-
 // =================================================================================
 // START OF REFACTORING: find_best_round_shape_iterative
 // =================================================================================
@@ -2909,7 +2904,8 @@ static void finalize_and_classify_blob(
            << out_found_blob.classified_color_after_shape_found;
 }
 
-// --- Refactored Main Orchestrator Function ---
+// --- Refactored Main Orchestrator Function (with added debug visualization)
+// ---
 bool find_best_round_shape_iterative(
     const cv::Mat &image_to_search_bgr, const cv::Rect &roi_in_image,
     float expected_stone_radius_in_image, float initial_target_L_value_hint,
@@ -2963,6 +2959,46 @@ bool find_best_round_shape_iterative(
             largest_contour, roi_lab_content, calibDataForColorClassification,
             current_base_L, current_l_tol, out_found_blob);
         return true; // "First Qualified Largest Candidate" logic.
+      } else {
+        // --- START: ADDED DEBUG VISUALIZATION FOR REJECTED CONTOURS ---
+        if (bDebug) {
+          cv::Mat roi_bgr_debug_display =
+              image_to_search_bgr(valid_roi).clone();
+          cv::drawContours(roi_bgr_debug_display,
+                           std::vector<std::vector<cv::Point>>{largest_contour},
+                           -1, cv::Scalar(0, 0, 255),
+                           1); // Red for rejected largest
+
+          double area = cv::contourArea(largest_contour);
+          double perimeter = cv::arcLength(largest_contour, true);
+          double circularity =
+              (perimeter > 1.0) ? (4 * CV_PI * area) / (perimeter * perimeter)
+                                : 0.0;
+
+          std::string text_area = "Area: " + std::to_string((int)area);
+          std::string text_circ =
+              "Circ: " + std::to_string(circularity).substr(0, 4);
+
+          cv::putText(roi_bgr_debug_display, "REJECTED (Geometry)",
+                      cv::Point(5, 15), cv::FONT_HERSHEY_SIMPLEX, 0.4,
+                      cv::Scalar(0, 0, 255), 1);
+          cv::putText(roi_bgr_debug_display, text_area, cv::Point(5, 30),
+                      cv::FONT_HERSHEY_SIMPLEX, 0.4, cv::Scalar(0, 255, 255),
+                      1);
+          cv::putText(roi_bgr_debug_display, text_circ, cv::Point(5, 45),
+                      cv::FONT_HERSHEY_SIMPLEX, 0.4, cv::Scalar(0, 255, 255),
+                      1);
+
+          std::string window_name =
+              "FBS Rejected Geom (L:" + std::to_string((int)current_base_L) +
+              " T:" + std::to_string((int)current_l_tol) + ")";
+          cv::imshow(window_name, roi_bgr_debug_display);
+          if (cv::waitKey(0) == 27) {
+            return false;
+          }
+          cv::destroyWindow(window_name);
+        }
+        // --- END: ADDED DEBUG VISUALIZATION ---
       }
       if (l_tol_step == 0 && l_tol_min == l_tol_max)
         break;
@@ -2974,7 +3010,6 @@ bool find_best_round_shape_iterative(
   LOG_WARN << "  FBS: No blob met geometry criteria after all iterations.";
   return false; // No suitable candidate was found.
 }
-
 // =================================================================================
 // END OF REFACTORING
 // =================================================================================
@@ -3492,6 +3527,5 @@ bool adaptive_detect_stone_robust(
     LOG_WARN << "RobustDetect Pass 2 FAILED final verification. Using Pass 1's "
                 "geometric result for the corner location.";
   }
-
   return true;
 }

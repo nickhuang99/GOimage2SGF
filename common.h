@@ -45,8 +45,6 @@ extern const int MIN_CONTOUR_POINTS_STONE;
 extern const float CALIB_L_TOLERANCE_STONE;
 extern const float CALIB_AB_TOLERANCE_STONE;
 
-extern bool g_use_robust_corner_detection;
-
 // NEW Enum for specifying corner quadrant
 enum class CornerQuadrant {
   TOP_LEFT = 0,
@@ -347,15 +345,7 @@ bool experimental_scan_for_quadrant_stone( // Name kept, but logic will be V5
     float &out_detected_stone_radius_in_final_corrected,
     cv::Rect &out_focused_roi_in_final_corrected);
 
-bool adaptive_detect_stone(const cv::Mat &rawBgrImage,
-                           CornerQuadrant targetScanQuadrant,
-                           const CalibrationData &calibData,
-                           cv::Point2f &out_final_raw_corner_guess,
-                           cv::Mat &out_final_corrected_image,
-                           float &out_detected_stone_radius_in_final_corrected);
-
 std::vector<cv::Point2f> getBoardCorners(const cv::Mat &inputImage);
-
 
 bool find_largest_color_blob_in_roi(
     const cv::Mat &image_to_search_bgr, const cv::Rect &roi_in_image,
