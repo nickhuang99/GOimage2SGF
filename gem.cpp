@@ -40,9 +40,6 @@ static float g_exp_find_blob_l_tol_step = 5.0f;                     // Default
 static float g_exp_find_blob_ab_tol = CALIB_AB_TOLERANCE_STONE;     // Default
 static std::string &g_exp_find_blob_image_path = g_default_input_image_path;
 
-bool g_use_robust_corner_detection =
-    false; // Defined in gem.cpp, declared extern in common.h
-
 // Forward declaration for the new workflow function
 void experimentalFindBlobWorkflow();
 
@@ -2494,8 +2491,7 @@ int main(int argc, char *argv[]) {
                    std::string("exp-detect-tl")) { // NEW
           run_experimental_detect_tl_workflow = true;
         } else if (long_options[option_index].name ==
-                   std::string("robust-corners")) {
-          g_use_robust_corner_detection = true;
+                   std::string("robust-corners")) {         
           // Decide which workflow this should trigger, e.g., a test or
           // auto-calibration For now, let's assume it modifies the behavior of
           // runCaptureCalibration run_calibration = true; // If you want it to
@@ -2560,8 +2556,7 @@ int main(int argc, char *argv[]) {
         THROWGEMERROR("Failed to load image for robust detection test: " +
                       g_default_input_image_path);
 
-      // detectFourCornersGoBoard will internally check
-      // g_use_robust_corner_detection
+      // detectFourCornersGoBoard will internally check     
       bool success = detectFourCornersGoBoard(raw_image, detected_corners);
       if (success) {
         LOG_INFO << "Robust corner detection test successful. All 4 corners "
