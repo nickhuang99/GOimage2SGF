@@ -3529,3 +3529,26 @@ bool adaptive_detect_stone_robust(
   }
   return true;
 }
+
+bool verifyCalibrationBeforeSave(const CalibrationData &calibData,
+                                 const cv::Mat &image_to_verify) {
+  LOG_INFO << "Verifying generated calibration data...";
+
+  if (calibData.corners.size() != 4) {
+    LOG_ERROR
+        << "Verification failed: Calibration data does not contain 4 corners.";
+    return false;
+  }
+
+  // --- Stubbed Logic ---
+  // In the next phase, this function will perform a full analysis using the
+  // provided data. It will check if a valid 19x19 grid can be processed and if
+  // the four corner stones can be correctly classified (e.g. TL=Black, TR=White
+  // etc). For now, it just checks for the presence of 4 corner points.
+
+  LOG_WARN << "verifyCalibrationBeforeSave is currently a stub. It only checks "
+              "for 4 corners.";
+  LOG_INFO << "Verification check passed (stubbed).";
+
+  return true;
+}

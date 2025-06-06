@@ -1049,3 +1049,62 @@ void runCaptureCalibration() {
   LOG_INFO << "Automated Capture Calibration (from snapshot) Finished."
            << std::endl;
 }
+
+void runAutoCalibrationWorkflow() {
+  LOG_INFO << "Attempting to capture frame for auto-calibration...";
+  cv::Mat frame;
+
+  // 1. Leverage existing capture logic
+  if (!captureFrame(g_device_path, frame)) {
+    LOG_ERROR
+        << "Auto-Calibration FAILED: Could not capture frame from webcam.";
+    CONSOLE_ERR << "Error: Frame capture failed. Check camera connection and "
+                   "permissions."
+                << std::endl;
+    return;
+  }
+  LOG_INFO << "Frame captured successfully. Image size: " << frame.cols << "x"
+           << frame.rows;
+
+  // 2. Pass to corner detection
+  std::vector<cv::Point2f> detected_corners;
+  if (detectFourCornersGoBoard(frame, detected_corners)) {
+    LOG_INFO << "Robust corner detection successful.";
+
+    // --- Stubbed Logic ---
+    // In the next phase, we will:
+    // a. Create a CalibrationData object
+    // b. Populate it with corners, dimensions, and SAMPLED colors
+    // c. Call the new verification function
+
+    CalibrationData temp_calib_data; // Create a temporary object
+    temp_calib_data.corners = detected_corners;
+    temp_calib_data.image_width = frame.cols;
+    temp_calib_data.image_height = frame.rows;
+    // Color sampling logic will be added here later
+
+    LOG_INFO << "Passing generated calibration data for verification before "
+                "saving...";
+    if (verifyCalibrationBeforeSave(temp_calib_data, frame)) {
+      LOG_INFO << "Verification successful! (stubbed)";
+      // In the next phase, we will save the verified data to config.txt
+      // saveCalibrationData(temp_calib_data);
+      CONSOLE_OUT << "Auto-calibration successful (stubbed). Configuration "
+                     "would be saved."
+                  << std::endl;
+    } else {
+      LOG_ERROR << "Auto-Calibration FAILED: The generated calibration data "
+                   "did not pass verification.";
+      CONSOLE_ERR << "Error: Verification failed. The board position may be "
+                     "unreliable. Try interactive calibration."
+                  << std::endl;
+    }
+
+  } else {
+    LOG_ERROR << "Auto-Calibration FAILED: Robust corner detection failed.";
+    CONSOLE_ERR
+        << "Error: Could not automatically detect board corners. Please ensure "
+           "the board and all four corner stones are clearly visible."
+        << std::endl;
+  }
+}

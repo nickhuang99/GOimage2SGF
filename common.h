@@ -354,4 +354,9 @@ bool find_largest_color_blob_in_roi(
     cv::Point2f
         &out_blob_center_in_image_coords, // Relative to image_to_search_bgr
     double &out_blob_area);
+
+void runAutoCalibrationWorkflow();
+bool verifyCalibrationBeforeSave(const CalibrationData &calibData,
+                                 const cv::Mat &image_to_verify);
+
 #endif // UTILITY_H

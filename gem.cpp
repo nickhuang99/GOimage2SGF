@@ -2218,13 +2218,14 @@ int main(int argc, char *argv[]) {
     bool run_experimental_detect_tl_workflow = false; // NEW flag
     bool run_exp_find_blob_workflow = false;          // New flag
     bool run_test_robust_detection_workflow = false;
+    bool runAutoCalibration = false;
 
     int detect_stone_col = -1, detect_stone_row = -1; // NEW Args for -P
 
     auto isWorkflowSelected = [&]() -> bool {
       return run_probe_devices || run_calibration ||
              run_detect_stone_position_workflow || run_test_calibration ||
-             run_study_mode || run_tournament_mode ||
+             run_study_mode || run_tournament_mode || runAutoCalibration ||
              run_experimental_detect_tl_workflow || !snapshot_output.empty() ||
              !record_sgf_output.empty() || run_draw_board_workflow ||
              !test_perspective_image_path.empty() ||
@@ -2249,11 +2250,10 @@ int main(int argc, char *argv[]) {
         {"game-name", required_argument, nullptr, 0},
         {"study", no_argument, nullptr, 'u'},
         {"test-perspective", required_argument, nullptr, 0}, // Add -t option
-        {"calibration", no_argument, nullptr,
-         'b'}, // Added calibration long option
-        {"interactive-calibration", no_argument, nullptr,
-         'B'}, // Added calibration long option
-        {"mode", required_argument, nullptr, 'M'}, // Added mode option
+        {"calibration", no_argument, nullptr, 'b'},
+        {"interactive-calibration", no_argument, nullptr, 'B'},
+        {"run-auto-calibration", no_argument, nullptr, 'A'},
+        {"mode", required_argument, nullptr, 'M'},
         {"size", required_argument, nullptr,
          'S'}, // Use S as a unique identifier for --size
         {"draw-board", required_argument, nullptr, 0}, // NEW OPTION
@@ -2271,12 +2271,16 @@ int main(int argc, char *argv[]) {
 
     int c;
     // Process all options in a single loop
-    while ((c = getopt_long(argc, argv, "dp:g:v:c:h:s:r:D:BbM:S:ftuPO:",
+    while ((c = getopt_long(argc, argv, "dp:g:v:c:h:s:r:D:ABbM:S:ftuPO:",
                             long_options, &option_index)) != -1) {
       switch (c) {
       case 'd':
         bDebug = true;
         LOG_INFO << "Debug mode enabled." << endl;
+        break;
+      case 'A':
+        runAutoCalibration = true;
+        LOG_DEBUG << "Auto-Calibration workflow selected.";
         break;
       case 'O': // NEW: Log Level Option
         try {
@@ -2606,6 +2610,8 @@ int main(int argc, char *argv[]) {
                      "did not pass full verification).";
       }
       LOG_INFO << "--- Test Robust Corner Detection Workflow Finished ---";
+    } else if (runAutoCalibration) {
+      runAutoCalibrationWorkflow();
     } else if (run_exp_find_blob_workflow) {
       experimentalFindBlobWorkflow();
     } else if (run_probe_devices) {
