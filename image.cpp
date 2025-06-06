@@ -3336,8 +3336,203 @@ bool adaptive_detect_stone(
     return false;
   }
 }
+// =================================================================================
+// START OF REFACTORING: find_best_round_shape_iterative
+// =================================================================================
 
-// Modified for "First Qualified Largest Candidate" strategy
+// A small struct to hold the geometry constraints for a valid stone.
+struct StoneGeometryConstraints {
+  double min_acceptable_area;
+  double max_acceptable_area;
+  double min_acceptable_circularity;
+};
+
+// --- Refactored Utility Function 1: Prepare Iteration Parameters & Constraints ---
+// Validates inputs and prepares common variables and geometry constraints for the search.
+static bool prepare_iteration_parameters(
+    const cv::Mat &image_to_search_bgr, const cv::Rect &roi_in_image,
+    float expected_stone_radius_in_image,
+    // Outputs
+    cv::Rect &out_valid_roi, cv::Mat &out_roi_lab_content,
+    StoneGeometryConstraints &out_constraints) {
+
+  if (image_to_search_bgr.empty()) {
+    LOG_ERROR << "FBS: Input BGR image empty.";
+    return false;
+  }
+  out_valid_roi = roi_in_image & cv::Rect(0, 0, image_to_search_bgr.cols, image_to_search_bgr.rows);
+  if (out_valid_roi.width <= 0 || out_valid_roi.height <= 0) {
+    LOG_ERROR << "FBS: Invalid ROI after clamping: " << out_valid_roi;
+    return false;
+  }
+
+  cv::cvtColor(image_to_search_bgr(out_valid_roi), out_roi_lab_content, cv::COLOR_BGR2Lab);
+
+  double expected_area = CV_PI * expected_stone_radius_in_image * expected_stone_radius_in_image;
+  out_constraints.min_acceptable_area = expected_area * ABS_STONE_AREA_MIN_FACTOR;
+  out_constraints.max_acceptable_area = expected_area * ABS_STONE_AREA_MAX_FACTOR;
+  // Use a general, strict circularity for the initial shape search.
+  out_constraints.min_acceptable_circularity = std::max(MIN_STONE_CIRCULARITY_WHITE, MIN_STONE_CIRCULARITY_BLACK);
+
+  LOG_DEBUG << "  FBS Prep: Expected Area: " << expected_area 
+            << " (Range: " << out_constraints.min_acceptable_area << "-" << out_constraints.max_acceptable_area << ")"
+            << ", Min Circ: " << out_constraints.min_acceptable_circularity;
+            
+  return true;
+}
+
+// --- Refactored Utility Function 2: Generate L-Value Candidates ---
+// Creates the sorted list of L-channel base values to iterate through.
+static std::vector<float> generate_l_value_candidates(
+    float initial_target_L_value_hint, float l_base_min, float l_base_max, float l_base_step) {
+
+  std::vector<float> l_base_values_to_try;
+  // Prioritize the hint value by adding it first.
+  if (initial_target_L_value_hint >= l_base_min && initial_target_L_value_hint <= l_base_max) {
+    l_base_values_to_try.push_back(initial_target_L_value_hint);
+  }
+
+  // Add all other values in the range.
+  for (float l_val = l_base_min; l_val <= l_base_max; l_val += l_base_step) {
+    // Avoid re-adding the hint value if it falls on a step.
+    if (std::abs(l_val - initial_target_L_value_hint) > 1e-3) {
+      l_base_values_to_try.push_back(l_val);
+    }
+  }
+  
+  // Sort and unique the values to ensure a clean list, though the generation
+  // logic mostly prevents duplicates already.
+  std::sort(l_base_values_to_try.begin(), l_base_values_to_try.end());
+  l_base_values_to_try.erase(
+      std::unique(l_base_values_to_try.begin(), l_base_values_to_try.end()),
+      l_base_values_to_try.end());
+      
+  return l_base_values_to_try;
+}
+
+// --- Refactored Utility Function 3: Find Largest Contour for Color Range ---
+// The workhorse function that creates a color mask and finds the largest raw contour.
+static bool find_largest_contour_for_color_range(
+    const cv::Mat &roi_lab_content, float current_base_L, float current_l_tol,
+    float fixed_ab_target_A, float fixed_ab_target_B, float fixed_ab_tolerance,
+    // Output
+    std::vector<cv::Point> &out_largest_contour) {
+
+  cv::Mat color_mask;
+  cv::Scalar lab_lower(
+      std::max(0.f, current_base_L - current_l_tol),
+      std::max(0.f, fixed_ab_target_A - fixed_ab_tolerance),
+      std::max(0.f, fixed_ab_target_B - fixed_ab_tolerance));
+  cv::Scalar lab_upper(
+      std::min(255.f, current_base_L + current_l_tol),
+      std::min(255.f, fixed_ab_target_A + fixed_ab_tolerance),
+      std::min(255.f, fixed_ab_target_B + fixed_ab_tolerance));
+      
+  cv::inRange(roi_lab_content, lab_lower, lab_upper, color_mask);
+
+  cv::Mat open_kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(MORPH_OPEN_KERNEL_SIZE_STONE, MORPH_OPEN_KERNEL_SIZE_STONE));
+  cv::Mat close_kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(MORPH_CLOSE_KERNEL_SIZE_STONE, MORPH_CLOSE_KERNEL_SIZE_STONE));
+  cv::morphologyEx(color_mask, color_mask, cv::MORPH_OPEN, open_kernel, cv::Point(-1,-1), MORPH_OPEN_ITERATIONS_STONE);
+  cv::morphologyEx(color_mask, color_mask, cv::MORPH_CLOSE, close_kernel, cv::Point(-1,-1), MORPH_CLOSE_ITERATIONS_STONE);
+
+  std::vector<std::vector<cv::Point>> contours;
+  cv::findContours(color_mask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+
+  if (contours.empty()) return false;
+
+  double max_area_this_iter = 0;
+  const std::vector<cv::Point> *largest_contour_ptr = nullptr;
+  for (const auto &contour : contours) {
+    double area = cv::contourArea(contour);
+    if (area > max_area_this_iter) {
+      max_area_this_iter = area;
+      largest_contour_ptr = &contour;
+    }
+  }
+
+  if (largest_contour_ptr) {
+    out_largest_contour = *largest_contour_ptr;
+    return true;
+  }
+  return false;
+}
+
+// --- Refactored Utility Function 4: Validate Contour Geometry ---
+// Checks if a given contour meets the strict geometric requirements of a Go stone.
+static bool validate_contour_geometry(
+    const std::vector<cv::Point> &contour,
+    const StoneGeometryConstraints &constraints) {
+
+  if (contour.size() < MIN_CONTOUR_POINTS_STONE) {
+    return false; // Too few points to be a reliable shape.
+  }
+
+  double area = cv::contourArea(contour);
+  double perimeter = cv::arcLength(contour, true);
+
+  if (perimeter < 1.0) {
+    return false; // Degenerate contour.
+  }
+  double circularity = (4 * CV_PI * area) / (perimeter * perimeter);
+  
+  LOG_DEBUG << "    Validating contour: Area=" << area << " Circ=" << circularity;
+
+  if (area < constraints.min_acceptable_area || area > constraints.max_acceptable_area ||
+      circularity < constraints.min_acceptable_circularity) {
+    LOG_DEBUG << "    -> REJECTED on geometry.";
+    return false;
+  }
+
+  return true;
+}
+
+// --- Refactored Utility Function 5: Finalize and Classify Blob ---
+// Populates the final CandidateBlob struct and classifies its color (Black/White).
+static void finalize_and_classify_blob(
+    const std::vector<cv::Point> &valid_contour,
+    const cv::Mat &roi_lab_content, const CalibrationData &calibData,
+    float l_base_used, float l_tolerance_used,
+    // Output
+    CandidateBlob &out_found_blob) {
+    
+  out_found_blob.area = cv::contourArea(valid_contour);
+  out_found_blob.circularity = (4 * CV_PI * out_found_blob.area) / pow(cv::arcLength(valid_contour, true), 2);
+  
+  cv::Moments M = cv::moments(valid_contour);
+  if (M.m00 > 0) {
+    out_found_blob.center_in_roi_coords = cv::Point2f(static_cast<float>(M.m10 / M.m00), static_cast<float>(M.m01 / M.m00));
+  }
+  
+  out_found_blob.l_base_used = l_base_used;
+  out_found_blob.l_tolerance_used = l_tolerance_used;
+  out_found_blob.contour_points_in_roi = valid_contour;
+  out_found_blob.score = 1.0; // Mark as found
+
+  // Sample the color from within the found contour for accurate classification.
+  cv::Mat contour_mask = cv::Mat::zeros(roi_lab_content.size(), CV_8UC1);
+  cv::drawContours(contour_mask, std::vector<std::vector<cv::Point>>{valid_contour}, 0, cv::Scalar(255), cv::FILLED);
+  cv::Scalar mean_lab_scalar = cv::mean(roi_lab_content, contour_mask);
+  out_found_blob.sampled_lab_color_from_contour = cv::Vec3f(mean_lab_scalar[0], mean_lab_scalar[1], mean_lab_scalar[2]);
+
+  // Use calibrated averages to classify the found blob as Black or White.
+  cv::Vec3f avg_black_ref = (calibData.lab_tl + calibData.lab_bl) * 0.5f;
+  cv::Vec3f avg_white_ref = (calibData.lab_tr + calibData.lab_br) * 0.5f;
+  float dist_to_black = cv::norm(out_found_blob.sampled_lab_color_from_contour, avg_black_ref, cv::NORM_L2);
+  float dist_to_white = cv::norm(out_found_blob.sampled_lab_color_from_contour, avg_white_ref, cv::NORM_L2);
+  float color_classification_threshold = 50.0f;
+
+  if (dist_to_black < dist_to_white && dist_to_black < color_classification_threshold) {
+    out_found_blob.classified_color_after_shape_found = BLACK;
+  } else if (dist_to_white < dist_to_black && dist_to_white < color_classification_threshold) {
+    out_found_blob.classified_color_after_shape_found = WHITE;
+  } else {
+    out_found_blob.classified_color_after_shape_found = EMPTY;
+  }
+  LOG_INFO << "      Qualified blob sampled Lab: " << out_found_blob.sampled_lab_color_from_contour
+           << ", Classified as: " << out_found_blob.classified_color_after_shape_found;
+}
+
+// --- Refactored Main Orchestrator Function ---
 bool find_best_round_shape_iterative(
     const cv::Mat &image_to_search_bgr, const cv::Rect &roi_in_image,
     float expected_stone_radius_in_image, float initial_target_L_value_hint,
@@ -3346,300 +3541,69 @@ bool find_best_round_shape_iterative(
     float fixed_ab_target_B, float fixed_ab_tolerance,
     CandidateBlob &out_found_blob,
     const CalibrationData &calibDataForColorClassification) {
-  LOG_INFO
-      << "find_best_round_shape_iterative (First Qualified Largest) in ROI: "
-      << roi_in_image << " ExpRadius: " << expected_stone_radius_in_image
-      << " Initial L_hint: " << initial_target_L_value_hint;
+  
+  LOG_INFO << "find_best_round_shape_iterative (Refactored) in ROI: " << roi_in_image;
 
-  if (image_to_search_bgr.empty()) {
-    LOG_ERROR << "FBS: Input BGR image empty.";
-    return false;
-  }
-  cv::Rect valid_roi = roi_in_image & cv::Rect(0, 0, image_to_search_bgr.cols,
-                                               image_to_search_bgr.rows);
-  if (valid_roi.width <= 0 || valid_roi.height <= 0) {
-    LOG_ERROR << "FBS: Invalid ROI: " << valid_roi
-              << " from input ROI: " << roi_in_image;
-    return false;
-  }
-
-  cv::Mat roi_bgr_content = image_to_search_bgr(valid_roi);
+  // STEP 1: Prepare common variables and validate inputs.
+  cv::Rect valid_roi;
   cv::Mat roi_lab_content;
-  cv::cvtColor(roi_bgr_content, roi_lab_content, cv::COLOR_BGR2Lab);
-
-  double expected_area =
-      CV_PI * expected_stone_radius_in_image * expected_stone_radius_in_image;
-  // Use MIN_STONE_AREA_RATIO and MAX_STONE_AREA_RATIO from common.h if defined,
-  // otherwise fallback For this example, using the previously tuned values.
-
-  double min_acceptable_area = expected_area * ABS_STONE_AREA_MIN_FACTOR;
-  double max_acceptable_area = expected_area * ABS_STONE_AREA_MAX_FACTOR;
-  double min_acceptable_circularity =
-      std::max(MIN_STONE_CIRCULARITY_WHITE, MIN_STONE_CIRCULARITY_BLACK);
-
-  LOG_DEBUG << "  FBS (First Qualified Largest) Expected Area: "
-            << expected_area << " (Acceptable Range: " << min_acceptable_area
-            << "-" << max_acceptable_area << ")"
-            << ", Min Acceptable Circularity: " << min_acceptable_circularity;
-
-  std::vector<float> l_base_values_to_try;
-  if (initial_target_L_value_hint >= l_base_min &&
-      initial_target_L_value_hint <= l_base_max) {
-    l_base_values_to_try.push_back(initial_target_L_value_hint);
+  StoneGeometryConstraints constraints;
+  if (!prepare_iteration_parameters(image_to_search_bgr, roi_in_image,
+        expected_stone_radius_in_image, valid_roi, roi_lab_content, constraints)) {
+    return false;
   }
-  for (float l_val = l_base_min; l_val <= l_base_max; l_val += l_base_step) {
-    if (std::abs(l_val - initial_target_L_value_hint) > 1e-3) {
-      l_base_values_to_try.push_back(l_val);
-    }
-  }
-  std::sort(l_base_values_to_try.begin(), l_base_values_to_try.end());
-  l_base_values_to_try.erase(
-      std::unique(l_base_values_to_try.begin(), l_base_values_to_try.end()),
-      l_base_values_to_try.end());
 
+  // STEP 2: Generate the list of L-values to test.
+  std::vector<float> l_base_values_to_try = generate_l_value_candidates(
+      initial_target_L_value_hint, l_base_min, l_base_max, l_base_step);
+
+  // STEP 3: Iterate through all L-value and tolerance combinations.
   for (float current_base_L : l_base_values_to_try) {
-    for (float current_l_tol = l_tol_min; current_l_tol <= l_tol_max;
-         current_l_tol += l_tol_step) {
-      if (current_l_tol < 1.0f)
-        continue;
-      LOG_DEBUG << "  FBS (First Qualified Largest) Trying Base_L: "
-                << current_base_L << ", L_tol: " << current_l_tol;
+    for (float current_l_tol = l_tol_min; current_l_tol <= l_tol_max; current_l_tol += l_tol_step) {
+      if (current_l_tol < 1.0f) continue;
+      LOG_DEBUG << "  FBS Iteration: Trying Base_L=" << current_base_L << ", L_tol=" << current_l_tol;
 
-      cv::Vec3f target_lab_color_iter(current_base_L, fixed_ab_target_A,
-                                      fixed_ab_target_B);
-      cv::Mat color_mask;
-      cv::Scalar lab_lower(
-          std::max(0.f, target_lab_color_iter[0] - current_l_tol),
-          std::max(0.f, target_lab_color_iter[1] - fixed_ab_tolerance),
-          std::max(0.f, target_lab_color_iter[2] - fixed_ab_tolerance));
-      cv::Scalar lab_upper(
-          std::min(255.f, target_lab_color_iter[0] + current_l_tol),
-          std::min(255.f, target_lab_color_iter[1] + fixed_ab_tolerance),
-          std::min(255.f, target_lab_color_iter[2] + fixed_ab_tolerance));
-      cv::inRange(roi_lab_content, lab_lower, lab_upper, color_mask);
-
-      cv::Mat open_kernel = cv::getStructuringElement(
-          cv::MORPH_ELLIPSE,
-          cv::Size(MORPH_OPEN_KERNEL_SIZE_STONE, MORPH_OPEN_KERNEL_SIZE_STONE));
-      cv::Mat close_kernel = cv::getStructuringElement(
-          cv::MORPH_ELLIPSE, cv::Size(MORPH_CLOSE_KERNEL_SIZE_STONE,
-                                      MORPH_CLOSE_KERNEL_SIZE_STONE));
-      cv::morphologyEx(color_mask, color_mask, cv::MORPH_OPEN, open_kernel,
-                       cv::Point(-1, -1), MORPH_OPEN_ITERATIONS_STONE);
-      cv::morphologyEx(color_mask, color_mask, cv::MORPH_CLOSE, close_kernel,
-                       cv::Point(-1, -1), MORPH_CLOSE_ITERATIONS_STONE);
-
-      std::vector<std::vector<cv::Point>> contours;
-      cv::findContours(color_mask, contours, cv::RETR_EXTERNAL,
-                       cv::CHAIN_APPROX_SIMPLE);
-
-      if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
-        cv::Mat debug_mask_display = color_mask.clone();
-        cv::putText(debug_mask_display,
-                    "L:" + std::to_string((int)current_base_L) +
-                        " T:" + std::to_string((int)current_l_tol),
-                    cv::Point(5, 15), cv::FONT_HERSHEY_SIMPLEX, 0.4,
-                    cv::Scalar(128), 1);
-        cv::imshow("FBS FirstQual Mask Iter", debug_mask_display);
-        if (cv::waitKey(1) == 27) {
-          cv::destroyAllWindows();
-          goto end_loops_simplified_first_qual;
-        }
+      // STEP 3a: Find the largest contour for the current color range.
+      std::vector<cv::Point> largest_contour;
+      if (!find_largest_contour_for_color_range(roi_lab_content, current_base_L, current_l_tol, 
+            fixed_ab_target_A, fixed_ab_target_B, fixed_ab_tolerance, largest_contour)) {
+        continue; // No contours found for this color range, try next.
       }
-
-      if (contours.empty())
-        continue;
-
-      double max_area_this_iter = 0;
-      const std::vector<cv::Point> *largest_contour_this_iter = nullptr;
-      for (const auto &contour : contours) {
-        double area = cv::contourArea(contour);
-        if (area > max_area_this_iter) {
-          max_area_this_iter = area;
-          largest_contour_this_iter = &contour;
-        }
+      
+      // STEP 3b: Validate if the largest contour has the geometry of a stone.
+      if (validate_contour_geometry(largest_contour, constraints)) {
+        LOG_INFO << "    FBS ACCEPTED CANDIDATE at L_base=" << current_base_L << ", L_tol=" << current_l_tol;
+        // STEP 3c: It's valid! Finalize the blob data, classify it, and return success.
+        finalize_and_classify_blob(largest_contour, roi_lab_content, calibDataForColorClassification,
+                                   current_base_L, current_l_tol, out_found_blob);
+        return true; // "First Qualified Largest Candidate" logic.
       }
-
-      if (largest_contour_this_iter) {
-        const std::vector<cv::Point> &current_largest_contour =
-            *largest_contour_this_iter;
-        if (current_largest_contour.size() < MIN_CONTOUR_POINTS_STONE) {
-          LOG_DEBUG << "    Largest contour (Area=" << max_area_this_iter
-                    << ") REJECTED: too few points ("
-                    << current_largest_contour.size() << ").";
-          continue;
-        }
-
-        double area = max_area_this_iter;
-        double perimeter = cv::arcLength(current_largest_contour, true);
-        if (perimeter < 1.0) {
-          LOG_DEBUG << "    Largest contour (Area=" << area
-                    << ") REJECTED: perimeter too small (" << perimeter << ").";
-          continue;
-        }
-        double circularity = (4 * CV_PI * area) / (perimeter * perimeter);
-
-        LOG_DEBUG << "    Largest contour this iter: Area=" << area
-                  << " Circ=" << circularity;
-
-        bool passed_geometry =
-            (area >= min_acceptable_area && area <= max_acceptable_area &&
-             circularity >= min_acceptable_circularity);
-
-        if (passed_geometry) {
-          LOG_INFO << "    FBS (First Qualified Largest) ACCEPTED CANDIDATE at "
-                      "L_base="
-                   << current_base_L << ", L_tol=" << current_l_tol
-                   << " Area=" << area << " Circ=" << circularity;
-
-          out_found_blob.area = area;
-          out_found_blob.circularity = circularity;
-          cv::Moments M = cv::moments(current_largest_contour);
-          if (M.m00 > 0) {
-            out_found_blob.center_in_roi_coords =
-                cv::Point2f(static_cast<float>(M.m10 / M.m00),
-                            static_cast<float>(M.m01 / M.m00));
-          } else {
-            out_found_blob.center_in_roi_coords =
-                cv::Point2f(valid_roi.width / 2.f, valid_roi.height / 2.f);
-          }
-          out_found_blob.l_base_used = current_base_L;
-          out_found_blob.l_tolerance_used = current_l_tol;
-          out_found_blob.contour_points_in_roi = current_largest_contour;
-          out_found_blob.score = 1.0;
-
-          if (!out_found_blob.contour_points_in_roi.empty()) {
-            cv::Mat contour_mask_final =
-                cv::Mat::zeros(roi_lab_content.size(), CV_8UC1);
-            cv::drawContours(contour_mask_final,
-                             std::vector<std::vector<cv::Point>>{
-                                 out_found_blob.contour_points_in_roi},
-                             0, cv::Scalar(255), cv::FILLED);
-            cv::Scalar mean_lab_scalar =
-                cv::mean(roi_lab_content, contour_mask_final);
-            out_found_blob.sampled_lab_color_from_contour = cv::Vec3f(
-                mean_lab_scalar[0], mean_lab_scalar[1], mean_lab_scalar[2]);
-            LOG_INFO << "      Sampled Lab from qualified blob: "
-                     << out_found_blob.sampled_lab_color_from_contour;
-
-            cv::Vec3f avg_black_ref =
-                (calibDataForColorClassification.colors_loaded &&
-                 calibDataForColorClassification.lab_tl[0] >= 0 &&
-                 calibDataForColorClassification.lab_bl[0] >= 0)
-                    ? (calibDataForColorClassification.lab_tl +
-                       calibDataForColorClassification.lab_bl) *
-                          0.5f
-                    : cv::Vec3f(50, 128, 128);
-            cv::Vec3f avg_white_ref =
-                (calibDataForColorClassification.colors_loaded &&
-                 calibDataForColorClassification.lab_tr[0] >= 0 &&
-                 calibDataForColorClassification.lab_br[0] >= 0)
-                    ? (calibDataForColorClassification.lab_tr +
-                       calibDataForColorClassification.lab_br) *
-                          0.5f
-                    : cv::Vec3f(220, 128, 128);
-            float dist_to_black =
-                cv::norm(out_found_blob.sampled_lab_color_from_contour,
-                         avg_black_ref, cv::NORM_L2);
-            float dist_to_white =
-                cv::norm(out_found_blob.sampled_lab_color_from_contour,
-                         avg_white_ref, cv::NORM_L2);
-            float color_classification_threshold = 50.0f;
-
-            if (dist_to_black < dist_to_white &&
-                dist_to_black < color_classification_threshold) {
-              out_found_blob.classified_color_after_shape_found = BLACK;
-            } else if (dist_to_white < dist_to_black &&
-                       dist_to_white < color_classification_threshold) {
-              out_found_blob.classified_color_after_shape_found = WHITE;
-            } else {
-              out_found_blob.classified_color_after_shape_found = EMPTY;
-            }
-            LOG_INFO << "      Classified color of qualified blob: "
-                     << out_found_blob.classified_color_after_shape_found;
-          }
-          if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
-            cv::Mat roi_bgr_debug_display = roi_bgr_content.clone();
-            cv::drawContours(roi_bgr_debug_display,
-                             std::vector<std::vector<cv::Point>>{
-                                 out_found_blob.contour_points_in_roi},
-                             -1, cv::Scalar(0, 255, 0), 2);
-            cv::circle(roi_bgr_debug_display,
-                       out_found_blob.center_in_roi_coords, 3,
-                       cv::Scalar(0, 0, 255), -1);
-            cv::putText(roi_bgr_debug_display, "ACCEPTED!", cv::Point(5, 15),
-                        cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 0),
-                        1);
-            cv::imshow("FBS First Qualified - Accepted ROI Content",
-                       roi_bgr_debug_display);
-            if (cv::waitKey(0) == 27) {
-              cv::destroyAllWindows();
-              goto end_loops_simplified_first_qual;
-            }
-            cv::destroyAllWindows();
-          }
-          return true;
-        } else { // Largest contour failed geometry checks
-          LOG_DEBUG << "    Largest contour (Area=" << area
-                    << ", Circ=" << circularity << ") FAILED geometry checks. "
-                    << "MinArea=" << min_acceptable_area
-                    << ", MaxArea=" << max_acceptable_area
-                    << ", MinCirc=" << min_acceptable_circularity;
-
-          if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
-            cv::Mat roi_bgr_debug_display = roi_bgr_content.clone();
-            cv::drawContours(
-                roi_bgr_debug_display,
-                std::vector<std::vector<cv::Point>>{current_largest_contour},
-                -1, cv::Scalar(0, 0, 255), 1); // Red for rejected largest
-            cv::putText(roi_bgr_debug_display, "REJECTED (Geometry)",
-                        cv::Point(5, 30), cv::FONT_HERSHEY_SIMPLEX, 0.4,
-                        cv::Scalar(0, 0, 255), 1);
-            cv::imshow("FBS First Qualified - Rejected Largest",
-                       roi_bgr_debug_display);
-            if (cv::waitKey(0) == 27) {
-              cv::destroyAllWindows();
-              goto end_loops_simplified_first_qual;
-            }
-          }
-        }
-      } // End if largest_contour_this_iter found
-      if (l_tol_step == 0 && l_tol_min == l_tol_max)
-        break;
+      if (l_tol_step == 0 && l_tol_min == l_tol_max) break;
     }
-    if (l_base_step == 0 && l_base_min == l_base_max)
-      break;
+    if (l_base_step == 0 && l_base_min == l_base_max) break;
   }
 
-end_loops_simplified_first_qual:;
-  if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG)
-    cv::destroyAllWindows();
-  LOG_WARN << "  FBS (First Qualified Largest): No blob met area/circularity "
-              "criteria after all iterations.";
-  return false;
+  LOG_WARN << "  FBS: No blob met geometry criteria after all iterations.";
+  return false; // No suitable candidate was found.
 }
 
-bool adaptive_detect_stone_robust(
+// =================================================================================
+// END OF REFACTORING
+// =================================================================================
+// =================================================================================
+// START OF REFACTORING: adaptive_detect_stone_robust
+// =================================================================================
+
+// --- Refactored Utility Function 1: Setup Quadrant-Specific Parameters ---
+// Sets up all necessary parameters based on the target corner quadrant.
+static bool setup_quadrant_specific_parameters(
     const cv::Mat &rawBgrImage, CornerQuadrant targetScanQuadrant,
-    const CalibrationData &calibData, cv::Point2f &out_final_raw_corner_guess,
-    cv::Mat &out_final_corrected_image,
-    float &out_detected_stone_radius_in_final_corrected,
-    int &out_pass1_classified_color) {
-  LOG_INFO << "--- adaptive_detect_stone_ROBUST for "
-           << toString(targetScanQuadrant) << " ---";
-  out_pass1_classified_color = EMPTY;
-
-  std::string quadrant_name_str;
-  size_t target_ideal_dest_corner_idx = 0;
-  cv::Point2f p1_raw_corner_initial_guess;
-  
-  int ideal_grid_col_for_roi_pass2 = 0;
-  int ideal_grid_row_for_roi_pass2 = 0;
-  cv::Vec3f hint_target_L_lab_from_calib;
-
-  out_final_corrected_image = cv::Mat();
-  out_final_raw_corner_guess = cv::Point2f(-1, -1);
-  out_detected_stone_radius_in_final_corrected = -1.0f;
+    const CalibrationData &calibData,
+    // Outputs:
+    std::string &quadrant_name_str, size_t &target_ideal_dest_corner_idx,
+    cv::Point2f &p1_raw_corner_initial_guess,
+    int &ideal_grid_col_for_roi_pass2, int &ideal_grid_row_for_roi_pass2,
+    cv::Vec3f &hint_target_L_lab_from_calib) {
 
   switch (targetScanQuadrant) {
   case CornerQuadrant::TOP_LEFT:
@@ -3648,13 +3612,12 @@ bool adaptive_detect_stone_robust(
     p1_raw_corner_initial_guess =
         cv::Point2f(static_cast<float>(rawBgrImage.cols) * 0.25f,
                     static_cast<float>(rawBgrImage.rows) * 0.25f);
-    
     ideal_grid_col_for_roi_pass2 = 0;
     ideal_grid_row_for_roi_pass2 = 0;
     hint_target_L_lab_from_calib =
         (calibData.colors_loaded && calibData.lab_tl[0] >= 0)
             ? calibData.lab_tl
-            : cv::Vec3f(50, 128, 128);
+            : cv::Vec3f(50, 128, 128); // Default Black
     break;
   case CornerQuadrant::TOP_RIGHT:
     quadrant_name_str = "TOP_RIGHT";
@@ -3662,13 +3625,12 @@ bool adaptive_detect_stone_robust(
     p1_raw_corner_initial_guess =
         cv::Point2f(static_cast<float>(rawBgrImage.cols) * 0.75f,
                     static_cast<float>(rawBgrImage.rows) * 0.25f);
-    
     ideal_grid_col_for_roi_pass2 = 18;
     ideal_grid_row_for_roi_pass2 = 0;
     hint_target_L_lab_from_calib =
         (calibData.colors_loaded && calibData.lab_tr[0] >= 0)
             ? calibData.lab_tr
-            : cv::Vec3f(220, 128, 128);
+            : cv::Vec3f(220, 128, 128); // Default White
     break;
   case CornerQuadrant::BOTTOM_RIGHT:
     quadrant_name_str = "BOTTOM_RIGHT";
@@ -3676,13 +3638,12 @@ bool adaptive_detect_stone_robust(
     p1_raw_corner_initial_guess =
         cv::Point2f(static_cast<float>(rawBgrImage.cols) * 0.95f,
                     static_cast<float>(rawBgrImage.rows) * 0.85f);
-    
     ideal_grid_col_for_roi_pass2 = 18;
     ideal_grid_row_for_roi_pass2 = 18;
     hint_target_L_lab_from_calib =
         (calibData.colors_loaded && calibData.lab_br[0] >= 0)
             ? calibData.lab_br
-            : cv::Vec3f(220, 128, 128);
+            : cv::Vec3f(220, 128, 128); // Default White
     break;
   case CornerQuadrant::BOTTOM_LEFT:
     quadrant_name_str = "BOTTOM_LEFT";
@@ -3690,237 +3651,289 @@ bool adaptive_detect_stone_robust(
     p1_raw_corner_initial_guess =
         cv::Point2f(static_cast<float>(rawBgrImage.cols) * 0.05f,
                     static_cast<float>(rawBgrImage.rows) * 0.85f);
-    
     ideal_grid_col_for_roi_pass2 = 0;
     ideal_grid_row_for_roi_pass2 = 18;
     hint_target_L_lab_from_calib =
         (calibData.colors_loaded && calibData.lab_bl[0] >= 0)
             ? calibData.lab_bl
-            : cv::Vec3f(50, 128, 128);
+            : cv::Vec3f(50, 128, 128); // Default Black
     break;
   default:
-    LOG_ERROR << "RobustDetect: Invalid targetScanQuadrant";
+    LOG_ERROR << "RobustDetect: Invalid targetScanQuadrant in setup.";
+    return false;
+  }
+  return true;
+}
+
+// --- Refactored Utility Function 2: Calculate Initial Perspective Transform ---
+// Calculates the rough, first-pass perspective transform matrix (M1).
+static cv::Mat calculate_initial_perspective_transform(
+    const cv::Mat &rawBgrImage,
+    const cv::Point2f &p1_raw_corner_initial_guess,
+    CornerQuadrant targetScanQuadrant,
+    const std::vector<cv::Point2f> &ideal_corrected_dest_points,
+    // Output
+    std::vector<cv::Point2f> &out_p1_source_points_raw) {
+
+  float p1_est_board_span_x = static_cast<float>(rawBgrImage.cols) * 0.75f;
+  float p1_est_board_span_y = static_cast<float>(rawBgrImage.rows) * 0.75f;
+  
+  out_p1_source_points_raw.assign(4, cv::Point2f(0, 0));
+  cv::Point2f guess_p1 = p1_raw_corner_initial_guess;
+
+  // This block reconstructs the four estimated raw corners based on the
+  // initial guess for one corner.
+  if (targetScanQuadrant == CornerQuadrant::TOP_LEFT) {
+    out_p1_source_points_raw[0] = guess_p1;
+    out_p1_source_points_raw[1] = cv::Point2f(guess_p1.x + p1_est_board_span_x, guess_p1.y);
+    out_p1_source_points_raw[2] = cv::Point2f(guess_p1.x + p1_est_board_span_x, guess_p1.y + p1_est_board_span_y);
+    out_p1_source_points_raw[3] = cv::Point2f(guess_p1.x, guess_p1.y + p1_est_board_span_y);
+  } else if (targetScanQuadrant == CornerQuadrant::TOP_RIGHT) {
+    out_p1_source_points_raw[1] = guess_p1;
+    out_p1_source_points_raw[0] = cv::Point2f(guess_p1.x - p1_est_board_span_x, guess_p1.y);
+    out_p1_source_points_raw[3] = cv::Point2f(guess_p1.x - p1_est_board_span_x, guess_p1.y + p1_est_board_span_y);
+    out_p1_source_points_raw[2] = cv::Point2f(guess_p1.x, guess_p1.y + p1_est_board_span_y);
+  } else if (targetScanQuadrant == CornerQuadrant::BOTTOM_RIGHT) {
+    out_p1_source_points_raw[2] = guess_p1;
+    out_p1_source_points_raw[3] = cv::Point2f(guess_p1.x - p1_est_board_span_x, guess_p1.y);
+    out_p1_source_points_raw[0] = cv::Point2f(guess_p1.x - p1_est_board_span_x, guess_p1.y - p1_est_board_span_y);
+    out_p1_source_points_raw[1] = cv::Point2f(guess_p1.x, guess_p1.y - p1_est_board_span_y);
+  } else { // BOTTOM_LEFT
+    out_p1_source_points_raw[3] = guess_p1;
+    out_p1_source_points_raw[2] = cv::Point2f(guess_p1.x + p1_est_board_span_x, guess_p1.y);
+    out_p1_source_points_raw[0] = cv::Point2f(guess_p1.x, guess_p1.y - p1_est_board_span_y);
+    out_p1_source_points_raw[1] = cv::Point2f(guess_p1.x + p1_est_board_span_x, guess_p1.y - p1_est_board_span_y);
+  }
+
+  for (cv::Point2f &pt : out_p1_source_points_raw) {
+    pt.x = std::max(0.0f, std::min(static_cast<float>(rawBgrImage.cols - 1), pt.x));
+    pt.y = std::max(0.0f, std::min(static_cast<float>(rawBgrImage.rows - 1), pt.y));
+  }
+
+  cv::Mat M1 = cv::getPerspectiveTransform(out_p1_source_points_raw, ideal_corrected_dest_points);
+  if (M1.empty() || cv::determinant(M1) < 1e-6) {
+    LOG_ERROR << "RobustDetect P1: Degenerate M1 generated.";
+    return cv::Mat(); // Return empty matrix on failure
+  }
+  return M1;
+}
+
+// --- Refactored Utility Function 3: Perform Pass 1 Blob Detection ---
+// Executes the iterative search to find the best stone-like shape in the Pass 1 corrected image.
+static bool perform_pass1_blob_detection(
+    const cv::Mat &image_pass1_corrected, CornerQuadrant targetScanQuadrant,
+    const CalibrationData &calibData, const cv::Vec3f &hint_target_L_lab_from_calib,
+    // Outputs:
+    CandidateBlob &out_found_blob_pass1, cv::Rect &out_roi_quadrant_pass1) {
+
+  int p1_corr_w = image_pass1_corrected.cols;
+  int p1_corr_h = image_pass1_corrected.rows;
+  
+  // Define the search ROI for the quadrant.
+  switch (targetScanQuadrant) {
+  case CornerQuadrant::TOP_LEFT:     out_roi_quadrant_pass1 = cv::Rect(0, 0, p1_corr_w / 2, p1_corr_h / 2); break;
+  case CornerQuadrant::TOP_RIGHT:    out_roi_quadrant_pass1 = cv::Rect(p1_corr_w / 2, 0, p1_corr_w - (p1_corr_w / 2), p1_corr_h / 2); break;
+  case CornerQuadrant::BOTTOM_LEFT:  out_roi_quadrant_pass1 = cv::Rect(0, p1_corr_h / 2, p1_corr_w / 2, p1_corr_h / 2); break;
+  case CornerQuadrant::BOTTOM_RIGHT: out_roi_quadrant_pass1 = cv::Rect(p1_corr_w / 2, p1_corr_h / 2, p1_corr_w / 2, p1_corr_h / 2); break;
+  }
+  LOG_DEBUG << "RobustDetect P1: Search ROI: " << out_roi_quadrant_pass1;
+  out_roi_quadrant_pass1 &= cv::Rect(0, 0, p1_corr_w, p1_corr_h);
+  if (out_roi_quadrant_pass1.width <= 0 || out_roi_quadrant_pass1.height <= 0) {
+    LOG_ERROR << "RobustDetect P1: Invalid ROI after clamp: " << out_roi_quadrant_pass1;
+    return false;
+  }
+  
+  // Estimate expected radius in this corrected view to guide the search.
+  std::vector<cv::Point2f> ideal_corrected_dest_points = getBoardCornersCorrected(p1_corr_w, p1_corr_h);
+  float p1_board_width_est = ideal_corrected_dest_points[1].x - ideal_corrected_dest_points[0].x;
+  float p1_board_height_est = ideal_corrected_dest_points[3].y - ideal_corrected_dest_points[0].y;
+  float expected_radius_pass1 = calculateAdaptiveSampleRadius(p1_board_width_est, p1_board_height_est);
+
+  // Call the iterative shape finder.
+  bool blob_found = find_best_round_shape_iterative(
+      image_pass1_corrected, out_roi_quadrant_pass1, expected_radius_pass1,
+      hint_target_L_lab_from_calib[0], 20.0f, 235.0f, 5.0f, 5.0f, 30.0f, 5.0f,
+      128.0f, 128.0f, CALIB_AB_TOLERANCE_STONE + 5.0f,
+      out_found_blob_pass1, calibData);
+
+  if (!blob_found) {
+    LOG_WARN << "RobustDetect Pass 1: find_best_round_shape_iterative failed for " << toString(targetScanQuadrant);
     return false;
   }
 
+  return true;
+}
+
+// --- Refactored Utility Function 4: Refine Perspective Transform from Blob ---
+// Uses the found blob's position to calculate the refined Pass 2 transform matrix (M2).
+static cv::Mat refine_perspective_transform_from_blob(
+    const cv::Mat &rawBgrImage, const cv::Mat &M1,
+    const cv::Point2f &p1_blob_center_in_pass1_corrected,
+    std::vector<cv::Point2f> &p1_source_points_raw, // Note: This is an in-out param
+    size_t target_ideal_dest_corner_idx,
+    const std::vector<cv::Point2f> &ideal_corrected_dest_points,
+    // Output
+    cv::Point2f &out_final_raw_corner_guess) {
+    
+  cv::Mat M1_inv;
+  if (!cv::invert(M1, M1_inv, cv::DECOMP_SVD) || M1_inv.empty()) {
+    LOG_ERROR << "RobustDetect P2: Failed to invert M1 transform.";
+    return cv::Mat();
+  }
+
+  // Map the blob center from the corrected P1 image back to the raw image.
+  std::vector<cv::Point2f> blob_center_corrected_vec = { p1_blob_center_in_pass1_corrected };
+  std::vector<cv::Point2f> blob_center_raw_vec;
+  cv::perspectiveTransform(blob_center_corrected_vec, blob_center_raw_vec, M1_inv);
+  if (blob_center_raw_vec.empty()) {
+    LOG_ERROR << "RobustDetect P2: Transform p1_blob_center to raw failed.";
+    return cv::Mat();
+  }
+  
+  // This is our new, much more accurate guess for the raw stone's center.
+  out_final_raw_corner_guess = blob_center_raw_vec[0];
+  out_final_raw_corner_guess.x = std::max(0.0f, std::min(static_cast<float>(rawBgrImage.cols - 1), out_final_raw_corner_guess.x));
+  out_final_raw_corner_guess.y = std::max(0.0f, std::min(static_cast<float>(rawBgrImage.rows - 1), out_final_raw_corner_guess.y));
+  
+  // Update the single corner point in the source quad with this new, better guess.
+  p1_source_points_raw[target_ideal_dest_corner_idx] = out_final_raw_corner_guess;
+
+  // Recalculate the perspective transform with the refined point.
+  cv::Mat M2 = cv::getPerspectiveTransform(p1_source_points_raw, ideal_corrected_dest_points);
+  if (M2.empty() || cv::determinant(M2) < 1e-6) {
+    LOG_ERROR << "RobustDetect P2: Degenerate M2 generated.";
+    return cv::Mat();
+  }
+  return M2;
+}
+
+// --- Refactored Utility Function 5: Perform Pass 2 Stone Verification ---
+// In the final corrected image, performs a targeted search to verify the stone.
+static bool perform_pass2_stone_verification(
+    const cv::Mat &image_pass2_corrected,
+    const CandidateBlob &found_blob_pass1, // Used for color hint
+    int ideal_grid_col, int ideal_grid_row,
+    // Outputs
+    float &out_detected_stone_radius_in_final_corrected) {
+
+  // The color to look for is the one associated with the blob we found in Pass 1.
+  cv::Vec3f pass2_verification_lab_color = { found_blob_pass1.l_base_used, 128.0f, 128.0f };
+
+  // Calculate the expected radius in this new, more accurate corrected view.
+  float expected_radius_pass2_final = calculateAdaptiveSampleRadius(
+      static_cast<float>(image_pass2_corrected.cols), 
+      static_cast<float>(image_pass2_corrected.rows)
+  );
+  if (expected_radius_pass2_final < 1.0f) expected_radius_pass2_final = 2.0f;
+
+  // Calculate a small, focused ROI around where the stone *should* be.
+  cv::Rect focused_roi_pass2_final = calculateGridIntersectionROI(
+      ideal_grid_col, ideal_grid_row, image_pass2_corrected.cols,
+      image_pass2_corrected.rows);
+  focused_roi_pass2_final &= cv::Rect(0, 0, image_pass2_corrected.cols, image_pass2_corrected.rows);
+  if (focused_roi_pass2_final.width <= 0 || focused_roi_pass2_final.height <= 0) {
+    LOG_ERROR << "RobustDetect P2: Invalid focused ROI for final verification.";
+    return false;
+  }
+
+  cv::Point2f detected_stone_center; // Local to this function, not needed by caller.
+  bool final_stone_found = detectSpecificColoredRoundShape(
+      image_pass2_corrected, focused_roi_pass2_final,
+      pass2_verification_lab_color, CALIB_L_TOLERANCE_STONE,
+      CALIB_AB_TOLERANCE_STONE, expected_radius_pass2_final,
+      detected_stone_center, out_detected_stone_radius_in_final_corrected);
+  
+  return final_stone_found;
+}
+
+// --- Refactored Main Orchestrator Function ---
+bool adaptive_detect_stone_robust(
+    const cv::Mat &rawBgrImage, CornerQuadrant targetScanQuadrant,
+    const CalibrationData &calibData, cv::Point2f &out_final_raw_corner_guess,
+    cv::Mat &out_final_corrected_image,
+    float &out_detected_stone_radius_in_final_corrected,
+    int &out_pass1_classified_color) {
+  
+  LOG_INFO << "--- adaptive_detect_stone_ROBUST (Refactored) for " << toString(targetScanQuadrant) << " ---";
+  out_pass1_classified_color = EMPTY;
   if (rawBgrImage.empty()) {
     LOG_ERROR << "RobustDetect: Raw BGR image empty.";
     return false;
   }
-  std::vector<cv::Point2f> ideal_corrected_dest_points =
-      getBoardCornersCorrected(rawBgrImage.cols, rawBgrImage.rows);
 
-  LOG_INFO << "RobustDetect Pass 1 for " << quadrant_name_str;
-  std::vector<cv::Point2f> p1_source_points_raw(4);
-  float p1_est_board_span_x = static_cast<float>(rawBgrImage.cols) * 0.75f;
-  float p1_est_board_span_y = static_cast<float>(rawBgrImage.rows) * 0.75f;
-  cv::Point2f guess_p1 = p1_raw_corner_initial_guess;
-  if (targetScanQuadrant == CornerQuadrant::TOP_LEFT) {
-    p1_source_points_raw[0] = guess_p1;
-    p1_source_points_raw[1] =
-        cv::Point2f(guess_p1.x + p1_est_board_span_x, guess_p1.y);
-    p1_source_points_raw[2] = cv::Point2f(guess_p1.x + p1_est_board_span_x,
-                                          guess_p1.y + p1_est_board_span_y);
-    p1_source_points_raw[3] =
-        cv::Point2f(guess_p1.x, guess_p1.y + p1_est_board_span_y);
-  } else if (targetScanQuadrant == CornerQuadrant::TOP_RIGHT) {
-    p1_source_points_raw[1] = guess_p1;
-    p1_source_points_raw[0] =
-        cv::Point2f(guess_p1.x - p1_est_board_span_x, guess_p1.y);
-    p1_source_points_raw[3] = cv::Point2f(guess_p1.x - p1_est_board_span_x,
-                                          guess_p1.y + p1_est_board_span_y);
-    p1_source_points_raw[2] =
-        cv::Point2f(guess_p1.x, guess_p1.y + p1_est_board_span_y);
-  } else if (targetScanQuadrant == CornerQuadrant::BOTTOM_RIGHT) {
-    p1_source_points_raw[2] = guess_p1;
-    p1_source_points_raw[3] =
-        cv::Point2f(guess_p1.x - p1_est_board_span_x, guess_p1.y);
-    p1_source_points_raw[0] = cv::Point2f(guess_p1.x - p1_est_board_span_x,
-                                          guess_p1.y - p1_est_board_span_y);
-    p1_source_points_raw[1] =
-        cv::Point2f(guess_p1.x, guess_p1.y - p1_est_board_span_y);
-  } else {
-    p1_source_points_raw[3] = guess_p1;
-    p1_source_points_raw[2] =
-        cv::Point2f(guess_p1.x + p1_est_board_span_x, guess_p1.y);
-    p1_source_points_raw[0] =
-        cv::Point2f(guess_p1.x, guess_p1.y - p1_est_board_span_y);
-    p1_source_points_raw[1] = cv::Point2f(guess_p1.x + p1_est_board_span_x,
-                                          guess_p1.y - p1_est_board_span_y);
-  }
-  for (cv::Point2f &pt : p1_source_points_raw) {
-    pt.x = std::max(0.0f,
-                    std::min(static_cast<float>(rawBgrImage.cols - 1), pt.x));
-    pt.y = std::max(0.0f,
-                    std::min(static_cast<float>(rawBgrImage.rows - 1), pt.y));
+  // STEP 1: Set up parameters for the specific corner we are looking for.
+  std::string quadrant_name_str;
+  size_t target_ideal_dest_corner_idx;
+  cv::Point2f p1_raw_corner_initial_guess;
+  int ideal_grid_col, ideal_grid_row;
+  cv::Vec3f hint_target_L_lab_from_calib;
+  if (!setup_quadrant_specific_parameters(
+          rawBgrImage, targetScanQuadrant, calibData, quadrant_name_str,
+          target_ideal_dest_corner_idx, p1_raw_corner_initial_guess,
+          ideal_grid_col, ideal_grid_row, hint_target_L_lab_from_calib)) {
+    return false; // Failure logged in helper
   }
 
-  cv::Mat M1 = cv::getPerspectiveTransform(p1_source_points_raw,
-                                           ideal_corrected_dest_points);
-  if (M1.empty() || cv::determinant(M1) < 1e-6) {
-    LOG_ERROR << "RobustDetect P1: Degenerate M1.";
-    return false;
-  }
+  // STEP 2: Calculate the initial, rough perspective transform (M1).
+  std::vector<cv::Point2f> p1_source_points_raw;
+  std::vector<cv::Point2f> ideal_dest_points = getBoardCornersCorrected(rawBgrImage.cols, rawBgrImage.rows);
+  cv::Mat M1 = calculate_initial_perspective_transform(
+      rawBgrImage, p1_raw_corner_initial_guess, targetScanQuadrant,
+      ideal_dest_points, p1_source_points_raw);
+  if (M1.empty()) return false; // Failure logged in helper
+
+  // STEP 3: Perform the first-pass warp and find the best candidate blob.
   cv::Mat image_pass1_corrected;
-  cv::warpPerspective(rawBgrImage, image_pass1_corrected, M1,
-                      rawBgrImage.size());
+  cv::warpPerspective(rawBgrImage, image_pass1_corrected, M1, rawBgrImage.size());
   if (image_pass1_corrected.empty()) {
-    LOG_ERROR << "RobustDetect P1: Warped P1 empty.";
+    LOG_ERROR << "RobustDetect P1: Warped image is empty.";
     return false;
   }
-
-  out_final_corrected_image = image_pass1_corrected.clone();
-  out_final_raw_corner_guess = p1_raw_corner_initial_guess;
-
-  cv::Rect roi_quadrant_pass1;
-  int p1_corr_w = image_pass1_corrected.cols;
-  int p1_corr_h = image_pass1_corrected.rows;
-  switch (targetScanQuadrant) {
-  case CornerQuadrant::TOP_LEFT:
-    roi_quadrant_pass1 = cv::Rect(0, 0, p1_corr_w / 2, p1_corr_h / 2);
-    break;
-  case CornerQuadrant::TOP_RIGHT:
-    roi_quadrant_pass1 =
-        cv::Rect(p1_corr_w / 2, 0, p1_corr_w - (p1_corr_w / 2), p1_corr_h / 2);
-    break;
-  case CornerQuadrant::BOTTOM_LEFT:
-    roi_quadrant_pass1 =
-        cv::Rect(0, p1_corr_h / 2, p1_corr_w / 2, p1_corr_h / 2);
-    break;
-  case CornerQuadrant::BOTTOM_RIGHT:
-    roi_quadrant_pass1 =
-        cv::Rect(p1_corr_w / 2, p1_corr_h / 2, p1_corr_w / 2, p1_corr_h / 2);
-    break;
-  }
-  LOG_DEBUG
-      << "RobustDetect P1: Using full image_pass1_corrected quadrant ROI for "
-      << quadrant_name_str << ": " << roi_quadrant_pass1;
-  roi_quadrant_pass1 &=
-      cv::Rect(0, 0, image_pass1_corrected.cols, image_pass1_corrected.rows);
-  if (roi_quadrant_pass1.width <= 0 || roi_quadrant_pass1.height <= 0) {
-    LOG_ERROR << "RobustDetect P1: Invalid ROI after clamp: "
-              << roi_quadrant_pass1;
-    return false;
-  }
-
-  float p1_board_width_est =
-      ideal_corrected_dest_points[1].x - ideal_corrected_dest_points[0].x;
-  float p1_board_height_est =
-      ideal_corrected_dest_points[3].y - ideal_corrected_dest_points[0].y;
-  float expected_radius_pass1 =
-      calculateAdaptiveSampleRadius(p1_board_width_est, p1_board_height_est);
-
   CandidateBlob found_blob_pass1;
-  float fixed_lab_a = 128.0f, fixed_lab_b = 128.0f;
-  bool blob_found_p1 = find_best_round_shape_iterative(
-      image_pass1_corrected, roi_quadrant_pass1, expected_radius_pass1,
-      hint_target_L_lab_from_calib[0], 20.0f, 235.0f, 5.0f, 5.0f, 30.0f, 5.0f,
-      fixed_lab_a, fixed_lab_b, CALIB_AB_TOLERANCE_STONE + 5.0f, found_blob_pass1,
-      calibData);
-
-  cv::Point2f p1_blob_center_in_pass1_corrected;
-  if (!blob_found_p1) {
-    LOG_WARN << "RobustDetect Pass 1: No suitable shape found for "
-             << quadrant_name_str << " by find_best_round_shape_iterative.";
-    return false;
+  cv::Rect roi_quadrant_pass1; // Will be populated by the helper
+  if (!perform_pass1_blob_detection(image_pass1_corrected, targetScanQuadrant,
+                                    calibData, hint_target_L_lab_from_calib,
+                                    found_blob_pass1, roi_quadrant_pass1)) {
+    return false; // Failure logged in helper
   }
-  // Convert center from ROI-coords (from find_best_round_shape_iterative) to
-  // image_pass1_corrected coords
-  p1_blob_center_in_pass1_corrected =
-      found_blob_pass1.center_in_roi_coords +
-      cv::Point2f(roi_quadrant_pass1.x, roi_quadrant_pass1.y);
-  out_pass1_classified_color =
-      found_blob_pass1.classified_color_after_shape_found;
-  LOG_INFO << "RobustDetect Pass 1: Best shape for " << quadrant_name_str
-           << " found (Area: " << found_blob_pass1.area
-           << ", Center in P1_corr: " << p1_blob_center_in_pass1_corrected
-           << ") and classified as " << out_pass1_classified_color;
-
-  cv::Mat M1_inv_p2;
-  if (!cv::invert(M1, M1_inv_p2, cv::DECOMP_SVD) || M1_inv_p2.empty()) {
-    LOG_ERROR << "RobustDetect P2: Invert M1 failed.";
-    return false;
-  }
-
-  std::vector<cv::Point2f> p1_blob_center_vec_corrected_tf_p2 = {
-      p1_blob_center_in_pass1_corrected};
-  std::vector<cv::Point2f> p1_blob_center_in_raw_image_vec_p2;
-  cv::perspectiveTransform(p1_blob_center_vec_corrected_tf_p2,
-                           p1_blob_center_in_raw_image_vec_p2, M1_inv_p2);
-  if (p1_blob_center_in_raw_image_vec_p2.empty()) {
-    LOG_ERROR << "RobustDetect P2: Map blob to raw failed.";
-    return false;
-  }
-  cv::Point2f p1_blob_center_in_raw_image_p2 =
-      p1_blob_center_in_raw_image_vec_p2[0];
+  out_pass1_classified_color = found_blob_pass1.classified_color_after_shape_found;
+  LOG_INFO << "RobustDetect Pass 1: Shape found and classified as " << out_pass1_classified_color;
   
-  p1_blob_center_in_raw_image_p2.x =
-      std::max(0.0f, std::min(static_cast<float>(rawBgrImage.cols - 1),
-                              p1_blob_center_in_raw_image_p2.x));
-  p1_blob_center_in_raw_image_p2.y =
-      std::max(0.0f, std::min(static_cast<float>(rawBgrImage.rows - 1),
-                              p1_blob_center_in_raw_image_p2.y));
-  out_final_raw_corner_guess = p1_blob_center_in_raw_image_p2;
+  // STEP 4: Refine the perspective transform (M2) using the blob's found position.
+  cv::Point2f p1_blob_center_in_p1_image = found_blob_pass1.center_in_roi_coords + 
+                                           cv::Point2f(roi_quadrant_pass1.x, roi_quadrant_pass1.y);
 
-  p1_source_points_raw[static_cast<size_t>(targetScanQuadrant)] =
-      p1_blob_center_in_raw_image_p2;
+  cv::Mat M2 = refine_perspective_transform_from_blob(
+      rawBgrImage, M1, p1_blob_center_in_p1_image, p1_source_points_raw,
+      target_ideal_dest_corner_idx, ideal_dest_points,
+      out_final_raw_corner_guess);
+  if (M2.empty()) return false; // Failure logged in helper
 
-  cv::Mat M2_p2 = cv::getPerspectiveTransform(p1_source_points_raw,
-                                              ideal_corrected_dest_points);
-  if (M2_p2.empty() || cv::determinant(M2_p2) < 1e-6) {
-    LOG_ERROR << "RobustDetect P2: Degenerate M2.";
+  // STEP 5: Perform the second-pass warp and do a final, targeted verification.
+  cv::Mat image_pass2_corrected;
+  cv::warpPerspective(rawBgrImage, image_pass2_corrected, M2, rawBgrImage.size());
+  if (image_pass2_corrected.empty()) {
+    LOG_ERROR << "RobustDetect P2: Warped image is empty.";
     return false;
   }
-  cv::Mat image_pass2_corrected_p2;
-  cv::warpPerspective(rawBgrImage, image_pass2_corrected_p2, M2_p2,
-                      rawBgrImage.size());
-  if (image_pass2_corrected_p2.empty()) {
-    LOG_ERROR << "RobustDetect P2: Warped P2 empty.";
-    return false;
-  }
-  out_final_corrected_image = image_pass2_corrected_p2.clone();
+  out_final_corrected_image = image_pass2_corrected.clone();
 
-  cv::Vec3f pass2_verification_lab_color = {found_blob_pass1.l_base_used,
-   fixed_lab_a, fixed_lab_b};
-  float expected_radius_pass2_final = calculateAdaptiveSampleRadius(
-      image_pass2_corrected_p2.cols, image_pass2_corrected_p2.rows);
-  if (expected_radius_pass2_final < 1.0f)
-    expected_radius_pass2_final = 2.0f;
-
-  cv::Rect focused_roi_pass2_final = calculateGridIntersectionROI(
-      ideal_grid_col_for_roi_pass2, ideal_grid_row_for_roi_pass2,
-      image_pass2_corrected_p2.cols, image_pass2_corrected_p2.rows);
-  focused_roi_pass2_final &= cv::Rect(0, 0, image_pass2_corrected_p2.cols,
-                                      image_pass2_corrected_p2.rows);
-  if (focused_roi_pass2_final.width <= 0 ||
-      focused_roi_pass2_final.height <= 0) {
-    LOG_ERROR << "RobustDetect P2: Invalid focused ROI final.";
-    return false;
-  }
-
-  cv::Point2f local_detected_stone_center_final_p2;
-  bool final_stone_found_p2 = detectSpecificColoredRoundShape(
-      image_pass2_corrected_p2, focused_roi_pass2_final,
-      pass2_verification_lab_color, CALIB_L_TOLERANCE_STONE,
-      CALIB_AB_TOLERANCE_STONE, expected_radius_pass2_final,
-      local_detected_stone_center_final_p2,
+  bool final_stone_found = perform_pass2_stone_verification(
+      image_pass2_corrected, found_blob_pass1, ideal_grid_col, ideal_grid_row,
       out_detected_stone_radius_in_final_corrected);
 
-  if (blob_found_p1) {
-    if (final_stone_found_p2) {
-      LOG_INFO << "RobustDetect Pass 2 SUCCESS for " << quadrant_name_str
-               << " (expected color verified).";
-    } else {
-      LOG_WARN << "RobustDetect Pass 2 FAILED final color verification for "
-               << quadrant_name_str
-               << ". However, Pass 1 found a good shape (classified color: "
-               << out_pass1_classified_color
-               << "). Using Pass 1's geometric result for the corner location.";
-    }
-    return true;
+  if (final_stone_found) {
+    LOG_INFO << "RobustDetect Pass 2 SUCCESS: Stone verified in final transform.";
+  } else {
+    // Per the original logic, even if P2 verification fails, the P1 result is
+    // considered good enough for locating the corner.
+    LOG_WARN << "RobustDetect Pass 2 FAILED final verification. Using Pass 1's geometric result.";
   }
-
-  LOG_ERROR << "RobustDetect: Reached end of function without Pass 1 success, "
-               "which indicates an earlier issue.";
-  return false;
+  
+  // The function succeeds if Pass 1 succeeds. Pass 2 is for refinement/verification.
+  return true;
 }
+
+// =================================================================================
+// END OF REFACTORING
+// =================================================================================
