@@ -3797,7 +3797,7 @@ static bool perform_pass1_blob_detection(
     break;
   case CornerQuadrant::TOP_RIGHT:
     out_roi_quadrant_pass1 =
-        cv::Rect(p1_corr_w / 2, 0, p1_corr_w - (p1_corr_w / 2), p1_corr_h / 2);
+        cv::Rect(p1_corr_w / 2, 0, p1_corr_w / 2, p1_corr_h / 2);
     break;
   case CornerQuadrant::BOTTOM_LEFT:
     out_roi_quadrant_pass1 =
