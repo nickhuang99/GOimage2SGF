@@ -2149,12 +2149,12 @@ bool detectFourCornersGoBoard(
       CornerQuadrant::BOTTOM_LEFT};
   std::string quadrant_names[] = {"TOP_LEFT", "TOP_RIGHT", "BOTTOM_RIGHT",
                                   "BOTTOM_LEFT"};
+  bool success = false;
 
   for (int i = 0; i < 4; ++i) {
     CornerQuadrant current_quad = quadrants_to_scan[i];
     LOG_INFO << "detectFourCornersGoBoard: Attempting to find "
              << quadrant_names[i] << " corner.";
-    bool success = false;
 
     int classified_color_p1; // To store the color classified by the robust
                              // Pass 1
@@ -2163,20 +2163,20 @@ bool detectFourCornersGoBoard(
         out_detected_raw_board_corners_tl_tr_br_bl[i], temp_corrected_image,
         temp_detected_radius,
         classified_color_p1); // New output param
-    LOG_INFO << "Robust detection for " << quadrant_names[i]
-             << " resulted in Pass 1 classified color: "
-             << (classified_color_p1 == BLACK
-                     ? "BLACK"
-                     : (classified_color_p1 == WHITE ? "WHITE"
-                                                     : "OTHER/EMPTY"));
     if (!success) {
       LOG_ERROR << "detectFourCornersGoBoard: Failed to find "
                 << quadrant_names[i] << " stone.";
       // If any corner fails, the whole process fails.
       // Optionally, could try to collect any successful ones and return
       // partial, but current design is all or nothing.
-      return false;
+      break;
     }
+    LOG_INFO << "Robust detection for " << quadrant_names[i]
+             << " resulted in Pass 1 classified color: "
+             << (classified_color_p1 == BLACK
+                     ? "BLACK"
+                     : (classified_color_p1 == WHITE ? "WHITE"
+                                                     : "OTHER/EMPTY"));
     LOG_INFO << "detectFourCornersGoBoard: " << quadrant_names[i]
              << " stone found at raw coordinates: "
              << out_detected_raw_board_corners_tl_tr_br_bl[i]
@@ -2230,7 +2230,7 @@ bool detectFourCornersGoBoard(
                debug_display_raw);
     cv::waitKey(0);
   }
-  return true;
+  return success;
 }
 
 // --- Experimental Function V7 (Corrected Two-Pass Refinement with ENHANCED
@@ -3330,11 +3330,6 @@ static bool generate_next_initial_guess(const cv::Size &image_size,
                                         // Output
                                         cv::Point2f &out_guess) {
 
-  const int total_grid_points = 9;
-  if (attempt_index < 0 || attempt_index >= total_grid_points) {
-    return false; // No more guesses to generate.
-  }
-
   // Define the search space for each quadrant as a percentage of image
   // dimensions
   float x_min_pct = 0.05, y_min_pct = 0.05;
@@ -3349,31 +3344,39 @@ static bool generate_next_initial_guess(const cv::Size &image_size,
     y_offset = 0;
     x_start = 0.05f;
     y_start = 0.05f;
+    x_step = 0.05f;
+    y_step = 0.05f;
     break;
   case CornerQuadrant::TOP_RIGHT:
     x_offset = 0.5f;
     y_offset = 0.0f;
-    x_start = 0.15f;
-    y_start = 0.15f;
+    x_start = 0.45f;
+    y_start = 0.05f;
+    x_step = -0.05f;
+    y_step = 0.05f;
     break;
   case CornerQuadrant::BOTTOM_RIGHT:
     x_offset = 0.5f;
     y_offset = 0.5f;
-    x_start = 0.75f;
-    y_start = 0.75f;
+    x_start = 0.45f;
+    y_start = 0.45f;
+    x_step = -0.05f;
+    y_step = -0.05f;
     break;
   case CornerQuadrant::BOTTOM_LEFT:
     x_offset = 0.0f;
     y_offset = 0.5f;
     x_start = 0.05f;
-    y_start = 0.75f;
+    y_start = 0.45f;
+    x_step = 0.05f;
+    y_step = -0.05f;
     break;
   }
 
   // Calculate the guess based on the selected grid factor for the current
   // attempt
-  float x_pct = x_start + attempt_index / 2 * x_step;
-  float y_pct = y_start + attempt_index % 2 * y_step;
+  float x_pct = x_start + attempt_index / 9 * x_step;
+  float y_pct = y_start + attempt_index % 9 * y_step;
   x_pct = x_offset + std::max(x_min_pct, std::min(x_pct, x_max_pct));
   y_pct = y_offset + std::max(y_min_pct, std::min(y_pct, y_max_pct));
   LOG_DEBUG << "quadrant:" << toString(quadrant) << " x_pct: " << x_pct
@@ -3420,8 +3423,8 @@ bool adaptive_detect_stone_robust(
   }
 
   // --- Iterative Guessing Loop for Pass 1 ---
-  const int MAX_GUESS_ATTEMPTS = 9;
-  bool pass1_blob_found = false;
+  const int MAX_GUESS_ATTEMPTS = 9 * 9 - 1;
+
   CandidateBlob found_blob_pass1;
   cv::Mat M1;
   cv::Mat image_pass1_corrected;
@@ -3459,75 +3462,64 @@ bool adaptive_detect_stone_robust(
       continue;
     }
 
-    if (bDebug) {
-      // (Debug visualization code as before)
-    }
-
     cv::Rect roi_quadrant_pass1;
     if (perform_pass1_blob_detection(image_pass1_corrected, targetScanQuadrant,
                                      calibData, hint_target_L_lab_from_calib,
                                      found_blob_pass1, roi_quadrant_pass1)) {
-      pass1_blob_found = true;
+
       M1 = current_M1;
       p1_source_points_raw = current_p1_source_points;
       LOG_INFO << "  SUCCESS on attempt #" << (attempt + 1)
                << ". Blob found. Proceeding to Pass 2.";
-      break;
+    } else {
+      continue;
     }
-    LOG_INFO << "  Attempt #" << (attempt + 1)
-             << " did not find a stone blob. Trying next guess.";
+
+    out_pass1_classified_color =
+        found_blob_pass1.classified_color_after_shape_found;
+    LOG_INFO << "RobustDetect Pass 1: Shape found and classified as "
+             << out_pass1_classified_color;
+
+    // === PASS 2 REFINEMENT ===
+    cv::Point2f p1_blob_center_in_p1_image =
+        found_blob_pass1.center_in_roi_coords +
+        cv::Point2f(found_blob_pass1.roi_used_in_search.x,
+                    found_blob_pass1.roi_used_in_search.y);
+
+    cv::Mat M2; // FIX: Declare M2 before use
+    M2 = refine_perspective_transform_from_blob(
+        rawBgrImage, M1, p1_blob_center_in_p1_image, p1_source_points_raw,
+        target_ideal_dest_corner_idx, targetScanQuadrant,
+        getBoardCornersCorrected(rawBgrImage.cols, rawBgrImage.rows),
+        out_final_raw_corner_guess);
+
+    if (M2.empty()) {
+      LOG_ERROR << "refine_perspective_transform_from_blob return empty M2!";
+      continue;
+    }
+
+    cv::Mat image_pass2_corrected;
+    cv::warpPerspective(rawBgrImage, image_pass2_corrected, M2,
+                        rawBgrImage.size());
+    if (image_pass2_corrected.empty()) {
+      LOG_ERROR << "RobustDetect P2: Warped image is empty.";
+      continue;
+    }
+    out_final_corrected_image = image_pass2_corrected.clone();
+
+    if (perform_pass2_stone_verification(
+            image_pass2_corrected, found_blob_pass1, ideal_grid_col,
+            ideal_grid_row, out_detected_stone_radius_in_final_corrected)) {
+      LOG_INFO
+          << "RobustDetect Pass 2 SUCCESS: Stone verified in final transform.";
+      return true;
+    } else {
+      LOG_WARN
+          << "RobustDetect Pass 2 FAILED final verification. Using Pass 1's "
+             "geometric result for the corner location.";
+    }
   }
-
-  if (!pass1_blob_found) {
-    LOG_ERROR << "RobustDetect FAILED for " << quadrant_name_str
-              << " after exhausting all " << MAX_GUESS_ATTEMPTS
-              << " initial guesses.";
-    return false;
-  }
-
-  out_pass1_classified_color =
-      found_blob_pass1.classified_color_after_shape_found;
-  LOG_INFO << "RobustDetect Pass 1: Shape found and classified as "
-           << out_pass1_classified_color;
-
-  // === PASS 2 REFINEMENT ===
-  cv::Point2f p1_blob_center_in_p1_image =
-      found_blob_pass1.center_in_roi_coords +
-      cv::Point2f(found_blob_pass1.roi_used_in_search.x,
-                  found_blob_pass1.roi_used_in_search.y);
-
-  cv::Mat M2; // FIX: Declare M2 before use
-  M2 = refine_perspective_transform_from_blob(
-      rawBgrImage, M1, p1_blob_center_in_p1_image, p1_source_points_raw,
-      target_ideal_dest_corner_idx, targetScanQuadrant,
-      getBoardCornersCorrected(rawBgrImage.cols, rawBgrImage.rows),
-      out_final_raw_corner_guess);
-
-  if (M2.empty()) {
-    return false;
-  }
-
-  cv::Mat image_pass2_corrected;
-  cv::warpPerspective(rawBgrImage, image_pass2_corrected, M2,
-                      rawBgrImage.size());
-  if (image_pass2_corrected.empty()) {
-    LOG_ERROR << "RobustDetect P2: Warped image is empty.";
-    return false;
-  }
-  out_final_corrected_image = image_pass2_corrected.clone();
-
-  bool final_stone_found = perform_pass2_stone_verification(
-      image_pass2_corrected, found_blob_pass1, ideal_grid_col, ideal_grid_row,
-      out_detected_stone_radius_in_final_corrected);
-
-  if (final_stone_found) {
-    LOG_INFO
-        << "RobustDetect Pass 2 SUCCESS: Stone verified in final transform.";
-  } else {
-    LOG_WARN << "RobustDetect Pass 2 FAILED final verification. Using Pass 1's "
-                "geometric result for the corner location.";
-  }
-  return true;
+  return false;
 }
 
 // Add this new helper function to image.cpp
