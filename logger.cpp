@@ -156,6 +156,26 @@ void Logger::generatePrefix(const char *file, int line,
 #endif
 
     m_buffer << "{";
+    switch (m_message_level_instance) {
+    case LogLevel::ERROR:
+      m_buffer << "[ERROR]";
+      break;
+    case LogLevel::WARNING:
+      m_buffer << "[WARNING]";
+      break;
+    case LogLevel::INFO:
+      m_buffer << "[INFO]";
+      break;
+    case LogLevel::DEBUG:
+      m_buffer << "[DEBUG]";
+      break;
+    // --- ADD THIS CASE ---
+    case LogLevel::TRACE:
+      m_buffer << "[TRACE]";
+      break;
+    case LogLevel::NONE:
+      break; // Should not happen if m_should_log_this_message is true
+    }
     const char *base_filename = strrchr(file, '/');
     if (!base_filename)
       base_filename = strrchr(file, '\\');                  // For Windows paths

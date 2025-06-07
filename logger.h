@@ -16,7 +16,8 @@ enum class LogLevel {
   ERROR = 1,   // Critical errors that might prevent continuation
   WARNING = 2, // Potential issues or unexpected situations
   INFO = 3,    // General operational information (Default)
-  DEBUG = 4    // Detailed information for debugging
+  DEBUG = 4,   // Detailed information for debugging
+  TRACE = 5
 };
 
 class Logger {
@@ -84,6 +85,9 @@ private:
 #define LOG_INFO Logger(LogLevel::INFO, __FILE__, __LINE__, __PRETTY_FUNCTION__)
 #define LOG_DEBUG                                                              \
   Logger(LogLevel::DEBUG, __FILE__, __LINE__, __PRETTY_FUNCTION__)
+#define LOG_TRACE                                                              \
+  Logger(LogLevel::TRACE, __FILE__, __LINE__,                                  \
+         __PRETTY_FUNCTION__) // <-- ADD THIS NEW MACRO
 
 // For messages that should always print to console (e.g., help or pre-init
 // errors)
