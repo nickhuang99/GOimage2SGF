@@ -30,8 +30,11 @@ const int MORPH_OPEN_ITERATIONS_STONE = 1; // MODIFIED (was 2, less aggressive)
 const int MORPH_CLOSE_KERNEL_SIZE_STONE = 3;
 const int MORPH_CLOSE_ITERATIONS_STONE =
     2; // MODIFIED (was 1, more aggressive for hole filling)
-const double ABS_STONE_AREA_MIN_FACTOR = 0.4;
-const double ABS_STONE_AREA_MAX_FACTOR = 2.5;
+const double ABS_STONE_AREA_MIN_FACTOR = 0.7;
+const double ABS_STONE_AREA_MAX_FACTOR = 1.5;
+
+const double ROUGH_ABS_STONE_AREA_MIN_FACTOR = 0.4;
+const double ROUGH_ABS_STONE_AREA_MAX_FACTOR = 2.5;
 
 const double MIN_STONE_CIRCULARITY_WHITE = 0.65;
 const double MIN_STONE_CIRCULARITY_BLACK =
@@ -2715,9 +2718,9 @@ static bool prepare_iteration_parameters(
   double expected_area =
       CV_PI * expected_stone_radius_in_image * expected_stone_radius_in_image;
   out_constraints.min_acceptable_area =
-      expected_area * ABS_STONE_AREA_MIN_FACTOR;
+      expected_area * ROUGH_ABS_STONE_AREA_MIN_FACTOR;
   out_constraints.max_acceptable_area =
-      expected_area * ABS_STONE_AREA_MAX_FACTOR;
+      expected_area * ROUGH_ABS_STONE_AREA_MAX_FACTOR;
   // Use a general, strict circularity for the initial shape search.
   out_constraints.min_acceptable_circularity =
       std::max(MIN_STONE_CIRCULARITY_WHITE, MIN_STONE_CIRCULARITY_BLACK);
@@ -3382,7 +3385,8 @@ static bool generate_next_initial_guess(const cv::Size &image_size,
   LOG_DEBUG << "quadrant:" << toString(quadrant) << " x_pct: " << x_pct
             << " y_pct: " << y_pct << std::endl;
   out_guess = cv::Point2f(x_pct * image_size.width, y_pct * image_size.height);
-
+  LOG_TRACE << "using initial guess position: [" << x_pct * image_size.width
+            << "," << y_pct * image_size.height << "]" << std::endl;
   return true;
 }
 
@@ -3553,144 +3557,6 @@ bool adaptive_detect_stone_robust(
 
   return true;
 }
-// =================================================================================
-// END of new utility function
-// =================================================================================
-// This version corrects the state pollution bug and adds the requested debug
-// visualizations.
-// --- RE-REFACTORED Main Orchestrator Function (FIXED) ---
-// This version corrects all compiler and scope errors from the previous
-// version.
-// bool adaptive_detect_stone_robust(
-//     const cv::Mat &rawBgrImage, CornerQuadrant targetScanQuadrant,
-//     const CalibrationData &calibData, cv::Point2f
-//     &out_final_raw_corner_guess, cv::Mat &out_final_corrected_image, float
-//     &out_detected_stone_radius_in_final_corrected, int
-//     &out_pass1_classified_color) {
-
-//   LOG_INFO << "--- adaptive_detect_stone_ROBUST (v4) for "
-//            << toString(targetScanQuadrant) << " ---";
-//   out_pass1_classified_color = EMPTY;
-//   if (rawBgrImage.empty()) {
-//     LOG_ERROR << "RobustDetect: Raw BGR image empty.";
-//     return false;
-//   }
-
-//   // STEP 1: Set up parameters that are constant for this quadrant scan.
-//   std::string quadrant_name_str;
-//   size_t target_ideal_dest_corner_idx;
-//   cv::Point2f p1_raw_corner_initial_guess;
-//   int ideal_grid_col, ideal_grid_row;
-//   cv::Vec3f hint_target_L_lab_from_calib;
-//   if (!setup_quadrant_specific_parameters(
-//           rawBgrImage, targetScanQuadrant, calibData, quadrant_name_str,
-//           target_ideal_dest_corner_idx, p1_raw_corner_initial_guess,
-//           ideal_grid_col, ideal_grid_row, hint_target_L_lab_from_calib)) {
-//     return false;
-//   }
-
-//   // --- Iterative Guessing Loop for Pass 1 ---
-//   const int MAX_GUESS_ATTEMPTS = 9 * 9 - 1;
-
-//   CandidateBlob found_blob_pass1;
-//   cv::Mat M1;
-//   cv::Mat image_pass1_corrected;
-//   std::vector<cv::Point2f> p1_source_points_raw; // FIX: Declare before loop
-
-//   for (int attempt = 0; attempt < MAX_GUESS_ATTEMPTS; ++attempt) {
-//     LOG_INFO << "RobustDetect Pass 1, Attempt #" << (attempt + 1) << "/"
-//              << MAX_GUESS_ATTEMPTS << " for " << quadrant_name_str;
-
-//     if (!generate_next_initial_guess(rawBgrImage.size(), targetScanQuadrant,
-//                                      attempt, p1_raw_corner_initial_guess)) {
-//       break;
-//     }
-//     LOG_DEBUG << "  Using initial guess: (" << p1_raw_corner_initial_guess.x
-//               << ", " << p1_raw_corner_initial_guess.y << ")";
-
-//     std::vector<cv::Point2f> current_p1_source_points;
-//     std::vector<cv::Point2f> ideal_dest_points =
-//         getBoardCornersCorrected(rawBgrImage.cols, rawBgrImage.rows);
-//     cv::Mat current_M1 = calculate_initial_perspective_transform(
-//         rawBgrImage, p1_raw_corner_initial_guess, targetScanQuadrant,
-//         ideal_dest_points, current_p1_source_points);
-
-//     if (current_M1.empty()) {
-//       LOG_WARN << "  Attempt #" << (attempt + 1)
-//                << " failed: could not generate a valid perspective
-//                transform.";
-//       continue;
-//     }
-
-//     cv::warpPerspective(rawBgrImage, image_pass1_corrected, current_M1,
-//                         rawBgrImage.size());
-//     if (image_pass1_corrected.empty()) {
-//       LOG_WARN << "  Attempt #" << (attempt + 1)
-//                << " failed: warped image was empty.";
-//       continue;
-//     }
-
-//     cv::Rect roi_quadrant_pass1;
-//     if (perform_pass1_blob_detection(image_pass1_corrected,
-//     targetScanQuadrant,
-//                                      calibData, hint_target_L_lab_from_calib,
-//                                      found_blob_pass1, roi_quadrant_pass1)) {
-
-//       M1 = current_M1;
-//       p1_source_points_raw = current_p1_source_points;
-//       LOG_INFO << "  SUCCESS on attempt #" << (attempt + 1)
-//                << ". Blob found. Proceeding to Pass 2.";
-//     } else {
-//       continue;
-//     }
-
-//     out_pass1_classified_color =
-//         found_blob_pass1.classified_color_after_shape_found;
-//     LOG_INFO << "RobustDetect Pass 1: Shape found and classified as "
-//              << out_pass1_classified_color;
-
-//     // === PASS 2 REFINEMENT ===
-//     cv::Point2f p1_blob_center_in_p1_image =
-//         found_blob_pass1.center_in_roi_coords +
-//         cv::Point2f(found_blob_pass1.roi_used_in_search.x,
-//                     found_blob_pass1.roi_used_in_search.y);
-
-//     cv::Mat M2; // FIX: Declare M2 before use
-//     M2 = refine_perspective_transform_from_blob(
-//         rawBgrImage, M1, p1_blob_center_in_p1_image, p1_source_points_raw,
-//         target_ideal_dest_corner_idx, targetScanQuadrant,
-//         getBoardCornersCorrected(rawBgrImage.cols, rawBgrImage.rows),
-//         out_final_raw_corner_guess);
-
-//     if (M2.empty()) {
-//       LOG_ERROR << "refine_perspective_transform_from_blob return empty M2!";
-//       continue;
-//     }
-
-//     cv::Mat image_pass2_corrected;
-//     cv::warpPerspective(rawBgrImage, image_pass2_corrected, M2,
-//                         rawBgrImage.size());
-//     if (image_pass2_corrected.empty()) {
-//       LOG_ERROR << "RobustDetect P2: Warped image is empty.";
-//       continue;
-//     }
-//     out_final_corrected_image = image_pass2_corrected.clone();
-
-//     if (perform_pass2_stone_verification(
-//             image_pass2_corrected, found_blob_pass1, ideal_grid_col,
-//             ideal_grid_row, out_detected_stone_radius_in_final_corrected)) {
-//       LOG_INFO
-//           << "RobustDetect Pass 2 SUCCESS: Stone verified in final
-//           transform.";
-//       return true;
-//     } else {
-//       LOG_WARN
-//           << "RobustDetect Pass 2 FAILED final verification. Using Pass 1's "
-//              "geometric result for the corner location.";
-//     }
-//   }
-//   return false;
-// }
 
 // Add this new helper function to image.cpp
 bool sampleCalibrationColors(const cv::Mat &raw_image,

@@ -2339,14 +2339,14 @@ int main(int argc, char *argv[]) {
         try {
           parsed_log_level_int = std::stoi(optarg);
           if (parsed_log_level_int >= static_cast<int>(LogLevel::NONE) &&
-              parsed_log_level_int <= static_cast<int>(LogLevel::DEBUG)) {
+              parsed_log_level_int <= static_cast<int>(LogLevel::TRACE)) {
             Logger::setGlobalLogLevel(
                 static_cast<LogLevel>(parsed_log_level_int));
             // The setGlobalLogLevel method will log this change itself if
             // INFO level is active
           } else {
             CONSOLE_ERR << "Invalid log level: " << optarg
-                        << ". Must be between 0 (NONE) and 4 (DEBUG)."
+                        << ". Must be between 0 (NONE) and 5 (TRACE)."
                         << std::endl;
             // Logger might not be fully set up or at a level to log this
             // error yet. LOG_ERROR << "Invalid log level specified: " <<
@@ -2355,7 +2355,7 @@ int main(int argc, char *argv[]) {
           }
         } catch (const std::invalid_argument &ia) {
           CONSOLE_ERR << "Invalid argument for log level: " << optarg
-                      << ". Expected an integer (0-4)." << std::endl;
+                      << ". Expected an integer (0-5)." << std::endl;
           // LOG_ERROR << "Invalid argument for log level: " << optarg << ".
           // Not an integer." << std::endl;
         } catch (const std::out_of_range &oor) {
