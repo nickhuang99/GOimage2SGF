@@ -49,8 +49,8 @@ extern const float CALIB_AB_TOLERANCE_STONE;
 enum class CornerQuadrant {
   TOP_LEFT = 0,
   TOP_RIGHT,
+  BOTTOM_RIGHT,
   BOTTOM_LEFT,
-  BOTTOM_RIGHT
 };
 
 constexpr const char *toString(CornerQuadrant quadrant) {

@@ -2149,8 +2149,7 @@ bool detectFourCornersGoBoard(
 
   CornerQuadrant quadrants_to_scan[] = {
       CornerQuadrant::TOP_LEFT, CornerQuadrant::TOP_RIGHT,
-      CornerQuadrant::BOTTOM_RIGHT, // Order TL, TR, BR, BL for output vector
-      CornerQuadrant::BOTTOM_LEFT};
+      CornerQuadrant::BOTTOM_RIGHT, CornerQuadrant::BOTTOM_LEFT};
   std::string quadrant_names[] = {"TOP_LEFT", "TOP_RIGHT", "BOTTOM_RIGHT",
                                   "BOTTOM_LEFT"};
   bool success = false;
@@ -2964,7 +2963,7 @@ bool find_best_round_shape_iterative(
             current_base_L, current_l_tol, out_found_blob);
         out_found_blob.roi_used_in_search = roi_in_image;
         out_found_blob_vec.push_back(out_found_blob);
-        //return true; // "First Qualified Largest Candidate" logic.
+        // return true; // "First Qualified Largest Candidate" logic.
       } else {
         // --- START: ADDED DEBUG VISUALIZATION FOR REJECTED CONTOURS ---
         if (bDebug) {
@@ -3165,12 +3164,14 @@ static cv::Mat calculate_initial_perspective_transform(
 // --- Refactored Utility Function 3: Perform Pass 1 Blob Detection ---
 // Executes the iterative search to find the best stone-like shape in the Pass 1
 // corrected image.
-static bool perform_pass1_blob_detection(
-    const cv::Mat &image_pass1_corrected, CornerQuadrant targetScanQuadrant,
-    const CalibrationData &calibData,
-    const cv::Vec3f &hint_target_L_lab_from_calib,
-    // Outputs:
-    std::vector<CandidateBlob> &out_found_blob_pass1, cv::Rect &out_roi_quadrant_pass1) {
+static bool
+perform_pass1_blob_detection(const cv::Mat &image_pass1_corrected,
+                             CornerQuadrant targetScanQuadrant,
+                             const CalibrationData &calibData,
+                             const cv::Vec3f &hint_target_L_lab_from_calib,
+                             // Outputs:
+                             std::vector<CandidateBlob> &out_found_blob_pass1,
+                             cv::Rect &out_roi_quadrant_pass1) {
 
   int p1_corr_w = image_pass1_corrected.cols;
   int p1_corr_h = image_pass1_corrected.rows;
@@ -3428,7 +3429,6 @@ bool adaptive_detect_stone_robust(
   // --- Iterative Guessing Loop for Pass 1 ---
   const int MAX_GUESS_ATTEMPTS = 9 * 9 - 1;
 
-  
   cv::Mat M1;
   cv::Mat image_pass1_corrected;
   std::vector<cv::Point2f> p1_source_points_raw; // FIX: Declare before loop
@@ -3469,7 +3469,8 @@ bool adaptive_detect_stone_robust(
     std::vector<CandidateBlob> found_blob_pass1_vec;
     if (perform_pass1_blob_detection(image_pass1_corrected, targetScanQuadrant,
                                      calibData, hint_target_L_lab_from_calib,
-                                     found_blob_pass1_vec, roi_quadrant_pass1)) {
+                                     found_blob_pass1_vec,
+                                     roi_quadrant_pass1)) {
 
       M1 = current_M1;
       p1_source_points_raw = current_p1_source_points;
@@ -3478,11 +3479,11 @@ bool adaptive_detect_stone_robust(
     } else {
       continue;
     }
-    for (const CandidateBlob& found_blob_pass1 : found_blob_pass1_vec) {
+    for (const CandidateBlob &found_blob_pass1 : found_blob_pass1_vec) {
       out_pass1_classified_color =
           found_blob_pass1.classified_color_after_shape_found;
       LOG_INFO << "RobustDetect Pass 1: Shape found and classified as "
-              << out_pass1_classified_color;
+               << out_pass1_classified_color;
 
       // === PASS 2 REFINEMENT ===
       cv::Point2f p1_blob_center_in_p1_image =
@@ -3514,13 +3515,13 @@ bool adaptive_detect_stone_robust(
       if (perform_pass2_stone_verification(
               image_pass2_corrected, found_blob_pass1, ideal_grid_col,
               ideal_grid_row, out_detected_stone_radius_in_final_corrected)) {
-        LOG_INFO
-            << "RobustDetect Pass 2 SUCCESS: Stone verified in final transform.";
+        LOG_INFO << "RobustDetect Pass 2 SUCCESS: Stone verified in final "
+                    "transform.";
         return true;
       } else {
         LOG_WARN
             << "RobustDetect Pass 2 FAILED final verification. Using Pass 1's "
-              "geometric result for the corner location.";
+               "geometric result for the corner location.";
       }
     }
   }
