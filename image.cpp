@@ -3011,8 +3011,9 @@ bool find_best_round_shape_iterative(
     if (l_base_step == 0 && l_base_min == l_base_max)
       break;
   }
-
-  LOG_WARN << "  FBS: No blob met geometry criteria after all iterations.";
+  if (out_found_blob_vec.empty()) {
+    LOG_WARN << "  FBS: No blob met geometry criteria after all iterations.";
+  }
   return !out_found_blob_vec.empty(); // No suitable candidate was found.
 }
 // =================================================================================
@@ -3480,6 +3481,12 @@ bool adaptive_detect_stone_robust(
       continue;
     }
     for (const CandidateBlob &found_blob_pass1 : found_blob_pass1_vec) {
+      LOG_DEBUG << "found_blob_pass1: coord in center: "
+                << found_blob_pass1.center_in_roi_coords
+                << " area:" << found_blob_pass1.area
+                << " circularity: " << found_blob_pass1.circularity
+                << " lab_used: " << found_blob_pass1.l_base_used
+                << " lab_tol: " << found_blob_pass1.l_tolerance_used;
       out_pass1_classified_color =
           found_blob_pass1.classified_color_after_shape_found;
       LOG_INFO << "RobustDetect Pass 1: Shape found and classified as "
@@ -3490,7 +3497,7 @@ bool adaptive_detect_stone_robust(
           found_blob_pass1.center_in_roi_coords +
           cv::Point2f(found_blob_pass1.roi_used_in_search.x,
                       found_blob_pass1.roi_used_in_search.y);
-
+      LOG_DEBUG << "p1_blob_center_in_p1_image:" << p1_blob_center_in_p1_image;
       cv::Mat M2; // FIX: Declare M2 before use
       M2 = refine_perspective_transform_from_blob(
           rawBgrImage, M1, p1_blob_center_in_p1_image, p1_source_points_raw,
@@ -3516,7 +3523,8 @@ bool adaptive_detect_stone_robust(
               image_pass2_corrected, found_blob_pass1, ideal_grid_col,
               ideal_grid_row, out_detected_stone_radius_in_final_corrected)) {
         LOG_INFO << "RobustDetect Pass 2 SUCCESS: Stone verified in final "
-                    "transform.";
+                    "transform. corner: "
+                 << out_final_raw_corner_guess;
         return true;
       } else {
         LOG_WARN
