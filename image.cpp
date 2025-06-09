@@ -36,9 +36,10 @@ const double ABS_STONE_AREA_MAX_FACTOR = 1.5;
 const double ROUGH_ABS_STONE_AREA_MIN_FACTOR = 0.4;
 const double ROUGH_ABS_STONE_AREA_MAX_FACTOR = 2.5;
 
-const double MIN_STONE_CIRCULARITY_WHITE = 0.65;
-const double MIN_STONE_CIRCULARITY_BLACK =
-    0.50; // More lenient for black stones
+const double MIN_STONE_CIRCULARITY_WHITE = 0.70;
+const double MIN_STONE_CIRCULARITY_BLACK = 0.65;
+// const double MIN_STONE_CIRCULARITY_WHITE = 0.65;
+// const double MIN_STONE_CIRCULARITY_BLACK = 0.50;
 const int MIN_CONTOUR_POINTS_STONE = 5;
 
 const float MAX_ROI_FACTOR_FOR_CALC = 1.0f;
@@ -2915,12 +2916,12 @@ bool find_best_round_shape_iterative(
     float l_base_min, float l_base_max, float l_base_step, float l_tol_min,
     float l_tol_max, float l_tol_step, float fixed_ab_target_A,
     float fixed_ab_target_B, float fixed_ab_tolerance,
-    CandidateBlob &out_found_blob,
+    std::vector<CandidateBlob> &out_found_blob_vec,
     const CalibrationData &calibDataForColorClassification) {
 
   LOG_INFO << "find_best_round_shape_iterative (Refactored) in ROI: "
            << roi_in_image;
-
+  CandidateBlob out_found_blob;
   // STEP 1: Prepare common variables and validate inputs.
   cv::Rect valid_roi;
   cv::Mat roi_lab_content;
@@ -2961,7 +2962,9 @@ bool find_best_round_shape_iterative(
         finalize_and_classify_blob(
             largest_contour, roi_lab_content, calibDataForColorClassification,
             current_base_L, current_l_tol, out_found_blob);
-        return true; // "First Qualified Largest Candidate" logic.
+        out_found_blob.roi_used_in_search = roi_in_image;
+        out_found_blob_vec.push_back(out_found_blob);
+        //return true; // "First Qualified Largest Candidate" logic.
       } else {
         // --- START: ADDED DEBUG VISUALIZATION FOR REJECTED CONTOURS ---
         if (bDebug) {
@@ -3011,7 +3014,7 @@ bool find_best_round_shape_iterative(
   }
 
   LOG_WARN << "  FBS: No blob met geometry criteria after all iterations.";
-  return false; // No suitable candidate was found.
+  return !out_found_blob_vec.empty(); // No suitable candidate was found.
 }
 // =================================================================================
 // END OF REFACTORING
@@ -3167,7 +3170,7 @@ static bool perform_pass1_blob_detection(
     const CalibrationData &calibData,
     const cv::Vec3f &hint_target_L_lab_from_calib,
     // Outputs:
-    CandidateBlob &out_found_blob_pass1, cv::Rect &out_roi_quadrant_pass1) {
+    std::vector<CandidateBlob> &out_found_blob_pass1, cv::Rect &out_roi_quadrant_pass1) {
 
   int p1_corr_w = image_pass1_corrected.cols;
   int p1_corr_h = image_pass1_corrected.rows;
@@ -3221,10 +3224,6 @@ static bool perform_pass1_blob_detection(
         << toString(targetScanQuadrant);
     return false;
   }
-
-  // <<-- FIX: Populate the ROI member in the output struct -->>
-  out_found_blob_pass1.roi_used_in_search = out_roi_quadrant_pass1;
-
   return true;
 }
 
@@ -3429,7 +3428,7 @@ bool adaptive_detect_stone_robust(
   // --- Iterative Guessing Loop for Pass 1 ---
   const int MAX_GUESS_ATTEMPTS = 9 * 9 - 1;
 
-  CandidateBlob found_blob_pass1;
+  
   cv::Mat M1;
   cv::Mat image_pass1_corrected;
   std::vector<cv::Point2f> p1_source_points_raw; // FIX: Declare before loop
@@ -3467,9 +3466,10 @@ bool adaptive_detect_stone_robust(
     }
 
     cv::Rect roi_quadrant_pass1;
+    std::vector<CandidateBlob> found_blob_pass1_vec;
     if (perform_pass1_blob_detection(image_pass1_corrected, targetScanQuadrant,
                                      calibData, hint_target_L_lab_from_calib,
-                                     found_blob_pass1, roi_quadrant_pass1)) {
+                                     found_blob_pass1_vec, roi_quadrant_pass1)) {
 
       M1 = current_M1;
       p1_source_points_raw = current_p1_source_points;
@@ -3478,49 +3478,50 @@ bool adaptive_detect_stone_robust(
     } else {
       continue;
     }
+    for (const CandidateBlob& found_blob_pass1 : found_blob_pass1_vec) {
+      out_pass1_classified_color =
+          found_blob_pass1.classified_color_after_shape_found;
+      LOG_INFO << "RobustDetect Pass 1: Shape found and classified as "
+              << out_pass1_classified_color;
 
-    out_pass1_classified_color =
-        found_blob_pass1.classified_color_after_shape_found;
-    LOG_INFO << "RobustDetect Pass 1: Shape found and classified as "
-             << out_pass1_classified_color;
+      // === PASS 2 REFINEMENT ===
+      cv::Point2f p1_blob_center_in_p1_image =
+          found_blob_pass1.center_in_roi_coords +
+          cv::Point2f(found_blob_pass1.roi_used_in_search.x,
+                      found_blob_pass1.roi_used_in_search.y);
 
-    // === PASS 2 REFINEMENT ===
-    cv::Point2f p1_blob_center_in_p1_image =
-        found_blob_pass1.center_in_roi_coords +
-        cv::Point2f(found_blob_pass1.roi_used_in_search.x,
-                    found_blob_pass1.roi_used_in_search.y);
+      cv::Mat M2; // FIX: Declare M2 before use
+      M2 = refine_perspective_transform_from_blob(
+          rawBgrImage, M1, p1_blob_center_in_p1_image, p1_source_points_raw,
+          target_ideal_dest_corner_idx, targetScanQuadrant,
+          getBoardCornersCorrected(rawBgrImage.cols, rawBgrImage.rows),
+          out_final_raw_corner_guess);
 
-    cv::Mat M2; // FIX: Declare M2 before use
-    M2 = refine_perspective_transform_from_blob(
-        rawBgrImage, M1, p1_blob_center_in_p1_image, p1_source_points_raw,
-        target_ideal_dest_corner_idx, targetScanQuadrant,
-        getBoardCornersCorrected(rawBgrImage.cols, rawBgrImage.rows),
-        out_final_raw_corner_guess);
+      if (M2.empty()) {
+        LOG_ERROR << "refine_perspective_transform_from_blob return empty M2!";
+        continue;
+      }
 
-    if (M2.empty()) {
-      LOG_ERROR << "refine_perspective_transform_from_blob return empty M2!";
-      continue;
-    }
+      cv::Mat image_pass2_corrected;
+      cv::warpPerspective(rawBgrImage, image_pass2_corrected, M2,
+                          rawBgrImage.size());
+      if (image_pass2_corrected.empty()) {
+        LOG_ERROR << "RobustDetect P2: Warped image is empty.";
+        continue;
+      }
+      out_final_corrected_image = image_pass2_corrected.clone();
 
-    cv::Mat image_pass2_corrected;
-    cv::warpPerspective(rawBgrImage, image_pass2_corrected, M2,
-                        rawBgrImage.size());
-    if (image_pass2_corrected.empty()) {
-      LOG_ERROR << "RobustDetect P2: Warped image is empty.";
-      continue;
-    }
-    out_final_corrected_image = image_pass2_corrected.clone();
-
-    if (perform_pass2_stone_verification(
-            image_pass2_corrected, found_blob_pass1, ideal_grid_col,
-            ideal_grid_row, out_detected_stone_radius_in_final_corrected)) {
-      LOG_INFO
-          << "RobustDetect Pass 2 SUCCESS: Stone verified in final transform.";
-      return true;
-    } else {
-      LOG_WARN
-          << "RobustDetect Pass 2 FAILED final verification. Using Pass 1's "
-             "geometric result for the corner location.";
+      if (perform_pass2_stone_verification(
+              image_pass2_corrected, found_blob_pass1, ideal_grid_col,
+              ideal_grid_row, out_detected_stone_radius_in_final_corrected)) {
+        LOG_INFO
+            << "RobustDetect Pass 2 SUCCESS: Stone verified in final transform.";
+        return true;
+      } else {
+        LOG_WARN
+            << "RobustDetect Pass 2 FAILED final verification. Using Pass 1's "
+              "geometric result for the corner location.";
+      }
     }
   }
   return false;

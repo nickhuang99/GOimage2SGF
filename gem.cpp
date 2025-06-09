@@ -2628,40 +2628,38 @@ int main(int argc, char *argv[]) {
           LOG_INFO << "  Corner " << q_name << " (" << i
                    << "): " << detected_corners[i];
         }
-
-        cv::Mat display_robust = raw_image.clone();
-
-        // Copied drawing logic from detectFourCornersGoBoard's debug
-        // section
-        std::string quadrant_names_for_draw[] = {"TOP_LEFT", "TOP_RIGHT",
-                                                 "BOTTOM_RIGHT", "BOTTOM_LEFT"};
-        cv::line(display_robust, detected_corners[0], detected_corners[1],
-                 cv::Scalar(0, 255, 0), 2); // TL-TR
-        cv::line(display_robust, detected_corners[1], detected_corners[2],
-                 cv::Scalar(0, 255, 0), 2); // TR-BR
-        cv::line(display_robust, detected_corners[2], detected_corners[3],
-                 cv::Scalar(0, 255, 0), 2); // BR-BL
-        cv::line(display_robust, detected_corners[3], detected_corners[0],
-                 cv::Scalar(0, 255, 0), 2); // BL-TL
-
-        for (size_t i = 0; i < 4; ++i) {
-          cv::circle(display_robust, detected_corners[i], 7,
-                     cv::Scalar(0, 0, 255), -1); // Red circle for corner
-          cv::putText(display_robust, quadrant_names_for_draw[i],
-                      detected_corners[i] + cv::Point2f(10, 10),
-                      cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(255, 0, 0),
-                      2); // Blue text
-        }
-
-        cv::imshow("Robust Corner Detection Test Result (gem.cpp)",
-                   display_robust);
-        cv::waitKey(0);
-        cv::destroyAllWindows();
-
       } else {
         LOG_ERROR << "Robust corner detection test FAILED (one or more corners "
                      "did not pass full verification).";
       }
+      cv::Mat display_robust = raw_image.clone();
+
+      // Copied drawing logic from detectFourCornersGoBoard's debug
+      // section
+      std::string quadrant_names_for_draw[] = {"TOP_LEFT", "TOP_RIGHT",
+                                               "BOTTOM_RIGHT", "BOTTOM_LEFT"};
+      cv::line(display_robust, detected_corners[0], detected_corners[1],
+               cv::Scalar(0, 255, 0), 2); // TL-TR
+      cv::line(display_robust, detected_corners[1], detected_corners[2],
+               cv::Scalar(0, 255, 0), 2); // TR-BR
+      cv::line(display_robust, detected_corners[2], detected_corners[3],
+               cv::Scalar(0, 255, 0), 2); // BR-BL
+      cv::line(display_robust, detected_corners[3], detected_corners[0],
+               cv::Scalar(0, 255, 0), 2); // BL-TL
+
+      for (size_t i = 0; i < 4; ++i) {
+        cv::circle(display_robust, detected_corners[i], 7,
+                   cv::Scalar(0, 0, 255), -1); // Red circle for corner
+        cv::putText(display_robust, quadrant_names_for_draw[i],
+                    detected_corners[i] + cv::Point2f(10, 10),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(255, 0, 0),
+                    2); // Blue text
+      }
+
+      cv::imshow("Robust Corner Detection Test Result (gem.cpp)",
+                 display_robust);
+      cv::waitKey(0);
+      cv::destroyAllWindows();
       LOG_INFO << "--- Test Robust Corner Detection Workflow Finished ---";
     } else if (runAutoCalibration) {
       runAutoCalibrationWorkflow();
