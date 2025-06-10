@@ -48,7 +48,7 @@ const float ITERATIVE_L_TOL_MIN = 5.0f;
 const float ITERATIVE_L_TOL_MAX = 30.0f;
 const float ITERATIVE_L_TOL_STEP = 5.0f;
 const float ITERATIVE_AB_TARGET_NEUTRAL =
-    128.0f; // Neutral gray center for A and B channels
+    118.0f; // Neutral gray center for A and B channels
 const float ITERATIVE_AB_TOL_MARGIN =
     5.0f; // Extra tolerance for the A/B channels
 
@@ -2855,21 +2855,26 @@ validate_contour_geometry(const std::vector<cv::Point> &contour,
       area > constraints.max_acceptable_area ||
       circularity < constraints.min_acceptable_circularity) {
 
-    // --- START: NEW DEBUG LOG ---
-    // Log the details of the rejection at INFO level for easy viewing.
     LOG_INFO << "      Contour REJECTED. Area: " << std::fixed
              << std::setprecision(1) << area
              << " (Min: " << constraints.min_acceptable_area
              << ", Max: " << constraints.max_acceptable_area
              << "), Circularity: " << std::setprecision(3) << circularity
              << " (Min: " << constraints.min_acceptable_circularity << ")";
-    // --- END: NEW DEBUG LOG ---
 
     LOG_TRACE << "    -> REJECTED on geometry.";
     return false;
+  } else {
+    // --- START: NEW DEBUG LOG FOR ACCEPTED CONTOURS ---
+    LOG_INFO << "      Contour ACCEPTED. Area: " << std::fixed
+             << std::setprecision(1) << area
+             << " (Min: " << constraints.min_acceptable_area
+             << ", Max: " << constraints.max_acceptable_area
+             << "), Circularity: " << std::setprecision(3) << circularity
+             << " (Min: " << constraints.min_acceptable_circularity << ")";
+    // --- END: NEW DEBUG LOG ---
+    return true;
   }
-
-  return true;
 }
 
 // --- Refactored Utility Function 5: Finalize and Classify Blob ---
@@ -2932,6 +2937,9 @@ static void finalize_and_classify_blob(
 // --- REFACTORED Main Orchestrator Function ---
 // This version calls the new find_contours_in_area_range and processes multiple
 // candidates.
+// --- REFACTORED Main Orchestrator Function ---
+// This version calls the new find_contours_in_area_range and processes multiple
+// candidates.
 bool find_best_round_shape_iterative(
     const cv::Mat &image_to_search_bgr, const cv::Rect &roi_in_image,
     float expected_stone_radius_in_image, float initial_target_L_value_hint,
@@ -2979,16 +2987,26 @@ bool find_best_round_shape_iterative(
       // STEP 3b: Validate the geometry of each candidate contour.
       for (const auto &candidate_contour : candidate_contours) {
         if (validate_contour_geometry(candidate_contour, constraints)) {
-          LOG_INFO << "    FBS ACCEPTED CANDIDATE at L_base=" << current_base_L
-                   << ", L_tol=" << current_l_tol;
-
-          // STEP 3c: It's valid! Finalize blob data and add to output vector.
+          // Geometry is valid, now finalize and check color before accepting.
           CandidateBlob found_blob;
           finalize_and_classify_blob(candidate_contour, roi_lab_content,
                                      calibDataForColorClassification,
                                      current_base_L, current_l_tol, found_blob);
-          found_blob.roi_used_in_search = roi_in_image;
-          out_found_blob_vec.push_back(found_blob);
+
+          // --- START: NEW COLOR VALIDATION STEP ---
+          if (found_blob.classified_color_after_shape_found != EMPTY) {
+            // Only accept if it's classified as BLACK or WHITE
+            LOG_INFO
+                << "      => Candidate PASSED color validation. Accepting.";
+            found_blob.roi_used_in_search = roi_in_image;
+            out_found_blob_vec.push_back(found_blob);
+          } else {
+            // This will reject blobs from the empty board, like in TR attempt
+            // #7
+            LOG_INFO << "      => Candidate FAILED color validation "
+                        "(classified as EMPTY). Rejecting.";
+          }
+          // --- END: NEW COLOR VALIDATION STEP ---
 
         } else {
           // --- START: ADDED DEBUG VISUALIZATION FOR REJECTED CONTOURS ---
@@ -3322,7 +3340,8 @@ static bool perform_pass2_stone_verification(
   // The color to look for is the one associated with the blob we found in
   // Pass 1.
   cv::Vec3f pass2_verification_lab_color = {found_blob_pass1.l_base_used,
-                                            128.0f, 128.0f};
+                                            ITERATIVE_AB_TARGET_NEUTRAL,
+                                            ITERATIVE_AB_TARGET_NEUTRAL};
 
   // Calculate the expected radius in this new, more accurate corrected view.
   float expected_radius_pass2_final = calculateAdaptiveSampleRadius(
@@ -3345,9 +3364,10 @@ static bool perform_pass2_stone_verification(
 
   return detectSpecificColoredRoundShape(
       image_pass2_corrected, focused_roi_pass2_final,
-      pass2_verification_lab_color, CALIB_L_TOLERANCE_STONE,
-      CALIB_AB_TOLERANCE_STONE, expected_radius_pass2_final,
-      detected_stone_center, out_detected_stone_radius_in_final_corrected);
+      pass2_verification_lab_color, found_blob_pass1.l_tolerance_used,
+      CALIB_AB_TOLERANCE_STONE + ITERATIVE_AB_TOL_MARGIN,
+      expected_radius_pass2_final, detected_stone_center,
+      out_detected_stone_radius_in_final_corrected);
 }
 
 // =================================================================================
@@ -3507,30 +3527,42 @@ bool adaptive_detect_stone_robust(
       LOG_INFO << "  SUCCESS on attempt #" << (attempt + 1)
                << ". Blob found. Proceeding to Pass 2.";
 
-      // --- START: NEW DEBUG VISUALIZATION FOR PASS 1 ---
-      if (bDebug && targetScanQuadrant == CornerQuadrant::TOP_RIGHT) {
+      // --- START: MODIFIED DEBUG VISUALIZATION FOR PASS 1 ---
+      if (bDebug && (targetScanQuadrant == CornerQuadrant::TOP_RIGHT ||
+                     targetScanQuadrant == CornerQuadrant::TOP_LEFT)) {
         cv::Mat p1_candidates_vis = image_pass1_corrected.clone();
         cv::rectangle(p1_candidates_vis, roi_quadrant_pass1,
                       cv::Scalar(255, 255, 0), 2); // ROI in Cyan
         int counter = 0;
         for (const auto &blob : found_blob_pass1_vec) {
+
+          // --- FIX: Apply the ROI's offset before drawing ---
+          cv::Point roi_offset = blob.roi_used_in_search.tl();
+
+          // Use the 'offset' parameter of drawContours for a clean fix.
           cv::drawContours(
               p1_candidates_vis,
               std::vector<std::vector<cv::Point>>{blob.contour_points_in_roi},
-              -1, cv::Scalar(0, 255, 255), 1); // Candidate in Yellow
-          cv::Point blob_center =
-              blob.center_in_roi_coords +
-              cv::Point2f(blob.roi_used_in_search.x, blob.roi_used_in_search.y);
+              -1, cv::Scalar(0, 255, 255), 3, cv::LINE_AA, cv::noArray(), 0,
+              roi_offset); // Candidate in THICK Yellow
+
+          // Also offset the center for the text label
+          cv::Point blob_center_absolute =
+              blob.center_in_roi_coords + cv::Point2f(roi_offset);
+
           cv::putText(p1_candidates_vis, std::to_string(counter++),
-                      blob_center + cv::Point(5, 5), cv::FONT_HERSHEY_SIMPLEX,
-                      0.5, cv::Scalar(255, 100, 100), 2);
+                      blob_center_absolute + cv::Point(5, 5),
+                      cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 100, 100),
+                      2);
         }
-        std::string filename = "share/pass1_TR_candidates_attempt_" +
+        std::string filename = "share/pass1_" + quadrant_name_str +
+                               "_candidates_attempt_" +
                                std::to_string(attempt + 1) + ".jpg";
         cv::imwrite(filename, p1_candidates_vis);
-        LOG_DEBUG << "Saved Pass 1 TR candidate visualization to " << filename;
+        LOG_DEBUG << "Saved Pass 1 " << quadrant_name_str
+                  << " candidate visualization to " << filename;
       }
-      // --- END: NEW DEBUG VISUALIZATION FOR PASS 1 ---
+      // --- END: MODIFIED DEBUG VISUALIZATION ---
 
     } else {
       continue;
@@ -3573,8 +3605,9 @@ bool adaptive_detect_stone_robust(
         LOG_INFO << "RobustDetect Pass 2 SUCCESS: Stone verified in final "
                     "transform.";
 
-        // --- START: NEW DEBUG VISUALIZATION FOR PASS 2 ---
-        if (bDebug && targetScanQuadrant == CornerQuadrant::TOP_RIGHT) {
+        // --- MODIFIED DEBUG VISUALIZATION FOR PASS 2 (NOW FOR TL & TR) ---
+        if (bDebug && (targetScanQuadrant == CornerQuadrant::TOP_RIGHT ||
+                       targetScanQuadrant == CornerQuadrant::TOP_LEFT)) {
           cv::Mat p2_verification_vis = image_pass2_corrected.clone();
           cv::circle(
               p2_verification_vis, pass2_detected_center,
@@ -3582,20 +3615,21 @@ bool adaptive_detect_stone_robust(
               cv::Scalar(0, 255, 0), 2); // Verified stone in Green
           cv::circle(p2_verification_vis, pass2_detected_center, 3,
                      cv::Scalar(0, 0, 255), -1); // Center in Red
-          std::string filename = "share/pass2_TR_verified_attempt_" +
+          std::string filename = "share/pass2_" + quadrant_name_str +
+                                 "_verified_attempt_" +
                                  std::to_string(attempt + 1) + ".jpg";
           cv::imwrite(filename, p2_verification_vis);
-          LOG_DEBUG << "Saved Pass 2 TR verification visualization to "
-                    << filename;
+          LOG_DEBUG << "Saved Pass 2 " << quadrant_name_str
+                    << " verification visualization to " << filename;
 
-          cv::imshow("Pass 2 Verified - TR (Attempt " +
-                         std::to_string(attempt + 1) + ")",
-                     p2_verification_vis);
-          cv::waitKey(1);
-          cv::destroyWindow("Pass 2 Verified - TR (Attempt " +
-                            std::to_string(attempt + 1) + ")");
+          std::string window_title = "Pass 2 Verified - " + quadrant_name_str +
+                                     " (Attempt " +
+                                     std::to_string(attempt + 1) + ")";
+          cv::imshow(window_title, p2_verification_vis);
+          cv::waitKey(0);
+          cv::destroyWindow(window_title);
         }
-        // --- END: NEW DEBUG VISUALIZATION FOR PASS 2 ---
+        // --- END DEBUG VISUALIZATION ---
         return true;
 
       } else {
