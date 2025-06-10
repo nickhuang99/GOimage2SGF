@@ -2764,14 +2764,17 @@ generate_l_value_candidates(float initial_target_L_value_hint, float l_base_min,
   return l_base_values_to_try;
 }
 
-// --- Refactored Utility Function 3: Find Largest Contour for Color Range ---
-// The workhorse function that creates a color mask and finds the largest raw
-// contour.
-static bool find_largest_contour_for_color_range(
+// --- REFACTORED Utility Function 3: Find Candidate Contours for Color Range
+// ---
+// Creates a color mask, finds all contours, and performs a rough area filter.
+static bool find_contours_in_area_range(
     const cv::Mat &roi_lab_content, float current_base_L, float current_l_tol,
     float fixed_ab_target_A, float fixed_ab_target_B, float fixed_ab_tolerance,
+    const StoneGeometryConstraints &constraints,
     // Output
-    std::vector<cv::Point> &out_largest_contour) {
+    std::vector<std::vector<cv::Point>> &out_candidate_contours) {
+
+  out_candidate_contours.clear();
 
   cv::Mat color_mask;
   cv::Scalar lab_lower(std::max(0.f, current_base_L - current_l_tol),
@@ -2798,24 +2801,20 @@ static bool find_largest_contour_for_color_range(
   cv::findContours(color_mask, contours, cv::RETR_EXTERNAL,
                    cv::CHAIN_APPROX_SIMPLE);
 
-  if (contours.empty())
+  if (contours.empty()) {
     return false;
+  }
 
-  double max_area_this_iter = 0;
-  const std::vector<cv::Point> *largest_contour_ptr = nullptr;
+  // Filter contours by area and add them to the output vector
   for (const auto &contour : contours) {
     double area = cv::contourArea(contour);
-    if (area > max_area_this_iter) {
-      max_area_this_iter = area;
-      largest_contour_ptr = &contour;
+    if (area >= constraints.min_acceptable_area &&
+        area <= constraints.max_acceptable_area) {
+      out_candidate_contours.push_back(contour);
     }
   }
 
-  if (largest_contour_ptr) {
-    out_largest_contour = *largest_contour_ptr;
-    return true;
-  }
-  return false;
+  return !out_candidate_contours.empty();
 }
 
 // --- Refactored Utility Function 4: Validate Contour Geometry ---
@@ -2907,8 +2906,9 @@ static void finalize_and_classify_blob(
            << out_found_blob.classified_color_after_shape_found;
 }
 
-// --- Refactored Main Orchestrator Function (with added debug visualization)
-// ---
+// --- REFACTORED Main Orchestrator Function ---
+// This version calls the new find_contours_in_area_range and processes multiple
+// candidates.
 bool find_best_round_shape_iterative(
     const cv::Mat &image_to_search_bgr, const cv::Rect &roi_in_image,
     float expected_stone_radius_in_image, float initial_target_L_value_hint,
@@ -2920,7 +2920,7 @@ bool find_best_round_shape_iterative(
 
   LOG_INFO << "find_best_round_shape_iterative (Refactored) in ROI: "
            << roi_in_image;
-  CandidateBlob out_found_blob;
+
   // STEP 1: Prepare common variables and validate inputs.
   cv::Rect valid_roi;
   cv::Mat roi_lab_content;
@@ -2944,66 +2944,70 @@ bool find_best_round_shape_iterative(
       LOG_TRACE << "  FBS Iteration: Trying Base_L=" << current_base_L
                 << ", L_tol=" << current_l_tol;
 
-      // STEP 3a: Find the largest contour for the current color range.
-      std::vector<cv::Point> largest_contour;
-      if (!find_largest_contour_for_color_range(
-              roi_lab_content, current_base_L, current_l_tol, fixed_ab_target_A,
-              fixed_ab_target_B, fixed_ab_tolerance, largest_contour)) {
-        continue; // No contours found for this color range, try next.
+      // STEP 3a: Find all candidate contours for the current color range.
+      std::vector<std::vector<cv::Point>> candidate_contours;
+      if (!find_contours_in_area_range(roi_lab_content, current_base_L,
+                                       current_l_tol, fixed_ab_target_A,
+                                       fixed_ab_target_B, fixed_ab_tolerance,
+                                       constraints, candidate_contours)) {
+        continue; // No contours found in the area range, try next iteration.
       }
 
-      // STEP 3b: Validate if the largest contour has the geometry of a stone.
-      if (validate_contour_geometry(largest_contour, constraints)) {
-        LOG_INFO << "    FBS ACCEPTED CANDIDATE at L_base=" << current_base_L
-                 << ", L_tol=" << current_l_tol;
-        // STEP 3c: It's valid! Finalize the blob data, classify it, and return
-        // success.
-        finalize_and_classify_blob(
-            largest_contour, roi_lab_content, calibDataForColorClassification,
-            current_base_L, current_l_tol, out_found_blob);
-        out_found_blob.roi_used_in_search = roi_in_image;
-        out_found_blob_vec.push_back(out_found_blob);
-        // return true; // "First Qualified Largest Candidate" logic.
-      } else {
-        // --- START: ADDED DEBUG VISUALIZATION FOR REJECTED CONTOURS ---
-        if (bDebug) {
-          cv::Mat roi_bgr_debug_display =
-              image_to_search_bgr(valid_roi).clone();
-          cv::drawContours(roi_bgr_debug_display,
-                           std::vector<std::vector<cv::Point>>{largest_contour},
-                           -1, cv::Scalar(0, 0, 255),
-                           1); // Red for rejected largest
+      // STEP 3b: Validate the geometry of each candidate contour.
+      for (const auto &candidate_contour : candidate_contours) {
+        if (validate_contour_geometry(candidate_contour, constraints)) {
+          LOG_INFO << "    FBS ACCEPTED CANDIDATE at L_base=" << current_base_L
+                   << ", L_tol=" << current_l_tol;
 
-          double area = cv::contourArea(largest_contour);
-          double perimeter = cv::arcLength(largest_contour, true);
-          double circularity =
-              (perimeter > 1.0) ? (4 * CV_PI * area) / (perimeter * perimeter)
-                                : 0.0;
+          // STEP 3c: It's valid! Finalize blob data and add to output vector.
+          CandidateBlob found_blob;
+          finalize_and_classify_blob(candidate_contour, roi_lab_content,
+                                     calibDataForColorClassification,
+                                     current_base_L, current_l_tol, found_blob);
+          found_blob.roi_used_in_search = roi_in_image;
+          out_found_blob_vec.push_back(found_blob);
 
-          std::string text_area = "Area: " + std::to_string((int)area);
-          std::string text_circ =
-              "Circ: " + std::to_string(circularity).substr(0, 4);
+        } else {
+          // --- START: ADDED DEBUG VISUALIZATION FOR REJECTED CONTOURS ---
+          if (bDebug) {
+            cv::Mat roi_bgr_debug_display =
+                image_to_search_bgr(valid_roi).clone();
+            cv::drawContours(
+                roi_bgr_debug_display,
+                std::vector<std::vector<cv::Point>>{candidate_contour}, -1,
+                cv::Scalar(0, 0, 255), 1); // Red for rejected largest
 
-          cv::putText(roi_bgr_debug_display, "REJECTED (Geometry)",
-                      cv::Point(5, 15), cv::FONT_HERSHEY_SIMPLEX, 0.4,
-                      cv::Scalar(0, 0, 255), 1);
-          cv::putText(roi_bgr_debug_display, text_area, cv::Point(5, 30),
-                      cv::FONT_HERSHEY_SIMPLEX, 0.4, cv::Scalar(0, 255, 255),
-                      1);
-          cv::putText(roi_bgr_debug_display, text_circ, cv::Point(5, 45),
-                      cv::FONT_HERSHEY_SIMPLEX, 0.4, cv::Scalar(0, 255, 255),
-                      1);
+            double area = cv::contourArea(candidate_contour);
+            double perimeter = cv::arcLength(candidate_contour, true);
+            double circularity =
+                (perimeter > 1.0) ? (4 * CV_PI * area) / (perimeter * perimeter)
+                                  : 0.0;
 
-          std::string window_name =
-              "FBS Rejected Geom (L:" + std::to_string((int)current_base_L) +
-              " T:" + std::to_string((int)current_l_tol) + ")";
-          cv::imshow(window_name, roi_bgr_debug_display);
-          if (cv::waitKey(0) == 27) {
-            return false;
+            std::string text_area = "Area: " + std::to_string((int)area);
+            std::string text_circ =
+                "Circ: " + std::to_string(circularity).substr(0, 4);
+
+            cv::putText(roi_bgr_debug_display, "REJECTED (Geometry)",
+                        cv::Point(5, 15), cv::FONT_HERSHEY_SIMPLEX, 0.4,
+                        cv::Scalar(0, 0, 255), 1);
+            cv::putText(roi_bgr_debug_display, text_area, cv::Point(5, 30),
+                        cv::FONT_HERSHEY_SIMPLEX, 0.4, cv::Scalar(0, 255, 255),
+                        1);
+            cv::putText(roi_bgr_debug_display, text_circ, cv::Point(5, 45),
+                        cv::FONT_HERSHEY_SIMPLEX, 0.4, cv::Scalar(0, 255, 255),
+                        1);
+
+            std::string window_name =
+                "FBS Rejected Geom (L:" + std::to_string((int)current_base_L) +
+                " T:" + std::to_string((int)current_l_tol) + ")";
+            cv::imshow(window_name, roi_bgr_debug_display);
+            if (cv::waitKey(0) == 27) {
+              return false;
+            }
+            cv::destroyWindow(window_name);
           }
-          cv::destroyWindow(window_name);
+          // --- END: ADDED DEBUG VISUALIZATION ---
         }
-        // --- END: ADDED DEBUG VISUALIZATION ---
       }
       if (l_tol_step == 0 && l_tol_min == l_tol_max)
         break;
@@ -3011,10 +3015,12 @@ bool find_best_round_shape_iterative(
     if (l_base_step == 0 && l_base_min == l_base_max)
       break;
   }
+
   if (out_found_blob_vec.empty()) {
     LOG_WARN << "  FBS: No blob met geometry criteria after all iterations.";
   }
-  return !out_found_blob_vec.empty(); // No suitable candidate was found.
+
+  return !out_found_blob_vec.empty();
 }
 // =================================================================================
 // END OF REFACTORING
@@ -3284,6 +3290,7 @@ static bool perform_pass2_stone_verification(
     const CandidateBlob &found_blob_pass1, // Used for color hint
     int ideal_grid_col, int ideal_grid_row,
     // Outputs
+    cv::Point2f &detected_stone_center,
     float &out_detected_stone_radius_in_final_corrected) {
 
   // The color to look for is the one associated with the blob we found in
@@ -3310,15 +3317,11 @@ static bool perform_pass2_stone_verification(
     return false;
   }
 
-  cv::Point2f
-      detected_stone_center; // Local to this function, not needed by caller.
-  bool final_stone_found = detectSpecificColoredRoundShape(
+  return detectSpecificColoredRoundShape(
       image_pass2_corrected, focused_roi_pass2_final,
       pass2_verification_lab_color, CALIB_L_TOLERANCE_STONE,
       CALIB_AB_TOLERANCE_STONE, expected_radius_pass2_final,
       detected_stone_center, out_detected_stone_radius_in_final_corrected);
-
-  return final_stone_found;
 }
 
 // =================================================================================
@@ -3481,12 +3484,6 @@ bool adaptive_detect_stone_robust(
       continue;
     }
     for (const CandidateBlob &found_blob_pass1 : found_blob_pass1_vec) {
-      LOG_DEBUG << "found_blob_pass1: coord in center: "
-                << found_blob_pass1.center_in_roi_coords
-                << " area:" << found_blob_pass1.area
-                << " circularity: " << found_blob_pass1.circularity
-                << " lab_used: " << found_blob_pass1.l_base_used
-                << " lab_tol: " << found_blob_pass1.l_tolerance_used;
       out_pass1_classified_color =
           found_blob_pass1.classified_color_after_shape_found;
       LOG_INFO << "RobustDetect Pass 1: Shape found and classified as "
@@ -3497,7 +3494,7 @@ bool adaptive_detect_stone_robust(
           found_blob_pass1.center_in_roi_coords +
           cv::Point2f(found_blob_pass1.roi_used_in_search.x,
                       found_blob_pass1.roi_used_in_search.y);
-      LOG_DEBUG << "p1_blob_center_in_p1_image:" << p1_blob_center_in_p1_image;
+
       cv::Mat M2; // FIX: Declare M2 before use
       M2 = refine_perspective_transform_from_blob(
           rawBgrImage, M1, p1_blob_center_in_p1_image, p1_source_points_raw,
@@ -3518,13 +3515,13 @@ bool adaptive_detect_stone_robust(
         continue;
       }
       out_final_corrected_image = image_pass2_corrected.clone();
-
+      cv::Point2f pass2_detected_center;
       if (perform_pass2_stone_verification(
               image_pass2_corrected, found_blob_pass1, ideal_grid_col,
-              ideal_grid_row, out_detected_stone_radius_in_final_corrected)) {
+              ideal_grid_row, pass2_detected_center,
+              out_detected_stone_radius_in_final_corrected)) {
         LOG_INFO << "RobustDetect Pass 2 SUCCESS: Stone verified in final "
-                    "transform. corner: "
-                 << out_final_raw_corner_guess;
+                    "transform.";
         return true;
       } else {
         LOG_WARN
