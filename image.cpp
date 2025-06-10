@@ -38,8 +38,20 @@ const double ROUGH_ABS_STONE_AREA_MAX_FACTOR = 2.5;
 
 const double MIN_STONE_CIRCULARITY_WHITE = 0.70;
 const double MIN_STONE_CIRCULARITY_BLACK = 0.65;
-// const double MIN_STONE_CIRCULARITY_WHITE = 0.65;
-// const double MIN_STONE_CIRCULARITY_BLACK = 0.50;
+
+// --- NEW CONSTANT DEFINITIONS for find_best_round_shape_iterative ---
+const float ITERATIVE_L_BASE_MIN = 20.0f;
+const float ITERATIVE_L_BASE_MAX =
+    245.0f; // Increased to better handle white stone highlights
+const float ITERATIVE_L_BASE_STEP = 5.0f;
+const float ITERATIVE_L_TOL_MIN = 5.0f;
+const float ITERATIVE_L_TOL_MAX = 30.0f;
+const float ITERATIVE_L_TOL_STEP = 5.0f;
+const float ITERATIVE_AB_TARGET_NEUTRAL =
+    128.0f; // Neutral gray center for A and B channels
+const float ITERATIVE_AB_TOL_MARGIN =
+    5.0f; // Extra tolerance for the A/B channels
+
 const int MIN_CONTOUR_POINTS_STONE = 5;
 
 const float MAX_ROI_FACTOR_FOR_CALC = 1.0f;
@@ -874,7 +886,7 @@ static void classifyIntersectionsByCalibration(
       }
     }
   }
-  if (Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
+  if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
     cv::imshow("Direct Classification Result (Helper)",
                board_with_stones_output);
     cv::waitKey(0);
@@ -1098,7 +1110,7 @@ cv::Mat correctPerspective(const cv::Mat &image) {
   cv::warpPerspective(image, corrected_image, perspective_matrix,
                       cv::Size(width, height));
 
-  if (Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
+  if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
     cv::Mat display_original = image.clone();
     cv::Mat display_corrected = corrected_image.clone();
     for (size_t i = 0; i < input_corners.size(); ++i)
@@ -1709,7 +1721,7 @@ void processGoBoard(const cv::Mat &image_bgr_in, cv::Mat &board_state_out,
               << std::endl;
     THROWGEMERROR("Corrected perspective image is empty in processGoBoard.");
   }
-  if (Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
+  if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
     cv::imshow("Corrected Perspective (processGoBoard)", image_bgr_corrected);
     cv::waitKey(1);
   }
@@ -1720,7 +1732,7 @@ void processGoBoard(const cv::Mat &image_bgr_in, cv::Mat &board_state_out,
     LOG_ERROR << "Lab converted image is empty in processGoBoard." << std::endl;
     THROWGEMERROR("Lab converted image is empty in processGoBoard.");
   }
-  if (Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
+  if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
     cv::imshow("Lab Image (processGoBoard)", image_lab);
     cv::waitKey(1);
   }
@@ -1776,7 +1788,7 @@ void processGoBoard(const cv::Mat &image_bgr_in, cv::Mat &board_state_out,
       num_intersections, image_bgr_corrected, adaptive_sample_radius,
       board_state_out, board_with_stones_out);
 
-  if (Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
+  if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
     cv::imshow("processGoBoard - Final Stones Output", board_with_stones_out);
     cv::waitKey(0);
     // It's good practice to destroy specific windows if they are no longer
@@ -1877,7 +1889,7 @@ bool detectSpecificColoredRoundShape(const cv::Mat &inputBgrImage,
   cv::morphologyEx(colorMask, colorMask, cv::MORPH_CLOSE, close_kernel,
                    cv::Point(-1, -1), MORPH_CLOSE_ITERATIONS_STONE);
 
-  if (bDebug) {
+  if (bDebug && false) {
     std::string roi_window_name =
         "Color Mask ROI (L:" +
         std::to_string(static_cast<int>(expectedAvgLabColor[0])) + " X" +
@@ -1944,7 +1956,7 @@ bool detectSpecificColoredRoundShape(const cv::Mat &inputBgrImage,
                               ")")
                 << ", Expected Area: " << Num2Str(expectedStoneArea).str()
                 << std::endl;
-      if (bDebug)
+      if (bDebug && false)
         cv::drawContours(roi_contour_vis_canvas,
                          std::vector<std::vector<cv::Point>>{contour}, -1,
                          cv::Scalar(0, 165, 255), 1);
@@ -1954,7 +1966,7 @@ bool detectSpecificColoredRoundShape(const cv::Mat &inputBgrImage,
       LOG_TRACE << "      -> Contour " << contour_idx << " (ROI " << roi.x
                 << "," << roi.y << ") REJECTED by circularity " << circularity
                 << " (min_circ=" << minCircularity << ")" << std::endl;
-      if (bDebug) {
+      if (bDebug && false) {
         cv::drawContours(roi_contour_vis_canvas,
                          std::vector<std::vector<cv::Point>>{contour}, -1,
                          cv::Scalar(255, 0, 0), 1);
@@ -1969,7 +1981,7 @@ bool detectSpecificColoredRoundShape(const cv::Mat &inputBgrImage,
               << roi.y
               << ") PASSED filters. Current best area: " << bestContourScore
               << std::endl;
-    if (bDebug)
+    if (bDebug && false)
       cv::drawContours(roi_contour_vis_canvas,
                        std::vector<std::vector<cv::Point>>{contour}, -1,
                        cv::Scalar(0, 255, 255), 1);
@@ -1982,11 +1994,11 @@ bool detectSpecificColoredRoundShape(const cv::Mat &inputBgrImage,
     }
   }
 
-  if (bDebug && !contours.empty()) {
+  if (bDebug && !contours.empty() && false) {
     std::string roi_contours_win_name = "Evaluated Contours (ROI X" +
                                         std::to_string(roi.x) + " Y" +
                                         std::to_string(roi.y) + ")";
-    if (!bestContour.empty()) {
+    if (!bestContour.empty() && false) {
       cv::drawContours(roi_contour_vis_canvas,
                        std::vector<std::vector<cv::Point>>{bestContour}, -1,
                        cv::Scalar(0, 255, 0), 2);
@@ -2842,6 +2854,17 @@ validate_contour_geometry(const std::vector<cv::Point> &contour,
   if (area < constraints.min_acceptable_area ||
       area > constraints.max_acceptable_area ||
       circularity < constraints.min_acceptable_circularity) {
+
+    // --- START: NEW DEBUG LOG ---
+    // Log the details of the rejection at INFO level for easy viewing.
+    LOG_INFO << "      Contour REJECTED. Area: " << std::fixed
+             << std::setprecision(1) << area
+             << " (Min: " << constraints.min_acceptable_area
+             << ", Max: " << constraints.max_acceptable_area
+             << "), Circularity: " << std::setprecision(3) << circularity
+             << " (Min: " << constraints.min_acceptable_circularity << ")";
+    // --- END: NEW DEBUG LOG ---
+
     LOG_TRACE << "    -> REJECTED on geometry.";
     return false;
   }
@@ -2969,7 +2992,7 @@ bool find_best_round_shape_iterative(
 
         } else {
           // --- START: ADDED DEBUG VISUALIZATION FOR REJECTED CONTOURS ---
-          if (bDebug) {
+          if (bDebug && false) {
             cv::Mat roi_bgr_debug_display =
                 image_to_search_bgr(valid_roi).clone();
             cv::drawContours(
@@ -3222,8 +3245,11 @@ perform_pass1_blob_detection(const cv::Mat &image_pass1_corrected,
   // Call the iterative shape finder.
   bool blob_found = find_best_round_shape_iterative(
       image_pass1_corrected, out_roi_quadrant_pass1, expected_radius_pass1,
-      hint_target_L_lab_from_calib[0], 20.0f, 235.0f, 5.0f, 5.0f, 30.0f, 5.0f,
-      128.0f, 128.0f, CALIB_AB_TOLERANCE_STONE + 5.0f, out_found_blob_pass1,
+      hint_target_L_lab_from_calib[0], ITERATIVE_L_BASE_MIN,
+      ITERATIVE_L_BASE_MAX, ITERATIVE_L_BASE_STEP, ITERATIVE_L_TOL_MIN,
+      ITERATIVE_L_TOL_MAX, ITERATIVE_L_TOL_STEP, ITERATIVE_AB_TARGET_NEUTRAL,
+      ITERATIVE_AB_TARGET_NEUTRAL,
+      CALIB_AB_TOLERANCE_STONE + ITERATIVE_AB_TOL_MARGIN, out_found_blob_pass1,
       calibData);
 
   if (!blob_found) {
@@ -3435,7 +3461,7 @@ bool adaptive_detect_stone_robust(
 
   cv::Mat M1;
   cv::Mat image_pass1_corrected;
-  std::vector<cv::Point2f> p1_source_points_raw; // FIX: Declare before loop
+  std::vector<cv::Point2f> p1_source_points_raw;
 
   for (int attempt = 0; attempt < MAX_GUESS_ATTEMPTS; ++attempt) {
     LOG_INFO << "RobustDetect Pass 1, Attempt #" << (attempt + 1) << "/"
@@ -3480,6 +3506,32 @@ bool adaptive_detect_stone_robust(
       p1_source_points_raw = current_p1_source_points;
       LOG_INFO << "  SUCCESS on attempt #" << (attempt + 1)
                << ". Blob found. Proceeding to Pass 2.";
+
+      // --- START: NEW DEBUG VISUALIZATION FOR PASS 1 ---
+      if (bDebug && targetScanQuadrant == CornerQuadrant::TOP_RIGHT) {
+        cv::Mat p1_candidates_vis = image_pass1_corrected.clone();
+        cv::rectangle(p1_candidates_vis, roi_quadrant_pass1,
+                      cv::Scalar(255, 255, 0), 2); // ROI in Cyan
+        int counter = 0;
+        for (const auto &blob : found_blob_pass1_vec) {
+          cv::drawContours(
+              p1_candidates_vis,
+              std::vector<std::vector<cv::Point>>{blob.contour_points_in_roi},
+              -1, cv::Scalar(0, 255, 255), 1); // Candidate in Yellow
+          cv::Point blob_center =
+              blob.center_in_roi_coords +
+              cv::Point2f(blob.roi_used_in_search.x, blob.roi_used_in_search.y);
+          cv::putText(p1_candidates_vis, std::to_string(counter++),
+                      blob_center + cv::Point(5, 5), cv::FONT_HERSHEY_SIMPLEX,
+                      0.5, cv::Scalar(255, 100, 100), 2);
+        }
+        std::string filename = "share/pass1_TR_candidates_attempt_" +
+                               std::to_string(attempt + 1) + ".jpg";
+        cv::imwrite(filename, p1_candidates_vis);
+        LOG_DEBUG << "Saved Pass 1 TR candidate visualization to " << filename;
+      }
+      // --- END: NEW DEBUG VISUALIZATION FOR PASS 1 ---
+
     } else {
       continue;
     }
@@ -3489,14 +3541,12 @@ bool adaptive_detect_stone_robust(
       LOG_INFO << "RobustDetect Pass 1: Shape found and classified as "
                << out_pass1_classified_color;
 
-      // === PASS 2 REFINEMENT ===
       cv::Point2f p1_blob_center_in_p1_image =
           found_blob_pass1.center_in_roi_coords +
           cv::Point2f(found_blob_pass1.roi_used_in_search.x,
                       found_blob_pass1.roi_used_in_search.y);
 
-      cv::Mat M2; // FIX: Declare M2 before use
-      M2 = refine_perspective_transform_from_blob(
+      cv::Mat M2 = refine_perspective_transform_from_blob(
           rawBgrImage, M1, p1_blob_center_in_p1_image, p1_source_points_raw,
           target_ideal_dest_corner_idx, targetScanQuadrant,
           getBoardCornersCorrected(rawBgrImage.cols, rawBgrImage.rows),
@@ -3522,7 +3572,32 @@ bool adaptive_detect_stone_robust(
               out_detected_stone_radius_in_final_corrected)) {
         LOG_INFO << "RobustDetect Pass 2 SUCCESS: Stone verified in final "
                     "transform.";
+
+        // --- START: NEW DEBUG VISUALIZATION FOR PASS 2 ---
+        if (bDebug && targetScanQuadrant == CornerQuadrant::TOP_RIGHT) {
+          cv::Mat p2_verification_vis = image_pass2_corrected.clone();
+          cv::circle(
+              p2_verification_vis, pass2_detected_center,
+              static_cast<int>(out_detected_stone_radius_in_final_corrected),
+              cv::Scalar(0, 255, 0), 2); // Verified stone in Green
+          cv::circle(p2_verification_vis, pass2_detected_center, 3,
+                     cv::Scalar(0, 0, 255), -1); // Center in Red
+          std::string filename = "share/pass2_TR_verified_attempt_" +
+                                 std::to_string(attempt + 1) + ".jpg";
+          cv::imwrite(filename, p2_verification_vis);
+          LOG_DEBUG << "Saved Pass 2 TR verification visualization to "
+                    << filename;
+
+          cv::imshow("Pass 2 Verified - TR (Attempt " +
+                         std::to_string(attempt + 1) + ")",
+                     p2_verification_vis);
+          cv::waitKey(1);
+          cv::destroyWindow("Pass 2 Verified - TR (Attempt " +
+                            std::to_string(attempt + 1) + ")");
+        }
+        // --- END: NEW DEBUG VISUALIZATION FOR PASS 2 ---
         return true;
+
       } else {
         LOG_WARN
             << "RobustDetect Pass 2 FAILED final verification. Using Pass 1's "
@@ -3532,7 +3607,6 @@ bool adaptive_detect_stone_robust(
   }
   return false;
 }
-
 // Add this new helper function to image.cpp
 bool sampleCalibrationColors(const cv::Mat &raw_image,
                              CalibrationData &calibData) {
