@@ -33,13 +33,13 @@ const int MORPH_CLOSE_ITERATIONS_STONE =
 const double ABS_STONE_AREA_MIN_FACTOR = 0.7;
 const double ABS_STONE_AREA_MAX_FACTOR = 1.5;
 
+// pass1 relaxed
 const double ROUGH_ABS_STONE_AREA_MIN_FACTOR = 0.4;
 const double ROUGH_ABS_STONE_AREA_MAX_FACTOR = 2.5;
+const double MIN_ROUGH_STONE_CIRCULARITY = 0.55;
 
-// pass1 relaxed
-const double MIN_ROUGH_STONE_CIRCULARITY = 0.60;
 const double MIN_STONE_CIRCULARITY_WHITE = 0.70;
-const double MIN_STONE_CIRCULARITY_BLACK = 0.65;
+const double MIN_STONE_CIRCULARITY_BLACK = 0.70;
 
 // --- NEW CONSTANT DEFINITIONS for find_best_round_shape_iterative ---
 const float ITERATIVE_L_BASE_MIN = 20.0f;
@@ -2747,9 +2747,7 @@ static bool prepare_iteration_parameters(
   out_constraints.max_acceptable_area =
       expected_area * ROUGH_ABS_STONE_AREA_MAX_FACTOR;
   // Use a general, relaxed circularity for the initial shape search.
-  //out_constraints.min_acceptable_circularity = MIN_ROUGH_STONE_CIRCULARITY;
-  out_constraints.min_acceptable_circularity =
-      std::max(MIN_STONE_CIRCULARITY_WHITE, MIN_STONE_CIRCULARITY_BLACK);
+  out_constraints.min_acceptable_circularity = MIN_ROUGH_STONE_CIRCULARITY;
 
   LOG_DEBUG << "  FBS Prep: Expected Area: " << expected_area
             << " (Range: " << out_constraints.min_acceptable_area << "-"
@@ -2837,6 +2835,11 @@ static bool find_contours_in_area_range(
     if (area >= constraints.min_acceptable_area &&
         area <= constraints.max_acceptable_area) {
       out_candidate_contours.push_back(contour);
+    } else {
+      LOG_TRACE << "find_contours_in_area_range: (min_acceptable_area="
+                << constraints.min_acceptable_area
+                << ", max_acceptable_area=" << constraints.max_acceptable_area
+                << ") rejects area=" << area;
     }
   }
 
@@ -2869,23 +2872,22 @@ validate_contour_geometry(const std::vector<cv::Point> &contour,
       area > constraints.max_acceptable_area ||
       circularity < constraints.min_acceptable_circularity) {
 
-    LOG_INFO << "      Contour REJECTED. Area: " << std::fixed
-             << std::setprecision(1) << area
-             << " (Min: " << constraints.min_acceptable_area
-             << ", Max: " << constraints.max_acceptable_area
-             << "), Circularity: " << std::setprecision(3) << circularity
-             << " (Min: " << constraints.min_acceptable_circularity << ")";
-
-    LOG_TRACE << "    -> REJECTED on geometry.";
+    LOG_TRACE << "      Contour REJECTED. Area: " << std::fixed
+              << std::setprecision(1) << area
+              << " (Min: " << constraints.min_acceptable_area
+              << ", Max: " << constraints.max_acceptable_area
+              << "), Circularity: " << std::setprecision(3) << circularity
+              << " (Min: " << constraints.min_acceptable_circularity << ")"
+              << "    -> REJECTED on geometry.";
     return false;
   } else {
     // --- START: NEW DEBUG LOG FOR ACCEPTED CONTOURS ---
-    LOG_INFO << "      Contour ACCEPTED. Area: " << std::fixed
-             << std::setprecision(1) << area
-             << " (Min: " << constraints.min_acceptable_area
-             << ", Max: " << constraints.max_acceptable_area
-             << "), Circularity: " << std::setprecision(3) << circularity
-             << " (Min: " << constraints.min_acceptable_circularity << ")";
+    LOG_TRACE << "      Contour ACCEPTED. Area: " << std::fixed
+              << std::setprecision(1) << area
+              << " (Min: " << constraints.min_acceptable_area
+              << ", Max: " << constraints.max_acceptable_area
+              << "), Circularity: " << std::setprecision(3) << circularity
+              << " (Min: " << constraints.min_acceptable_circularity << ")";
     // --- END: NEW DEBUG LOG ---
     return true;
   }
@@ -2942,10 +2944,10 @@ static void finalize_and_classify_blob(
   } else {
     out_found_blob.classified_color_after_shape_found = EMPTY;
   }
-  LOG_INFO << "      Qualified blob sampled Lab: "
-           << out_found_blob.sampled_lab_color_from_contour
-           << ", Classified as: "
-           << out_found_blob.classified_color_after_shape_found;
+  LOG_DEBUG << "      Qualified blob sampled Lab: "
+            << out_found_blob.sampled_lab_color_from_contour
+            << ", Classified as: "
+            << out_found_blob.classified_color_after_shape_found;
 }
 
 // --- REFACTORED Main Orchestrator Function ---
@@ -3774,7 +3776,8 @@ static bool adaptive_detect_stone_for_calib(const cv::Mat &rawBgrImage,
   const int MAX_GUESS_ATTEMPTS = 9 * 9 - 1;
   cv::Mat M1;
   std::vector<cv::Point2f> p1_source_points_raw;
-
+  const std::vector<cv::Point2f> ideal_corners =
+      getBoardCornersCorrected(rawBgrImage.cols, rawBgrImage.rows);
   for (int attempt = 0; attempt < MAX_GUESS_ATTEMPTS; ++attempt) {
     if (!generate_next_initial_guess(rawBgrImage.size(), targetQuadrant,
                                      attempt, p1_raw_corner_initial_guess)) {
@@ -3784,8 +3787,7 @@ static bool adaptive_detect_stone_for_calib(const cv::Mat &rawBgrImage,
     std::vector<cv::Point2f> current_p1_source_points;
     cv::Mat image_pass1_corrected;
     cv::Mat current_M1 = calculate_initial_perspective_transform(
-        rawBgrImage, p1_raw_corner_initial_guess, targetQuadrant,
-        getBoardCornersCorrected(rawBgrImage.cols, rawBgrImage.rows),
+        rawBgrImage, p1_raw_corner_initial_guess, targetQuadrant, ideal_corners,
         current_p1_source_points);
 
     if (current_M1.empty())
