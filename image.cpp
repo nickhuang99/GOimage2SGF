@@ -1010,6 +1010,12 @@ CalibrationData loadCalibrationData(const std::string &config_path) {
       LOG_WARN
           << "  One or more corner Lab color keys (L/A/B) missing from config "
           << config_path << std::endl;
+      if (bDebug) {
+        LOG_DEBUG << "config_map: ";
+        for (const auto &it : config_map) {
+          LOG_DEBUG << "kye: " << it.first << " value: " << it.second;
+        }
+      }
     }
 
     if (config_map.count("BOARD_L_AVG") && config_map.count("BOARD_A_AVG") &&
@@ -3682,22 +3688,9 @@ bool sampleCalibrationColors(const cv::Mat &raw_image,
   int h = corrected_image.rows;
   int sample_radius = calculateAdaptiveSampleRadius(w, h);
 
-  // Define sample points for corners in the *corrected* image
-  std::vector<cv::Point2f> corrected_corners = getBoardCornersCorrected(w, h);
-  cv::Point2f tl_pos = corrected_corners[0];
-  cv::Point2f tr_pos = corrected_corners[1];
-  cv::Point2f br_pos = corrected_corners[2];
-  cv::Point2f bl_pos = corrected_corners[3];
-
-  calibData.lab_tl = getAverageLab(lab_image, tl_pos, sample_radius);
-  calibData.lab_tr = getAverageLab(lab_image, tr_pos, sample_radius);
-  calibData.lab_br = getAverageLab(lab_image, br_pos, sample_radius);
-  calibData.lab_bl = getAverageLab(lab_image, bl_pos, sample_radius);
-  calibData.colors_loaded = true;
-
   // Sample board color from the center
-  calibData.lab_board_avg = getAverageLab(
-      lab_image, cv::Point2f(w / 2.0f, h / 2.0f), sample_radius * 2);
+  calibData.lab_board_avg =
+      getAverageLab(lab_image, cv::Point2f(w / 2.0f, h / 2.0f), sample_radius);
   calibData.board_color_loaded = true;
 
   LOG_INFO << "Color sampling complete.";
