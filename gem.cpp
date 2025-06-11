@@ -2201,13 +2201,6 @@ void runAutoCalibrationWorkflow() {
   if (detectCalibratedBoardState(frame, calibData)) {
     LOG_INFO << "Robust corner detection successful.";
 
-    // Now, sample colors based on the detected corners
-    if (!sampleCalibrationColors(frame, calibData)) {
-      LOG_ERROR
-          << "Auto-Calibration FAILED: Could not sample stone/board colors.";
-      return;
-    }
-
     LOG_INFO << "Passing generated calibration data for verification before "
                 "saving...";
     if (verifyCalibrationBeforeSave(calibData, frame)) {
