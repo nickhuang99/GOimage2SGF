@@ -1078,14 +1078,18 @@ void saveCalibrationData(const CalibrationData &data,
     configFile << "BL_Y_PX=" << data.corners[3].y << std::endl;
   }
   if (data.colors_loaded) {
-    configFile << "TL_L=" << data.lab_tl[0] << "; TL_A=" << data.lab_tl[1]
-               << "; TL_B=" << data.lab_tl[2] << std::endl;
-    configFile << "TR_L=" << data.lab_tr[0] << "; TR_A=" << data.lab_tr[1]
-               << "; TR_B=" << data.lab_tr[2] << std::endl;
-    configFile << "BR_L=" << data.lab_br[0] << "; BR_A=" << data.lab_br[1]
-               << "; BR_B=" << data.lab_br[2] << std::endl;
-    configFile << "BL_L=" << data.lab_bl[0] << "; BL_A=" << data.lab_bl[1]
-               << "; BL_B=" << data.lab_bl[2] << std::endl;
+    configFile << "TL_L=" << data.lab_tl[0] << std::endl;
+    configFile << "TL_A=" << data.lab_tl[1] << std::endl;
+    configFile << "TL_B=" << data.lab_tl[2] << std::endl;
+    configFile << "TR_L=" << data.lab_tr[0] << std::endl;
+    configFile << "TR_A=" << data.lab_tr[1] << std::endl;
+    configFile << "TR_B=" << data.lab_tr[2] << std::endl;
+    configFile << "BR_L=" << data.lab_br[0] << std::endl;
+    configFile << "BR_A=" << data.lab_br[1] << std::endl;
+    configFile << "BR_B=" << data.lab_br[2] << std::endl;
+    configFile << "BL_L=" << data.lab_bl[0] << std::endl;
+    configFile << "BL_A=" << data.lab_bl[1] << std::endl;
+    configFile << "BL_B=" << data.lab_bl[2] << std::endl;
   }
   if (data.board_color_loaded) {
     configFile << "BOARD_L_AVG=" << data.lab_board_avg[0] << std::endl;

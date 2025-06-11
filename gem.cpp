@@ -806,7 +806,7 @@ static bool setupCalibrationFromConfig() {
              << g_capture_height << "' from config for tournament mode."
              << std::endl;
   }
-
+  // saveCalibrationData(data, "./share/tmp_config.txt");
   return true;
 }
 
