@@ -2747,7 +2747,9 @@ static bool prepare_iteration_parameters(
   out_constraints.max_acceptable_area =
       expected_area * ROUGH_ABS_STONE_AREA_MAX_FACTOR;
   // Use a general, relaxed circularity for the initial shape search.
-  out_constraints.min_acceptable_circularity = MIN_ROUGH_STONE_CIRCULARITY;
+  //out_constraints.min_acceptable_circularity = MIN_ROUGH_STONE_CIRCULARITY;
+  out_constraints.min_acceptable_circularity =
+      std::max(MIN_STONE_CIRCULARITY_WHITE, MIN_STONE_CIRCULARITY_BLACK);
 
   LOG_DEBUG << "  FBS Prep: Expected Area: " << expected_area
             << " (Range: " << out_constraints.min_acceptable_area << "-"
