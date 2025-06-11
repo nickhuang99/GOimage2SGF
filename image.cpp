@@ -2965,8 +2965,8 @@ bool find_best_round_shape_iterative(
     std::vector<CandidateBlob> &out_found_blob_vec,
     const CalibrationData &calibDataForColorClassification) {
 
-  LOG_INFO << "find_best_round_shape_iterative (Refactored) in ROI: "
-           << roi_in_image;
+  LOG_DEBUG << "find_best_round_shape_iterative (Refactored) in ROI: "
+            << roi_in_image;
 
   // STEP 1: Prepare common variables and validate inputs.
   cv::Rect valid_roi;
@@ -3743,17 +3743,13 @@ bool verifyCalibrationBeforeSave(const CalibrationData &calibData,
  * otherwise.
  */
 static bool adaptive_detect_stone_for_calib(const cv::Mat &rawBgrImage,
+                                            const CalibrationData &calibData,
                                             CornerQuadrant targetQuadrant,
                                             // Output
                                             CornerDetectionResult &out_result) {
 
   LOG_INFO << "--- (Calib) adaptive_detect_stone for "
            << toString(targetQuadrant) << " ---";
-
-  // *** THE FIX IS HERE: ***
-  // Correctly load the existing calibration data to use as a hint,
-  // preserving the original, robust logic.
-  CalibrationData calibData = loadCalibrationData(CALIB_CONFIG_PATH);
 
   // Internal variables that were previously output parameters
   cv::Point2f out_final_raw_corner_guess;
@@ -3936,11 +3932,19 @@ bool detectCalibratedBoardState(const cv::Mat &rawBgrImage,
       CornerQuadrant::TOP_LEFT, CornerQuadrant::TOP_RIGHT,
       CornerQuadrant::BOTTOM_RIGHT, CornerQuadrant::BOTTOM_LEFT};
 
+  CalibrationData calibData = loadCalibrationData(CALIB_CONFIG_PATH);
+  if (!calibData.colors_loaded) {
+    // this is to help for color classification!!!
+    calibData.lab_tl = {60.0f, 124.0f, 118.0f};
+    calibData.lab_tr = {235.0f, 113.0f, 117.0f};
+    calibData.lab_br = {206.0f, 117.0f, 116.0f};
+    calibData.lab_bl = {72.0f, 121.0f, 118.0f};
+  }
   std::vector<CornerDetectionResult> corner_results;
 
   for (const auto &quad : quadrants_to_scan) {
     CornerDetectionResult result;
-    if (adaptive_detect_stone_for_calib(rawBgrImage, quad, result)) {
+    if (adaptive_detect_stone_for_calib(rawBgrImage, calibData, quad, result)) {
       corner_results.push_back(result);
     } else {
       LOG_ERROR << "Failed to detect corner " << toString(quad)
