@@ -3723,9 +3723,6 @@ bool verifyCalibrationBeforeSave(const CalibrationData &calibData,
     return false;
   }
 }
-
-// --- NEW PARALLEL FUNCTIONS FOR AUTO-CALIBRATION REFACTOR ---
-
 /**
  * @brief A parallel version of adaptive_detect_stone_robust designed for
  * auto-calibration.
@@ -3746,21 +3743,19 @@ static bool adaptive_detect_stone_for_calib(const cv::Mat &rawBgrImage,
                                             // Output
                                             CornerDetectionResult &out_result) {
 
-  // This function's body is a copy of adaptive_detect_stone_robust, with its
-  // output signature modified to populate the CornerDetectionResult struct.
-  // All internal logic (two-pass detection, iterative guessing) remains the
-  // same.
-
   LOG_INFO << "--- (Calib) adaptive_detect_stone for "
            << toString(targetQuadrant) << " ---";
+
+  // *** THE FIX IS HERE: ***
+  // Correctly load the existing calibration data to use as a hint,
+  // preserving the original, robust logic.
+  CalibrationData calibData = loadCalibrationData(CALIB_CONFIG_PATH);
 
   // Internal variables that were previously output parameters
   cv::Point2f out_final_raw_corner_guess;
   cv::Mat out_final_corrected_image;
   float out_detected_stone_radius_in_final_corrected;
   int out_pass1_classified_color = EMPTY;
-
-  CalibrationData calibData = loadCalibrationData(CALIB_CONFIG_PATH);
 
   std::string quadrant_name_str;
   size_t target_ideal_dest_corner_idx;
