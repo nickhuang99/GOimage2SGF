@@ -3802,6 +3802,41 @@ static bool adaptive_detect_stone_for_calib(const cv::Mat &rawBgrImage,
                                      roi_quadrant_pass1)) {
       M1 = current_M1;
       p1_source_points_raw = current_p1_source_points;
+      // --- START: MODIFIED DEBUG VISUALIZATION FOR PASS 1 ---
+      if (bDebug) {
+        cv::Mat p1_candidates_vis = image_pass1_corrected.clone();
+        cv::rectangle(p1_candidates_vis, roi_quadrant_pass1,
+                      cv::Scalar(255, 255, 0), 2); // ROI in Cyan
+        int counter = 0;
+        for (const auto &blob : found_blob_pass1_vec) {
+
+          // --- FIX: Apply the ROI's offset before drawing ---
+          cv::Point roi_offset = blob.roi_used_in_search.tl();
+
+          // Use the 'offset' parameter of drawContours for a clean fix.
+          cv::drawContours(
+              p1_candidates_vis,
+              std::vector<std::vector<cv::Point>>{blob.contour_points_in_roi},
+              -1, cv::Scalar(0, 255, 255), 3, cv::LINE_AA, cv::noArray(), 0,
+              roi_offset); // Candidate in THICK Yellow
+
+          // Also offset the center for the text label
+          cv::Point blob_center_absolute =
+              blob.center_in_roi_coords + cv::Point2f(roi_offset);
+
+          cv::putText(p1_candidates_vis, std::to_string(counter++),
+                      blob_center_absolute + cv::Point(5, 5),
+                      cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 100, 100),
+                      2);
+        }
+        std::string filename = "share/pass1_" + quadrant_name_str +
+                               "_candidates_attempt_" +
+                               std::to_string(attempt + 1) + ".jpg";
+        cv::imwrite(filename, p1_candidates_vis);
+        LOG_DEBUG << "Saved Pass 1 " << quadrant_name_str
+                  << " candidate visualization to " << filename;
+      }
+      // --- END: MODIFIED DEBUG VISUALIZATION ---
     } else {
       continue;
     }
@@ -3841,6 +3876,30 @@ static bool adaptive_detect_stone_for_calib(const cv::Mat &rawBgrImage,
 
         LOG_INFO << "  (Calib) Successfully found and verified "
                  << quadrant_name_str;
+        // --- MODIFIED DEBUG VISUALIZATION FOR PASS 2 (NOW FOR TL & TR) ---
+        if (bDebug) {
+          cv::Mat p2_verification_vis = image_pass2_corrected.clone();
+          cv::circle(
+              p2_verification_vis, pass2_detected_center,
+              static_cast<int>(out_detected_stone_radius_in_final_corrected),
+              cv::Scalar(0, 255, 0), 2); // Verified stone in Green
+          cv::circle(p2_verification_vis, pass2_detected_center, 3,
+                     cv::Scalar(0, 0, 255), -1); // Center in Red
+          std::string filename = "share/pass2_" + quadrant_name_str +
+                                 "_verified_attempt_" +
+                                 std::to_string(attempt + 1) + ".jpg";
+          cv::imwrite(filename, p2_verification_vis);
+          LOG_DEBUG << "Saved Pass 2 " << quadrant_name_str
+                    << " verification visualization to " << filename;
+
+          std::string window_title = "Pass 2 Verified - " + quadrant_name_str +
+                                     " (Attempt " +
+                                     std::to_string(attempt + 1) + ")";
+          cv::imshow(window_title, p2_verification_vis);
+          cv::waitKey(0);
+          cv::destroyWindow(window_title);
+        }
+        // --- END DEBUG VISUALIZATION ---
         return true;
       }
     }
