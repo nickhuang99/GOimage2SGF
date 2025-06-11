@@ -78,6 +78,9 @@ void displayHelpMessage() {
       << "  -B, --interactive-calibration     : Run interactive calibration "
          "workflow."
       << endl;
+  CONSOLE_OUT << "  -A, --auto-calibration            : Run auto calibration "
+                 "workflow."
+              << endl;
   CONSOLE_OUT
       << "  --test-calibration-config         : Load calibration snapshot and "
          "config, draw corners."
@@ -2277,6 +2280,7 @@ int main(int argc, char *argv[]) {
 
     auto isWorkflowSelected = [&]() -> bool {
       return run_probe_devices || run_calibration ||
+             run_test_robust_detection_workflow ||
              run_detect_stone_position_workflow || run_test_calibration ||
              run_study_mode || run_tournament_mode || runAutoCalibration ||
              run_experimental_detect_tl_workflow || !snapshot_output.empty() ||
@@ -2305,7 +2309,7 @@ int main(int argc, char *argv[]) {
         {"test-perspective", required_argument, nullptr, 0}, // Add -t option
         {"calibration", no_argument, nullptr, 'b'},
         {"interactive-calibration", no_argument, nullptr, 'B'},
-        {"run-auto-calibration", no_argument, nullptr, 'A'},
+        {"auto-calibration", no_argument, nullptr, 'A'},
         {"mode", required_argument, nullptr, 'M'},
         {"size", required_argument, nullptr,
          'S'}, // Use S as a unique identifier for --size
@@ -2329,6 +2333,7 @@ int main(int argc, char *argv[]) {
       switch (c) {
       case 'd':
         bDebug = true;
+        CONSOLE_OUT << "Debug mode enabled." << endl;
         LOG_INFO << "Debug mode enabled." << endl;
         break;
       case 'A':

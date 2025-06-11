@@ -2250,6 +2250,12 @@ bool detectFourCornersGoBoard(
   return success;
 }
 
+bool detectFourCornersGoBoardCalibration(const cv::Mat &rawBgrImage,
+                                         CalibrationData &out_cal_data) {
+
+  
+}
+
 // --- Experimental Function V7 (Corrected Two-Pass Refinement with ENHANCED
 // DEBUG VISUALIZATIONS) ---
 bool experimental_scan_for_quadrant_stone(
