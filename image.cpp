@@ -137,7 +137,7 @@ classifyIntersectionsByCalibration( // Renamed from performDirectClassification
 
 static bool adaptive_detect_stone_robust(
     const cv::Mat &rawBgrImage, CornerQuadrant targetScanQuadrant,
-    const CalibrationData &calibData, cv::Point2f &out_final_raw_corner_guess,
+    CalibrationData &calibData, cv::Point2f &out_final_raw_corner_guess,
     cv::Mat &out_final_corrected_image,
     float &out_detected_stone_radius_in_final_corrected, // Radius from final
                                                          // Pass 2 verification
@@ -3346,6 +3346,10 @@ static cv::Mat refine_perspective_transform_from_blob(
                                            ideal_corrected_dest_points);
   if (M2.empty() || cv::determinant(M2) < 1e-6) {
     LOG_ERROR << "RobustDetect P2: Degenerate M2 generated.";
+    for (size_t i = 0; i < p1_source_points_raw.size(); i++) {
+      LOG_DEBUG << " p1_source_points_raw[" << i
+                << "]:" << p1_source_points_raw[i];
+    }
     return cv::Mat();
   }
   return M2;
@@ -3474,7 +3478,7 @@ static bool generate_next_initial_guess(const cv::Size &image_size,
 // version.
 bool adaptive_detect_stone_robust(
     const cv::Mat &rawBgrImage, CornerQuadrant targetScanQuadrant,
-    const CalibrationData &calibData, cv::Point2f &out_final_raw_corner_guess,
+    CalibrationData &calibData, cv::Point2f &out_final_raw_corner_guess,
     cv::Mat &out_final_corrected_image,
     float &out_detected_stone_radius_in_final_corrected,
     int &out_pass1_classified_color) {
@@ -3486,6 +3490,7 @@ bool adaptive_detect_stone_robust(
     LOG_ERROR << "RobustDetect: Raw BGR image empty.";
     return false;
   }
+  // let's update empty board color roughly.
 
   // STEP 1: Set up parameters that are constant for this quadrant scan.
   std::string quadrant_name_str;
@@ -3519,7 +3524,7 @@ bool adaptive_detect_stone_robust(
               << ", " << p1_raw_corner_initial_guess.y << ")";
 
     std::vector<cv::Point2f> current_p1_source_points;
-    std::vector<cv::Point2f> ideal_dest_points =
+    const std::vector<cv::Point2f> ideal_dest_points =
         getBoardCornersCorrected(rawBgrImage.cols, rawBgrImage.rows);
     cv::Mat current_M1 = calculate_initial_perspective_transform(
         rawBgrImage, p1_raw_corner_initial_guess, targetScanQuadrant,
@@ -3538,6 +3543,18 @@ bool adaptive_detect_stone_robust(
                << " failed: warped image was empty.";
       continue;
     }
+    // this is first time color classification
+    cv::Mat lab_image;
+    cv::cvtColor(image_pass1_corrected, lab_image, cv::COLOR_BGR2Lab);
+
+    int w = image_pass1_corrected.cols;
+    int h = image_pass1_corrected.rows;
+    int sample_radius = calculateAdaptiveSampleRadius(w, h);
+
+    // Sample board color from the center
+    calibData.lab_board_avg = getAverageLab(
+        lab_image, cv::Point2f(w / 2.0f, h / 2.0f), sample_radius);
+    calibData.board_color_loaded = true;
 
     cv::Rect roi_quadrant_pass1;
     std::vector<CandidateBlob> found_blob_pass1_vec;
@@ -3604,8 +3621,7 @@ bool adaptive_detect_stone_robust(
 
       cv::Mat M2 = refine_perspective_transform_from_blob(
           rawBgrImage, M1, p1_blob_center_in_p1_image, p1_source_points_raw,
-          target_ideal_dest_corner_idx, targetScanQuadrant,
-          getBoardCornersCorrected(rawBgrImage.cols, rawBgrImage.rows),
+          target_ideal_dest_corner_idx, targetScanQuadrant, ideal_dest_points,
           out_final_raw_corner_guess);
 
       if (M2.empty()) {
@@ -3630,8 +3646,7 @@ bool adaptive_detect_stone_robust(
                     "transform.";
 
         // --- MODIFIED DEBUG VISUALIZATION FOR PASS 2 (NOW FOR TL & TR) ---
-        if (bDebug && (targetScanQuadrant == CornerQuadrant::TOP_RIGHT ||
-                       targetScanQuadrant == CornerQuadrant::TOP_LEFT)) {
+        if (bDebug) {
           cv::Mat p2_verification_vis = image_pass2_corrected.clone();
           cv::circle(
               p2_verification_vis, pass2_detected_center,
