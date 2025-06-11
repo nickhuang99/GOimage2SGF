@@ -104,6 +104,17 @@ struct CandidateBlob {
   } // Valid if area is positive and score indicates found
 };
 
+// --- DATA STRUCTURE FOR THE AUTO-CALIBRATION REFACTOR ---
+
+// A structure to hold the complete result for a single detected corner,
+// combining its position and color information.
+struct CornerDetectionResult {
+  CornerQuadrant quadrant;
+  cv::Point2f raw_coords;
+  cv::Vec3f lab_color;
+  bool found = false;
+};
+
 std::ostream &operator<<(std::ostream &os, CornerQuadrant quadrant) {
   os << toString(quadrant);
   return os;
@@ -2250,12 +2261,6 @@ bool detectFourCornersGoBoard(
   return success;
 }
 
-bool detectFourCornersGoBoardCalibration(const cv::Mat &rawBgrImage,
-                                         CalibrationData &out_cal_data) {
-
-  
-}
-
 // --- Experimental Function V7 (Corrected Two-Pass Refinement with ENHANCED
 // DEBUG VISUALIZATIONS) ---
 bool experimental_scan_for_quadrant_stone(
@@ -3717,4 +3722,224 @@ bool verifyCalibrationBeforeSave(const CalibrationData &calibData,
     saveCalibrationData(old_cal_data, CALIB_CONFIG_PATH);
     return false;
   }
+}
+
+// --- NEW PARALLEL FUNCTIONS FOR AUTO-CALIBRATION REFACTOR ---
+
+/**
+ * @brief A parallel version of adaptive_detect_stone_robust designed for
+ * auto-calibration.
+ *
+ * This function performs the same robust two-pass detection for a single
+ * quadrant but outputs a complete CornerDetectionResult struct containing the
+ * quadrant, raw coordinates, and the sampled LAB color of the successfully
+ * identified stone.
+ *
+ * @param rawBgrImage The raw source image to search within.
+ * @param targetQuadrant The specific corner quadrant to search for.
+ * @param out_result Output parameter to store the full result of the detection.
+ * @return true if a corner stone was successfully detected and verified; false
+ * otherwise.
+ */
+static bool adaptive_detect_stone_for_calib(const cv::Mat &rawBgrImage,
+                                            CornerQuadrant targetQuadrant,
+                                            // Output
+                                            CornerDetectionResult &out_result) {
+
+  // This function's body is a copy of adaptive_detect_stone_robust, with its
+  // output signature modified to populate the CornerDetectionResult struct.
+  // All internal logic (two-pass detection, iterative guessing) remains the
+  // same.
+
+  LOG_INFO << "--- (Calib) adaptive_detect_stone for "
+           << toString(targetQuadrant) << " ---";
+
+  // Internal variables that were previously output parameters
+  cv::Point2f out_final_raw_corner_guess;
+  cv::Mat out_final_corrected_image;
+  float out_detected_stone_radius_in_final_corrected;
+  int out_pass1_classified_color = EMPTY;
+
+  CalibrationData calibData = loadCalibrationData(CALIB_CONFIG_PATH);
+
+  std::string quadrant_name_str;
+  size_t target_ideal_dest_corner_idx;
+  cv::Point2f p1_raw_corner_initial_guess;
+  int ideal_grid_col, ideal_grid_row;
+  cv::Vec3f hint_target_L_lab_from_calib;
+  if (!setup_quadrant_specific_parameters(
+          rawBgrImage, targetQuadrant, calibData, quadrant_name_str,
+          target_ideal_dest_corner_idx, p1_raw_corner_initial_guess,
+          ideal_grid_col, ideal_grid_row, hint_target_L_lab_from_calib)) {
+    return false;
+  }
+
+  const int MAX_GUESS_ATTEMPTS = 9 * 9 - 1;
+  cv::Mat M1;
+  std::vector<cv::Point2f> p1_source_points_raw;
+
+  for (int attempt = 0; attempt < MAX_GUESS_ATTEMPTS; ++attempt) {
+    if (!generate_next_initial_guess(rawBgrImage.size(), targetQuadrant,
+                                     attempt, p1_raw_corner_initial_guess)) {
+      break;
+    }
+
+    std::vector<cv::Point2f> current_p1_source_points;
+    cv::Mat image_pass1_corrected;
+    cv::Mat current_M1 = calculate_initial_perspective_transform(
+        rawBgrImage, p1_raw_corner_initial_guess, targetQuadrant,
+        getBoardCornersCorrected(rawBgrImage.cols, rawBgrImage.rows),
+        current_p1_source_points);
+
+    if (current_M1.empty())
+      continue;
+
+    cv::warpPerspective(rawBgrImage, image_pass1_corrected, current_M1,
+                        rawBgrImage.size());
+    if (image_pass1_corrected.empty())
+      continue;
+
+    cv::Rect roi_quadrant_pass1;
+    std::vector<CandidateBlob> found_blob_pass1_vec;
+    if (perform_pass1_blob_detection(image_pass1_corrected, targetQuadrant,
+                                     calibData, hint_target_L_lab_from_calib,
+                                     found_blob_pass1_vec,
+                                     roi_quadrant_pass1)) {
+      M1 = current_M1;
+      p1_source_points_raw = current_p1_source_points;
+    } else {
+      continue;
+    }
+
+    for (const CandidateBlob &found_blob_pass1 : found_blob_pass1_vec) {
+      cv::Point2f p1_blob_center_in_p1_image =
+          found_blob_pass1.center_in_roi_coords +
+          cv::Point2f(found_blob_pass1.roi_used_in_search.x,
+                      found_blob_pass1.roi_used_in_search.y);
+
+      cv::Mat M2 = refine_perspective_transform_from_blob(
+          rawBgrImage, M1, p1_blob_center_in_p1_image, p1_source_points_raw,
+          target_ideal_dest_corner_idx, targetQuadrant,
+          getBoardCornersCorrected(rawBgrImage.cols, rawBgrImage.rows),
+          out_final_raw_corner_guess);
+
+      if (M2.empty())
+        continue;
+
+      cv::Mat image_pass2_corrected;
+      cv::warpPerspective(rawBgrImage, image_pass2_corrected, M2,
+                          rawBgrImage.size());
+      if (image_pass2_corrected.empty())
+        continue;
+
+      cv::Point2f pass2_detected_center;
+      if (perform_pass2_stone_verification(
+              image_pass2_corrected, found_blob_pass1, ideal_grid_col,
+              ideal_grid_row, pass2_detected_center,
+              out_detected_stone_radius_in_final_corrected)) {
+
+        // --- SUCCESS: Populate the output struct and return ---
+        out_result.found = true;
+        out_result.quadrant = targetQuadrant;
+        out_result.raw_coords = out_final_raw_corner_guess;
+        out_result.lab_color = found_blob_pass1.sampled_lab_color_from_contour;
+
+        LOG_INFO << "  (Calib) Successfully found and verified "
+                 << quadrant_name_str;
+        return true;
+      }
+    }
+  }
+  LOG_ERROR << "  (Calib) Failed to find " << quadrant_name_str
+            << " after all attempts.";
+  return false;
+}
+
+/**
+ * @brief The new top-level function for the auto-calibration workflow.
+ * * This function orchestrates the detection of all four corners, collects
+ * their position and color data, and assembles a complete CalibrationData
+ * object.
+ *
+ * @param rawBgrImage The raw source image.
+ * @param out_calib_data The fully populated CalibrationData object upon
+ * success.
+ * @return true if all four corners were found and the calibration data was
+ * successfully generated; false otherwise.
+ */
+bool detectCalibratedBoardState(const cv::Mat &rawBgrImage,
+                                // Output
+                                CalibrationData &out_calib_data) {
+
+  LOG_INFO
+      << "--- Starting Full Board State Detection for Auto-Calibration ---";
+
+  const CornerQuadrant quadrants_to_scan[] = {
+      CornerQuadrant::TOP_LEFT, CornerQuadrant::TOP_RIGHT,
+      CornerQuadrant::BOTTOM_RIGHT, CornerQuadrant::BOTTOM_LEFT};
+
+  std::vector<CornerDetectionResult> corner_results;
+
+  for (const auto &quad : quadrants_to_scan) {
+    CornerDetectionResult result;
+    if (adaptive_detect_stone_for_calib(rawBgrImage, quad, result)) {
+      corner_results.push_back(result);
+    } else {
+      LOG_ERROR << "Failed to detect corner " << toString(quad)
+                << " during auto-calibration. Aborting.";
+      return false;
+    }
+  }
+
+  if (corner_results.size() != 4) {
+    LOG_ERROR << "Could not find all 4 corners. Found " << corner_results.size()
+              << ". Aborting auto-calibration.";
+    return false;
+  }
+
+  LOG_INFO
+      << "Successfully found all 4 corners. Assembling calibration data...";
+
+  // Assemble the CalibrationData object from the results
+  out_calib_data = CalibrationData(); // Clear any previous data
+  out_calib_data.image_width = rawBgrImage.cols;
+  out_calib_data.image_height = rawBgrImage.rows;
+  out_calib_data.dimensions_loaded = true;
+  out_calib_data.device_path = g_device_path;
+  out_calib_data.device_path_loaded = true;
+
+  cv::Point2f tl_coord, tr_coord, br_coord, bl_coord;
+
+  for (const auto &result : corner_results) {
+    switch (result.quadrant) {
+    case CornerQuadrant::TOP_LEFT:
+      tl_coord = result.raw_coords;
+      out_calib_data.lab_tl = result.lab_color;
+      break;
+    case CornerQuadrant::TOP_RIGHT:
+      tr_coord = result.raw_coords;
+      out_calib_data.lab_tr = result.lab_color;
+      break;
+    case CornerQuadrant::BOTTOM_RIGHT:
+      br_coord = result.raw_coords;
+      out_calib_data.lab_br = result.lab_color;
+      break;
+    case CornerQuadrant::BOTTOM_LEFT:
+      bl_coord = result.raw_coords;
+      out_calib_data.lab_bl = result.lab_color;
+      break;
+    }
+  }
+  out_calib_data.corners = {tl_coord, tr_coord, br_coord, bl_coord};
+  out_calib_data.corners_loaded = true;
+  out_calib_data.colors_loaded = true;
+
+  // Now that corners are set, sample the board color to complete the data
+  if (!sampleCalibrationColors(rawBgrImage, out_calib_data)) {
+    LOG_ERROR << "Failed to sample average board color after finding corners.";
+    return false;
+  }
+
+  LOG_INFO << "Auto-calibration data successfully generated.";
+  return true;
 }

@@ -2197,16 +2197,9 @@ void runAutoCalibrationWorkflow() {
   LOG_INFO << "Frame captured successfully. Image size: " << frame.cols << "x"
            << frame.rows;
 
-  std::vector<cv::Point2f> detected_corners;
-  if (detectFourCornersGoBoard(frame, detected_corners)) {
+  CalibrationData calibData;
+  if (detectCalibratedBoardState(frame, calibData)) {
     LOG_INFO << "Robust corner detection successful.";
-
-    CalibrationData calibData;
-    calibData.corners = detected_corners;
-    calibData.corners_loaded = true;
-    calibData.image_width = frame.cols;
-    calibData.image_height = frame.rows;
-    calibData.dimensions_loaded = true;
 
     // Now, sample colors based on the detected corners
     if (!sampleCalibrationColors(frame, calibData)) {

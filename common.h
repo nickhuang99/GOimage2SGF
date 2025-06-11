@@ -363,4 +363,7 @@ bool sampleCalibrationColors(const cv::Mat &raw_image,
 void saveCalibrationData(const CalibrationData &data,
                          const std::string &config_path);
 bool verifyCalibrationAfterSave(const cv::Mat &raw_image_for_verification);
+
+bool detectCalibratedBoardState(const cv::Mat &rawBgrImage,
+                                CalibrationData &out_calib_data);
 #endif // UTILITY_H
