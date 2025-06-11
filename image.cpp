@@ -1850,7 +1850,7 @@ bool detectSpecificColoredRoundShape(const cv::Mat &inputBgrImage,
   double minCircularity = (expectedAvgLabColor[0] < 100.0f)
                               ? MIN_STONE_CIRCULARITY_BLACK
                               : MIN_STONE_CIRCULARITY_WHITE;
-  LOG_TRACE << "  For ROI at (" << regionOfInterest.x << ","
+  LOG_DEBUG << "  For ROI at (" << regionOfInterest.x << ","
             << regionOfInterest.y << "): ExpectedRadius=" << expectedPixelRadius
             << ", ExpectedArea=" << expectedStoneArea
             << ", MinAbsArea=" << minAbsStoneArea
@@ -1946,7 +1946,7 @@ bool detectSpecificColoredRoundShape(const cv::Mat &inputBgrImage,
   for (const auto &contour : contours) {
     contour_idx++;
     if (contour.size() < MIN_CONTOUR_POINTS_STONE) {
-      LOG_TRACE << "    Contour " << contour_idx << " (ROI " << roi.x << ","
+      LOG_DEBUG << "    Contour " << contour_idx << " (ROI " << roi.x << ","
                 << roi.y << ") rejected: too few points (" << contour.size()
                 << ")." << std::endl;
       continue;
@@ -1954,19 +1954,19 @@ bool detectSpecificColoredRoundShape(const cv::Mat &inputBgrImage,
     double area = cv::contourArea(contour);
     double perimeter = cv::arcLength(contour, true);
     if (perimeter < 1.0) {
-      LOG_TRACE << "    Contour " << contour_idx << " (ROI " << roi.x << ","
+      LOG_DEBUG << "    Contour " << contour_idx << " (ROI " << roi.x << ","
                 << roi.y << ") rejected: perimeter too small (" << perimeter
                 << ")." << std::endl;
       continue;
     }
     double circularity = (4 * CV_PI * area) / (perimeter * perimeter);
 
-    LOG_TRACE << "    Contour " << contour_idx << " (ROI " << roi.x << ","
+    LOG_DEBUG << "    Contour " << contour_idx << " (ROI " << roi.x << ","
               << roi.y << ") evaluating: Area=" << area
               << ", Circ=" << circularity << std::endl;
 
     if (area < minAbsStoneArea || area > maxAbsStoneArea) {
-      LOG_TRACE << "      -> Contour " << contour_idx << " (ROI " << roi.x
+      LOG_DEBUG << "      -> Contour " << contour_idx << " (ROI " << roi.x
                 << "," << roi.y << ") REJECTED by area " << area
                 << (area < minAbsStoneArea
                         ? " (too small, min=" + Num2Str(minAbsStoneArea).str() +
@@ -1982,7 +1982,7 @@ bool detectSpecificColoredRoundShape(const cv::Mat &inputBgrImage,
       continue;
     }
     if (circularity < minCircularity) {
-      LOG_TRACE << "      -> Contour " << contour_idx << " (ROI " << roi.x
+      LOG_DEBUG << "      -> Contour " << contour_idx << " (ROI " << roi.x
                 << "," << roi.y << ") REJECTED by circularity " << circularity
                 << " (min_circ=" << minCircularity << ")" << std::endl;
       if (bDebug && false) {
@@ -1996,7 +1996,7 @@ bool detectSpecificColoredRoundShape(const cv::Mat &inputBgrImage,
       }
       continue;
     }
-    LOG_TRACE << "      => Contour " << contour_idx << " (ROI " << roi.x << ","
+    LOG_DEBUG << "      => Contour " << contour_idx << " (ROI " << roi.x << ","
               << roi.y
               << ") PASSED filters. Current best area: " << bestContourScore
               << std::endl;
@@ -2008,7 +2008,7 @@ bool detectSpecificColoredRoundShape(const cv::Mat &inputBgrImage,
     if (area > bestContourScore) {
       bestContourScore = area;
       bestContour = contour;
-      LOG_TRACE << "        ==> New best contour " << contour_idx << " (ROI "
+      LOG_DEBUG << "        ==> New best contour " << contour_idx << " (ROI "
                 << roi.x << "," << roi.y << ") with area " << area << std::endl;
     }
   }
@@ -2034,12 +2034,12 @@ bool detectSpecificColoredRoundShape(const cv::Mat &inputBgrImage,
     detectedCenter.x = centerInRoi.x + roi.x;
     detectedCenter.y = centerInRoi.y + roi.y;
     detectedRadius = radiusInRoi;
-    LOG_TRACE << "  For ROI at (" << roi.x << "," << roi.y
+    LOG_DEBUG << "  For ROI at (" << roi.x << "," << roi.y
               << "): Found specific stone. Center (orig img): "
               << detectedCenter << ", Radius: " << detectedRadius << std::endl;
     return true;
   }
-  LOG_TRACE
+  LOG_DEBUG
       << "  For ROI at (" << roi.x << "," << roi.y
       << "): No suitable specific stone contour found in ROI after filtering."
       << std::endl;
@@ -3018,15 +3018,17 @@ bool find_best_round_shape_iterative(
           // --- START: NEW COLOR VALIDATION STEP ---
           if (found_blob.classified_color_after_shape_found != EMPTY) {
             // Only accept if it's classified as BLACK or WHITE
-            LOG_INFO
-                << "      => Candidate PASSED color validation. Accepting.";
+            LOG_TRACE
+                << "      => Candidate PASSED color validation. Accepting."
+                << " color of stone:"
+                << found_blob.classified_color_after_shape_found;
             found_blob.roi_used_in_search = roi_in_image;
             out_found_blob_vec.push_back(found_blob);
           } else {
             // This will reject blobs from the empty board, like in TR attempt
             // #7
-            LOG_INFO << "      => Candidate FAILED color validation "
-                        "(classified as EMPTY). Rejecting.";
+            LOG_TRACE << "      => Candidate FAILED color validation "
+                         "(classified as EMPTY). Rejecting.";
           }
           // --- END: NEW COLOR VALIDATION STEP ---
 
