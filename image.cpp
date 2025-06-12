@@ -3337,6 +3337,31 @@ static cv::Mat refine_perspective_transform_from_blob(
     return cv::Mat();
   }
   cv::Point2f p1_blob_center_in_raw = blob_center_raw_vec[0];
+  // we need to make sure it is in its own quadrant
+  bool bValid = false;
+  switch (targetScanQuadrant) {
+  case CornerQuadrant::TOP_LEFT:
+    bValid = p1_blob_center_in_raw.x < rawBgrImage.cols / 2 &&
+             p1_blob_center_in_raw.y < rawBgrImage.rows / 2;
+    break;
+  case CornerQuadrant::TOP_RIGHT:
+    bValid = p1_blob_center_in_raw.x > rawBgrImage.cols / 2 &&
+             p1_blob_center_in_raw.y < rawBgrImage.rows / 2;
+    break;
+  case CornerQuadrant::BOTTOM_LEFT:
+    bValid = p1_blob_center_in_raw.x > rawBgrImage.cols / 2 &&
+             p1_blob_center_in_raw.y > rawBgrImage.rows / 2;
+    break;
+  case CornerQuadrant::BOTTOM_RIGHT:
+    bValid = p1_blob_center_in_raw.x < rawBgrImage.cols / 2 &&
+             p1_blob_center_in_raw.y > rawBgrImage.rows / 2;
+    break;
+  }
+  if (!bValid) {
+    LOG_ERROR << "pass1 raw points outside quadrant: "
+              << p1_blob_center_in_raw.x << "," << p1_blob_center_in_raw.y;
+    return cv::Mat();
+  }
 
   out_final_raw_corner_guess = p1_blob_center_in_raw;
 
@@ -3875,8 +3900,7 @@ static bool adaptive_detect_stone_for_calib(const cv::Mat &rawBgrImage,
 
       cv::Mat M2 = refine_perspective_transform_from_blob(
           rawBgrImage, M1, p1_blob_center_in_p1_image, p1_source_points_raw,
-          target_ideal_dest_corner_idx, targetQuadrant,
-          getBoardCornersCorrected(rawBgrImage.cols, rawBgrImage.rows),
+          target_ideal_dest_corner_idx, targetQuadrant, ideal_corners,
           out_final_raw_corner_guess);
 
       if (M2.empty())
