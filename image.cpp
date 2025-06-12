@@ -14,6 +14,7 @@
 #include <ostream>
 #include <regex>
 #include <set>
+#include <string>
 #include <vector>
 
 // Using namespace std; // Avoid global using namespace std for better practice
@@ -3348,9 +3349,22 @@ static cv::Mat refine_perspective_transform_from_blob(
                                            ideal_corrected_dest_points);
   if (M2.empty() || cv::determinant(M2) < 1e-6) {
     LOG_ERROR << "RobustDetect P2: Degenerate M2 generated.";
-    for (size_t i = 0; i < p1_source_points_raw.size(); i++) {
-      LOG_DEBUG << " p1_source_points_raw[" << i
-                << "]:" << p1_source_points_raw[i];
+    if (bDebug) {
+      cv::Mat debug_img = rawBgrImage.clone();
+      std::string fileName = "share/";
+      for (size_t i = 0; i < p1_source_points_raw.size(); i++) {
+        fileName += std::to_string(p1_source_points_raw[i].x) + "-" +
+                    std::to_string(p1_source_points_raw[i].y) + "_";
+        cv::circle(debug_img, p1_source_points_raw[i], 5, cv::Scalar(0, 255, 0),
+                   2);
+        std::string tag = std::to_string(p1_source_points_raw[i].x) + "-" +
+                          std::to_string(p1_source_points_raw[i].y);
+        cv::putText(debug_img, tag, p1_source_points_raw[i],
+                    cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 100, 100),
+                    2);
+      }
+      fileName += ".jpg";
+      cv::imwrite(fileName, debug_img);
     }
     return cv::Mat();
   }
