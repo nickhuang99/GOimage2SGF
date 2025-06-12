@@ -33,6 +33,9 @@ const int MORPH_CLOSE_ITERATIONS_STONE =
 const double ABS_STONE_AREA_MIN_FACTOR = 0.7;
 const double ABS_STONE_AREA_MAX_FACTOR = 1.5;
 
+// calculate ROI for specific ROI
+const float ROI_HALF_WIDTH_FACTOR = 2.5f;
+
 // pass1 relaxed
 const double ROUGH_ABS_STONE_AREA_MIN_FACTOR = 0.4;
 const double ROUGH_ABS_STONE_AREA_MAX_FACTOR = 2.5;
@@ -149,7 +152,6 @@ cv::Rect calculateGridIntersectionROI(int target_col, int target_row,
                                       int corrected_image_width_px,
                                       int corrected_image_height_px,
                                       int grid_lines) {
-
   if (target_col < 0 || target_col >= grid_lines || target_row < 0 ||
       target_row >= grid_lines) {
     std::string error_msg =
@@ -204,8 +206,8 @@ cv::Rect calculateGridIntersectionROI(int target_col, int target_row,
   int color_sampling_radius =
       calculateAdaptiveSampleRadius(grid_area_width_px, grid_area_height_px);
 
-  int roi_half_width =
-      static_cast<int>(static_cast<float>(color_sampling_radius) * 2.5f);
+  int roi_half_width = static_cast<int>(
+      static_cast<float>(color_sampling_radius) * ROI_HALF_WIDTH_FACTOR);
   int min_practical_roi_half_width = 5;
   roi_half_width = std::max(roi_half_width, min_practical_roi_half_width);
 
