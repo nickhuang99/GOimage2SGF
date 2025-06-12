@@ -46,7 +46,7 @@ const double MIN_STONE_CIRCULARITY_WHITE = 0.70;
 const double MIN_STONE_CIRCULARITY_BLACK = 0.70;
 
 // --- NEW CONSTANT DEFINITIONS for find_best_round_shape_iterative ---
-const float ITERATIVE_L_BASE_MIN = 20.0f;
+const float ITERATIVE_L_BASE_MIN = 5.0f;
 const float ITERATIVE_L_BASE_MAX =
     245.0f; // Increased to better handle white stone highlights
 const float ITERATIVE_L_BASE_STEP = 5.0f;
