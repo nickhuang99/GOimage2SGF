@@ -3348,18 +3348,20 @@ static cv::Mat refine_perspective_transform_from_blob(
     bValid = p1_blob_center_in_raw.x > rawBgrImage.cols / 2 &&
              p1_blob_center_in_raw.y < rawBgrImage.rows / 2;
     break;
-  case CornerQuadrant::BOTTOM_LEFT:
+  case CornerQuadrant::BOTTOM_RIGHT:
     bValid = p1_blob_center_in_raw.x > rawBgrImage.cols / 2 &&
              p1_blob_center_in_raw.y > rawBgrImage.rows / 2;
     break;
-  case CornerQuadrant::BOTTOM_RIGHT:
+  case CornerQuadrant::BOTTOM_LEFT:
     bValid = p1_blob_center_in_raw.x < rawBgrImage.cols / 2 &&
              p1_blob_center_in_raw.y > rawBgrImage.rows / 2;
     break;
   }
   if (!bValid) {
     LOG_ERROR << "pass1 raw points outside quadrant: "
-              << p1_blob_center_in_raw.x << "," << p1_blob_center_in_raw.y;
+              << p1_blob_center_in_raw.x << "," << p1_blob_center_in_raw.y
+              << "  rawBgrImage.cols:" << rawBgrImage.cols
+              << ", rawBgrImage.rows:" << rawBgrImage.rows;
     return cv::Mat();
   }
 
