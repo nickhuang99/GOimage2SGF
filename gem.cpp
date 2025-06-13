@@ -2185,15 +2185,22 @@ void experimentalFindBlobWorkflow() {
   LOG_INFO << "--- Experimental Find Blob Workflow Finished ---";
 }
 
-void runAutoCalibrationWorkflow() {
-  LOG_INFO << "Attempting to capture frame for auto-calibration...";
+void runAutoCalibrationWorkflow(const std::string &imagePath) {
+  LOG_INFO << "Attempting to capture frame for auto-calibration... "
+           << imagePath;
   cv::Mat frame;
-
-  if (!captureFrame(g_device_path, frame)) {
-    LOG_ERROR
-        << "Auto-Calibration FAILED: Could not capture frame from webcam.";
-    return;
+  if (imagePath.empty()) {
+    if (!captureFrame(g_device_path, frame)) {
+      LOG_ERROR
+          << "Auto-Calibration FAILED: Could not capture frame from webcam.";
+      return;
+    }
+  } else {
+    frame = cv::imread(imagePath);
+    if (frame.empty())
+      THROWGEMERROR("Failed to load image for auto calibration: " + imagePath);
   }
+
   LOG_INFO << "Frame captured successfully. Image size: " << frame.cols << "x"
            << frame.rows;
 
@@ -2653,7 +2660,7 @@ int main(int argc, char *argv[]) {
       cv::destroyAllWindows();
       LOG_INFO << "--- Test Robust Corner Detection Workflow Finished ---";
     } else if (runAutoCalibration) {
-      runAutoCalibrationWorkflow();
+      runAutoCalibrationWorkflow(detect_stone_image_path_arg);
     } else if (run_exp_find_blob_workflow) {
       experimentalFindBlobWorkflow();
     } else if (run_probe_devices) {
