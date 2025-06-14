@@ -1978,24 +1978,30 @@ bool detectSpecificColoredRoundShape(const cv::Mat &inputBgrImage,
                               ")")
                 << ", Expected Area: " << Num2Str(expectedStoneArea).str()
                 << std::endl;
-      if (bDebug && false)
+      if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
         cv::drawContours(roi_contour_vis_canvas,
                          std::vector<std::vector<cv::Point>>{contour}, -1,
                          cv::Scalar(0, 165, 255), 1);
+        cv::putText(roi_contour_vis_canvas,
+                    "A:" + std::to_string(area).substr(0, 4),
+                    contour[0] - cv::Point(5, 5), cv::FONT_HERSHEY_SIMPLEX, 0.3,
+                    cv::Scalar(0, 0, 255));
+      }
+
       continue;
     }
     if (circularity < minCircularity) {
       LOG_DEBUG << "      -> Contour " << contour_idx << " (ROI " << roi.x
                 << "," << roi.y << ") REJECTED by circularity " << circularity
                 << " (min_circ=" << minCircularity << ")" << std::endl;
-      if (bDebug && false) {
+      if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
         cv::drawContours(roi_contour_vis_canvas,
                          std::vector<std::vector<cv::Point>>{contour}, -1,
                          cv::Scalar(255, 0, 0), 1);
         cv::putText(roi_contour_vis_canvas,
                     "C:" + std::to_string(circularity).substr(0, 4),
-                    contour[0] - cv::Point(0, 5), cv::FONT_HERSHEY_SIMPLEX, 0.3,
-                    cv::Scalar(255, 100, 100));
+                    contour[0] - cv::Point(5, 5), cv::FONT_HERSHEY_SIMPLEX, 0.3,
+                    cv::Scalar(0, 0, 255));
       }
       continue;
     }
@@ -2003,10 +2009,15 @@ bool detectSpecificColoredRoundShape(const cv::Mat &inputBgrImage,
               << roi.y
               << ") PASSED filters. Current best area: " << bestContourScore
               << std::endl;
-    if (bDebug && false)
+    if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG)
       cv::drawContours(roi_contour_vis_canvas,
                        std::vector<std::vector<cv::Point>>{contour}, -1,
                        cv::Scalar(0, 255, 255), 1);
+    cv::putText(roi_contour_vis_canvas,
+                "P:" + std::to_string(area).substr(0, 4) + ":" +
+                    std::to_string(circularity).substr(0, 4),
+                contour[0] - cv::Point(5, 5), cv::FONT_HERSHEY_SIMPLEX, 0.3,
+                cv::Scalar(0, 0, 255));
 
     if (area > bestContourScore) {
       bestContourScore = area;
@@ -2016,18 +2027,23 @@ bool detectSpecificColoredRoundShape(const cv::Mat &inputBgrImage,
     }
   }
 
-  if (bDebug && !contours.empty() && false) {
-    std::string roi_contours_win_name = "Evaluated Contours (ROI X" +
-                                        std::to_string(roi.x) + " Y" +
-                                        std::to_string(roi.y) + ")";
-    if (!bestContour.empty() && false) {
-      cv::drawContours(roi_contour_vis_canvas,
-                       std::vector<std::vector<cv::Point>>{bestContour}, -1,
-                       cv::Scalar(0, 255, 0), 2);
-    }
-    cv::imshow(roi_contours_win_name, roi_contour_vis_canvas);
-    cv::waitKey(0);
-    cv::destroyWindow(roi_contours_win_name);
+  if (bDebug && !contours.empty() &&
+      Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
+    std::string roi_contours_win_name =
+        "Evaluated Contours (ROI X" + std::to_string(regionOfInterest.x) +
+        " Y" + std::to_string(regionOfInterest.y) + ")" +
+        std::to_string(expectedAvgLabColor[0]) + "_" +
+        std::to_string(expectedAvgLabColor[1]) + "_" +
+        std::to_string(expectedAvgLabColor[2]);
+    // if (!bestContour.empty() &&
+    //     Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
+    //   cv::drawContours(roi_contour_vis_canvas,
+    //                    std::vector<std::vector<cv::Point>>{bestContour}, -1,
+    //                    cv::Scalar(0, 255, 0), 2);
+    // }
+    std::string filename = "share/Debug/" + roi_contours_win_name + ".jpg";
+
+    cv::imwrite(filename, roi_contour_vis_canvas);
   }
 
   if (!bestContour.empty()) {
@@ -3037,7 +3053,7 @@ bool find_best_round_shape_iterative(
 
         } else {
           // --- START: ADDED DEBUG VISUALIZATION FOR REJECTED CONTOURS ---
-          if (bDebug && false) {
+          if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::TRACE) {
             cv::Mat roi_bgr_debug_display =
                 image_to_search_bgr(valid_roi).clone();
             cv::drawContours(
@@ -3065,14 +3081,11 @@ bool find_best_round_shape_iterative(
                         cv::FONT_HERSHEY_SIMPLEX, 0.4, cv::Scalar(0, 255, 255),
                         1);
 
-            std::string window_name =
-                "FBS Rejected Geom (L:" + std::to_string((int)current_base_L) +
-                " T:" + std::to_string((int)current_l_tol) + ")";
-            cv::imshow(window_name, roi_bgr_debug_display);
-            if (cv::waitKey(0) == 27) {
-              return false;
-            }
-            cv::destroyWindow(window_name);
+            std::string file_name = "share/Debug/FBS_Rejected_Geom_L_" +
+                                    std::to_string((int)current_base_L) +
+                                    "_T_" + std::to_string((int)current_l_tol) +
+                                    ".jpg";
+            cv::imwrite(file_name, roi_bgr_debug_display);
           }
           // --- END: ADDED DEBUG VISUALIZATION ---
         }
@@ -3376,7 +3389,7 @@ static cv::Mat refine_perspective_transform_from_blob(
                                            ideal_corrected_dest_points);
   if (M2.empty() || cv::determinant(M2) < 1e-6) {
     LOG_ERROR << "RobustDetect P2: Degenerate M2 generated.";
-    if (bDebug) {
+    if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::TRACE) {
       cv::Mat debug_img = rawBgrImage.clone();
       std::string fileName = "share/";
       for (size_t i = 0; i < p1_source_points_raw.size(); i++) {
@@ -3633,11 +3646,12 @@ bool adaptive_detect_stone_robust(
           // Also offset the center for the text label
           cv::Point blob_center_absolute =
               blob.center_in_roi_coords + cv::Point2f(roi_offset);
-
-          cv::putText(p1_candidates_vis, std::to_string(counter++),
-                      blob_center_absolute + cv::Point(5, 5),
-                      cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 100, 100),
-                      2);
+          std::string text = "area:" + std::to_string(blob.area).substr(0,4) +
+                             " cir:" + std::to_string(blob.circularity).substr(0,4);
+          cv::putText(p1_candidates_vis, text,
+                      blob_center_absolute + cv::Point(-25, 25),
+                      cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 0, 255),
+                      1);
         }
         std::string filename = "share/pass1_" + quadrant_name_str +
                                "_candidates_attempt_" +
@@ -3877,10 +3891,11 @@ static bool adaptive_detect_stone_for_calib(const cv::Mat &rawBgrImage,
           cv::Point blob_center_absolute =
               blob.center_in_roi_coords + cv::Point2f(roi_offset);
 
-          cv::putText(p1_candidates_vis, std::to_string(counter++),
-                      blob_center_absolute + cv::Point(5, 5),
-                      cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 100, 100),
-                      2);
+          cv::putText(p1_candidates_vis,
+                      "A:" + std::to_string(blob.area) +
+                          "C:" + std::to_string(blob.circularity),
+                      blob_center_absolute + cv::Point(-35, 35),
+                      cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 0, 0), 2);
         }
         std::string filename = "share/pass1_" + quadrant_name_str +
                                "_candidates_attempt_" +
@@ -3913,6 +3928,22 @@ static bool adaptive_detect_stone_for_calib(const cv::Mat &rawBgrImage,
                           rawBgrImage.size());
       if (image_pass2_corrected.empty())
         continue;
+      else {
+        if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG &&
+            targetQuadrant == CornerQuadrant::TOP_LEFT) {
+          std::string filename =
+              "TL_corrected_" + std::to_string(found_blob_pass1.area) + "_" +
+              std::to_string(found_blob_pass1.circularity);
+          cv::Mat corrected_img = image_pass2_corrected.clone();
+          cv::circle(corrected_img, ideal_corners[0], 3,
+                     cv::Scalar(0, 255, 0), -1);
+          cv::imwrite("share/Debug/" + filename+".jpg", corrected_img);
+          cv::Mat raw_img = rawBgrImage.clone();
+          cv::circle(raw_img, p1_blob_center_in_p1_image, 3,
+                     cv::Scalar(0, 255, 0), -1);
+          cv::imwrite("share/Debug/" + filename+"_raw.jpg", raw_img);
+        }
+      }
 
       cv::Point2f pass2_detected_center;
       if (perform_pass2_stone_verification(
@@ -3953,6 +3984,33 @@ static bool adaptive_detect_stone_for_calib(const cv::Mat &rawBgrImage,
         }
         // --- END DEBUG VISUALIZATION ---
         return true;
+      } else {
+        if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::TRACE) {
+          LOG_DEBUG << "perform_pass2_stone_verification fails with area:"
+                    << found_blob_pass1.area
+                    << " circularity:" << found_blob_pass1.circularity;
+          cv::Mat pass2_debug_image = rawBgrImage.clone();
+
+          if (!found_blob_pass1.contour_points_in_roi.empty()) {
+            cv::drawContours(pass2_debug_image,
+                             std::vector<std::vector<cv::Point>>{
+                                 found_blob_pass1.contour_points_in_roi},
+                             -1, cv::Scalar(0, 0, 255), 1); // Red for rejected
+          }
+          std::string text =
+              "area_" + std::to_string(found_blob_pass1.area) +
+              " circularity_" + std::to_string(found_blob_pass1.circularity) +
+              " color_" +
+              std::to_string(
+                  found_blob_pass1.classified_color_after_shape_found);
+          cv::putText(pass2_debug_image, text,
+                      cv::Point(found_blob_pass1.roi_used_in_search.x,
+                                found_blob_pass1.roi_used_in_search.y) -
+                          cv::Point(0, 10),
+                      1, cv::FONT_HERSHEY_SIMPLEX, cv::Scalar(255, 0, 0), 2);
+          std::string filename = "share/Debug/" + text + ".jpg";
+          cv::imwrite(filename, pass2_debug_image);
+        }
       }
     }
   }
