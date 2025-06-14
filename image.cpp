@@ -62,9 +62,9 @@ const int MIN_CONTOUR_POINTS_STONE = 5;
 
 const float MAX_ROI_FACTOR_FOR_CALC = 1.0f;
 
-const float MinimumValue = 0.025;
-const float MaximumValue = 0.5 - MinimumValue;
-const int MAX_GUESS_DIVIDENT = int(MaximumValue / MinimumValue) + 1;
+const float MINIMUM_PCT_VALUE = 0.05;
+const float MAXIMUM_PCT_VALUE = 0.5 - MINIMUM_PCT_VALUE;
+const int MAX_GUESS_DIVIDENT = int(MAXIMUM_PCT_VALUE / MINIMUM_PCT_VALUE) + 1;
 const int MAX_GUESS_ATTEMPTS = MAX_GUESS_DIVIDENT * MAX_GUESS_DIVIDENT;
 struct Line {
   double value; // y for horizontal, x for vertical
@@ -1940,7 +1940,7 @@ bool detectSpecificColoredRoundShape(const cv::Mat &inputBgrImage,
     LOG_ERROR << "  For ROI at (" << roi.x << "," << roi.y
               << "): No contours found after color masking." << std::endl;
     return false;
-  }  
+  }
 
   std::vector<cv::Point> bestContour;
   double bestContourScore = 0.0f;
@@ -2013,7 +2013,7 @@ bool detectSpecificColoredRoundShape(const cv::Mat &inputBgrImage,
               << roi.y
               << ") PASSED filters. Current best area: " << bestContourScore
               << std::endl;
-    if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG){
+    if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
       cv::drawContours(roi_contour_vis_canvas,
                        std::vector<std::vector<cv::Point>>{contour}, -1,
                        cv::Scalar(0, 255, 255), 1);
@@ -3475,7 +3475,7 @@ static bool generate_next_initial_guess(const cv::Size &image_size,
 
   // Define the search space for each quadrant as a percentage of image
   // dimensions
- 
+
   float x_min_pct = 0.025, y_min_pct = 0.075;
   float x_max_pct = 0.475, y_max_pct = 0.475;
   float x_start = 0.025f;
@@ -3486,34 +3486,34 @@ static bool generate_next_initial_guess(const cv::Size &image_size,
   case CornerQuadrant::TOP_LEFT: /* Default values are correct */
     x_offset = 0;
     y_offset = 0;
-    x_start = MinimumValue;
-    y_start = MinimumValue;
-    x_step = MinimumValue;
-    y_step = MinimumValue;
+    x_start = MINIMUM_PCT_VALUE;
+    y_start = MINIMUM_PCT_VALUE;
+    x_step = MINIMUM_PCT_VALUE;
+    y_step = MINIMUM_PCT_VALUE;
     break;
   case CornerQuadrant::TOP_RIGHT:
     x_offset = 0.5f;
     y_offset = 0.0f;
-    x_start = MaximumValue;
-    y_start = MinimumValue;
-    x_step = -MinimumValue;
-    y_step = MinimumValue;
+    x_start = MAXIMUM_PCT_VALUE;
+    y_start = MINIMUM_PCT_VALUE;
+    x_step = -MINIMUM_PCT_VALUE;
+    y_step = MINIMUM_PCT_VALUE;
     break;
   case CornerQuadrant::BOTTOM_RIGHT:
     x_offset = 0.5f;
     y_offset = 0.5f;
-    x_start = MaximumValue;
-    y_start = MaximumValue;
-    x_step = -MinimumValue;
-    y_step = -MinimumValue;
+    x_start = MAXIMUM_PCT_VALUE;
+    y_start = MAXIMUM_PCT_VALUE;
+    x_step = -MINIMUM_PCT_VALUE;
+    y_step = -MINIMUM_PCT_VALUE;
     break;
   case CornerQuadrant::BOTTOM_LEFT:
     x_offset = 0.0f;
     y_offset = 0.5f;
-    x_start = MinimumValue;
-    y_start = MaximumValue;
-    x_step = MinimumValue;
-    y_step = -MinimumValue;
+    x_start = MINIMUM_PCT_VALUE;
+    y_start = MAXIMUM_PCT_VALUE;
+    x_step = MINIMUM_PCT_VALUE;
+    y_step = -MINIMUM_PCT_VALUE;
     break;
   }
 
@@ -3569,7 +3569,6 @@ bool adaptive_detect_stone_robust(
   }
 
   // --- Iterative Guessing Loop for Pass 1 ---
-  
 
   cv::Mat M1;
   cv::Mat image_pass1_corrected;
@@ -3653,12 +3652,12 @@ bool adaptive_detect_stone_robust(
           // Also offset the center for the text label
           cv::Point blob_center_absolute =
               blob.center_in_roi_coords + cv::Point2f(roi_offset);
-          std::string text = "area:" + std::to_string(blob.area).substr(0,4) +
-                             " cir:" + std::to_string(blob.circularity).substr(0,4);
+          std::string text =
+              "area:" + std::to_string(blob.area).substr(0, 4) +
+              " cir:" + std::to_string(blob.circularity).substr(0, 4);
           cv::putText(p1_candidates_vis, text,
                       blob_center_absolute + cv::Point(-25, 25),
-                      cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 0, 255),
-                      1);
+                      cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 0, 255), 1);
         }
         std::string filename = "share/pass1_" + quadrant_name_str +
                                "_candidates_attempt_" +
@@ -3842,7 +3841,7 @@ static bool adaptive_detect_stone_for_calib(const cv::Mat &rawBgrImage,
           ideal_grid_col, ideal_grid_row, hint_target_L_lab_from_calib)) {
     return false;
   }
-  
+
   cv::Mat M1;
   std::vector<cv::Point2f> p1_source_points_raw;
   const std::vector<cv::Point2f> ideal_corners =
@@ -3898,10 +3897,11 @@ static bool adaptive_detect_stone_for_calib(const cv::Mat &rawBgrImage,
               blob.center_in_roi_coords + cv::Point2f(roi_offset);
 
           cv::putText(p1_candidates_vis,
-                      "A:" + std::to_string(blob.area).substr(0,4) +
-                          "C:" + std::to_string(blob.circularity).substr(0,4),
+                      "A:" + std::to_string(blob.area).substr(0, 4) +
+                          "C:" + std::to_string(blob.circularity).substr(0, 4),
                       blob_center_absolute + cv::Point(-35, 35),
-                      cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 0, 0), 0.5);
+                      cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 0, 0),
+                      0.5);
         }
         std::string filename = "share/pass1_" + quadrant_name_str +
                                "_candidates_attempt_" +
@@ -3937,17 +3937,17 @@ static bool adaptive_detect_stone_for_calib(const cv::Mat &rawBgrImage,
       else {
         if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG &&
             targetQuadrant == CornerQuadrant::TOP_LEFT) {
-          std::string filename =
-              "TL_corrected_" + std::to_string(found_blob_pass1.area) + "_" +
-              std::to_string(found_blob_pass1.circularity);
+          std::string filename = "TL_corrected_" +
+                                 std::to_string(found_blob_pass1.area) + "_" +
+                                 std::to_string(found_blob_pass1.circularity);
           cv::Mat corrected_img = image_pass2_corrected.clone();
-          cv::circle(corrected_img, ideal_corners[0], 3,
-                     cv::Scalar(0, 255, 0), -1);
-          cv::imwrite("share/Debug/" + filename+".jpg", corrected_img);
+          cv::circle(corrected_img, ideal_corners[0], 3, cv::Scalar(0, 255, 0),
+                     -1);
+          cv::imwrite("share/Debug/" + filename + ".jpg", corrected_img);
           cv::Mat raw_img = rawBgrImage.clone();
           cv::circle(raw_img, out_final_raw_corner_guess, 3,
                      cv::Scalar(0, 255, 0), -1);
-          cv::imwrite("share/Debug/" + filename+"_raw.jpg", raw_img);
+          cv::imwrite("share/Debug/" + filename + "_raw.jpg", raw_img);
         }
       }
 
