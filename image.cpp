@@ -46,13 +46,13 @@ const double MIN_STONE_CIRCULARITY_WHITE = 0.70;
 const double MIN_STONE_CIRCULARITY_BLACK = 0.70;
 
 // --- NEW CONSTANT DEFINITIONS for find_best_round_shape_iterative ---
-const float ITERATIVE_L_BASE_MIN = 40.0f;
+const float ITERATIVE_L_BASE_MIN = 20.0f;
 const float ITERATIVE_L_BASE_MAX =
     245.0f; // Increased to better handle white stone highlights
-const float ITERATIVE_L_BASE_STEP = 5.0f;
+const float ITERATIVE_L_BASE_STEP = 2.5f;
 const float ITERATIVE_L_TOL_MIN = 5.0f;
 const float ITERATIVE_L_TOL_MAX = 30.0f;
-const float ITERATIVE_L_TOL_STEP = 5.0f;
+const float ITERATIVE_L_TOL_STEP = 2.5f;
 const float ITERATIVE_AB_TARGET_NEUTRAL =
     118.0f; // Neutral gray center for A and B channels
 const float ITERATIVE_AB_TOL_MARGIN =
@@ -61,6 +61,11 @@ const float ITERATIVE_AB_TOL_MARGIN =
 const int MIN_CONTOUR_POINTS_STONE = 5;
 
 const float MAX_ROI_FACTOR_FOR_CALC = 1.0f;
+
+const float MinimumValue = 0.025;
+const float MaximumValue = 0.5 - MinimumValue;
+const int MAX_GUESS_DIVIDENT = int(MaximumValue / MinimumValue) + 1;
+const int MAX_GUESS_ATTEMPTS = MAX_GUESS_DIVIDENT * MAX_GUESS_DIVIDENT;
 struct Line {
   double value; // y for horizontal, x for vertical
   double angle;
@@ -1911,14 +1916,15 @@ bool detectSpecificColoredRoundShape(const cv::Mat &inputBgrImage,
   cv::morphologyEx(colorMask, colorMask, cv::MORPH_CLOSE, close_kernel,
                    cv::Point(-1, -1), MORPH_CLOSE_ITERATIONS_STONE);
 
-  if (bDebug && false) {
-    std::string roi_window_name =
-        "Color Mask ROI (L:" +
+  if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
+    std::string roi_file_name =
+        "share/Debug/Color Mask ROI (L:" +
         std::to_string(static_cast<int>(expectedAvgLabColor[0])) + " X" +
-        std::to_string(roi.x) + " Y" + std::to_string(roi.y) + ")";
-    cv::imshow(roi_window_name, colorMask);
-    cv::waitKey(0);
-    cv::destroyWindow(roi_window_name);
+        std::to_string(roi.x) + " Y" + std::to_string(roi.y) + ")" +
+        std::to_string(expectedAvgLabColor[0]) + "_" +
+        std::to_string(expectedAvgLabColor[1]) + "_" +
+        std::to_string(expectedAvgLabColor[2]) + ".jpg";
+    cv::imwrite(roi_file_name, colorMask);
   }
 
   std::vector<std::vector<cv::Point>> contours;
@@ -1931,12 +1937,10 @@ bool detectSpecificColoredRoundShape(const cv::Mat &inputBgrImage,
             << std::endl;
 
   if (contours.empty()) {
-    LOG_DEBUG << "  For ROI at (" << roi.x << "," << roi.y
+    LOG_ERROR << "  For ROI at (" << roi.x << "," << roi.y
               << "): No contours found after color masking." << std::endl;
     return false;
-  }
-
-  LOG_DEBUG << " MinCircularity=" << minCircularity << std::endl;
+  }  
 
   std::vector<cv::Point> bestContour;
   double bestContourScore = 0.0f;
@@ -2009,15 +2013,16 @@ bool detectSpecificColoredRoundShape(const cv::Mat &inputBgrImage,
               << roi.y
               << ") PASSED filters. Current best area: " << bestContourScore
               << std::endl;
-    if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG)
+    if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG){
       cv::drawContours(roi_contour_vis_canvas,
                        std::vector<std::vector<cv::Point>>{contour}, -1,
                        cv::Scalar(0, 255, 255), 1);
-    cv::putText(roi_contour_vis_canvas,
-                "P:" + std::to_string(area).substr(0, 4) + ":" +
-                    std::to_string(circularity).substr(0, 4),
-                contour[0] - cv::Point(5, 5), cv::FONT_HERSHEY_SIMPLEX, 0.3,
-                cv::Scalar(0, 0, 255));
+      cv::putText(roi_contour_vis_canvas,
+                  "P:" + std::to_string(area).substr(0, 4) + ":" +
+                      std::to_string(circularity).substr(0, 4),
+                  contour[0] - cv::Point(5, 5), cv::FONT_HERSHEY_SIMPLEX, 0.3,
+                  cv::Scalar(0, 0, 255));
+    }
 
     if (area > bestContourScore) {
       bestContourScore = area;
@@ -2035,12 +2040,12 @@ bool detectSpecificColoredRoundShape(const cv::Mat &inputBgrImage,
         std::to_string(expectedAvgLabColor[0]) + "_" +
         std::to_string(expectedAvgLabColor[1]) + "_" +
         std::to_string(expectedAvgLabColor[2]);
-    // if (!bestContour.empty() &&
-    //     Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
-    //   cv::drawContours(roi_contour_vis_canvas,
-    //                    std::vector<std::vector<cv::Point>>{bestContour}, -1,
-    //                    cv::Scalar(0, 255, 0), 2);
-    // }
+    if (!bestContour.empty() &&
+        Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
+      cv::drawContours(roi_contour_vis_canvas,
+                       std::vector<std::vector<cv::Point>>{bestContour}, -1,
+                       cv::Scalar(0, 255, 0), 2);
+    }
     std::string filename = "share/Debug/" + roi_contours_win_name + ".jpg";
 
     cv::imwrite(filename, roi_contour_vis_canvas);
@@ -3371,6 +3376,7 @@ static cv::Mat refine_perspective_transform_from_blob(
     break;
   }
   if (!bValid) {
+    // this should never happen
     LOG_ERROR << "pass1 raw points outside quadrant: "
               << p1_blob_center_in_raw.x << "," << p1_blob_center_in_raw.y
               << "  rawBgrImage.cols:" << rawBgrImage.cols
@@ -3469,51 +3475,52 @@ static bool generate_next_initial_guess(const cv::Size &image_size,
 
   // Define the search space for each quadrant as a percentage of image
   // dimensions
-  float x_min_pct = 0.05, y_min_pct = 0.05;
-  float x_max_pct = 0.45, y_max_pct = 0.45;
-  float x_start = 0.05f;
-  float y_start = 0.05f;
-  float x_step = 0.05f, y_step = 0.05f;
+ 
+  float x_min_pct = 0.025, y_min_pct = 0.075;
+  float x_max_pct = 0.475, y_max_pct = 0.475;
+  float x_start = 0.025f;
+  float y_start = 0.025f;
+  float x_step = 0.025f, y_step = 0.025f;
   float x_offset = 0.0f, y_offset = 0.0f;
   switch (quadrant) {
   case CornerQuadrant::TOP_LEFT: /* Default values are correct */
     x_offset = 0;
     y_offset = 0;
-    x_start = 0.05f;
-    y_start = 0.05f;
-    x_step = 0.05f;
-    y_step = 0.05f;
+    x_start = MinimumValue;
+    y_start = MinimumValue;
+    x_step = MinimumValue;
+    y_step = MinimumValue;
     break;
   case CornerQuadrant::TOP_RIGHT:
     x_offset = 0.5f;
     y_offset = 0.0f;
-    x_start = 0.45f;
-    y_start = 0.05f;
-    x_step = -0.05f;
-    y_step = 0.05f;
+    x_start = MaximumValue;
+    y_start = MinimumValue;
+    x_step = -MinimumValue;
+    y_step = MinimumValue;
     break;
   case CornerQuadrant::BOTTOM_RIGHT:
     x_offset = 0.5f;
     y_offset = 0.5f;
-    x_start = 0.45f;
-    y_start = 0.45f;
-    x_step = -0.05f;
-    y_step = -0.05f;
+    x_start = MaximumValue;
+    y_start = MaximumValue;
+    x_step = -MinimumValue;
+    y_step = -MinimumValue;
     break;
   case CornerQuadrant::BOTTOM_LEFT:
     x_offset = 0.0f;
     y_offset = 0.5f;
-    x_start = 0.05f;
-    y_start = 0.45f;
-    x_step = 0.05f;
-    y_step = -0.05f;
+    x_start = MinimumValue;
+    y_start = MaximumValue;
+    x_step = MinimumValue;
+    y_step = -MinimumValue;
     break;
   }
 
   // Calculate the guess based on the selected grid factor for the current
   // attempt
-  float x_pct = x_start + attempt_index / 9 * x_step;
-  float y_pct = y_start + attempt_index % 9 * y_step;
+  float x_pct = x_start + attempt_index / MAX_GUESS_DIVIDENT * x_step;
+  float y_pct = y_start + attempt_index % MAX_GUESS_DIVIDENT * y_step;
   x_pct = x_offset + std::max(x_min_pct, std::min(x_pct, x_max_pct));
   y_pct = y_offset + std::max(y_min_pct, std::min(y_pct, y_max_pct));
   LOG_DEBUG << "quadrant:" << toString(quadrant) << " x_pct: " << x_pct
@@ -3562,7 +3569,7 @@ bool adaptive_detect_stone_robust(
   }
 
   // --- Iterative Guessing Loop for Pass 1 ---
-  const int MAX_GUESS_ATTEMPTS = 9 * 9 - 1;
+  
 
   cv::Mat M1;
   cv::Mat image_pass1_corrected;
@@ -3835,8 +3842,7 @@ static bool adaptive_detect_stone_for_calib(const cv::Mat &rawBgrImage,
           ideal_grid_col, ideal_grid_row, hint_target_L_lab_from_calib)) {
     return false;
   }
-
-  const int MAX_GUESS_ATTEMPTS = 9 * 9 - 1;
+  
   cv::Mat M1;
   std::vector<cv::Point2f> p1_source_points_raw;
   const std::vector<cv::Point2f> ideal_corners =
@@ -3884,7 +3890,7 @@ static bool adaptive_detect_stone_for_calib(const cv::Mat &rawBgrImage,
           cv::drawContours(
               p1_candidates_vis,
               std::vector<std::vector<cv::Point>>{blob.contour_points_in_roi},
-              -1, cv::Scalar(0, 255, 255), 3, cv::LINE_AA, cv::noArray(), 0,
+              -1, cv::Scalar(0, 255, 255), 1, cv::LINE_AA, cv::noArray(), 0,
               roi_offset); // Candidate in THICK Yellow
 
           // Also offset the center for the text label
@@ -3892,10 +3898,10 @@ static bool adaptive_detect_stone_for_calib(const cv::Mat &rawBgrImage,
               blob.center_in_roi_coords + cv::Point2f(roi_offset);
 
           cv::putText(p1_candidates_vis,
-                      "A:" + std::to_string(blob.area) +
-                          "C:" + std::to_string(blob.circularity),
+                      "A:" + std::to_string(blob.area).substr(0,4) +
+                          "C:" + std::to_string(blob.circularity).substr(0,4),
                       blob_center_absolute + cv::Point(-35, 35),
-                      cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 0, 0), 2);
+                      cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(255, 0, 0), 0.5);
         }
         std::string filename = "share/pass1_" + quadrant_name_str +
                                "_candidates_attempt_" +
@@ -3939,7 +3945,7 @@ static bool adaptive_detect_stone_for_calib(const cv::Mat &rawBgrImage,
                      cv::Scalar(0, 255, 0), -1);
           cv::imwrite("share/Debug/" + filename+".jpg", corrected_img);
           cv::Mat raw_img = rawBgrImage.clone();
-          cv::circle(raw_img, p1_blob_center_in_p1_image, 3,
+          cv::circle(raw_img, out_final_raw_corner_guess, 3,
                      cv::Scalar(0, 255, 0), -1);
           cv::imwrite("share/Debug/" + filename+"_raw.jpg", raw_img);
         }
