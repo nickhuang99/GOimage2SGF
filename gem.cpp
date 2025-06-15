@@ -33,18 +33,34 @@ std::string g_default_game_name_prefix = "tournament";
 std::string g_device_path = "/dev/video0";
 
 // Add new global or pass as needed for the workflow
-static std::string g_exp_find_blob_quadrant_str;
+
 static float g_exp_find_blob_l_tol_start = CALIB_L_TOLERANCE_STONE; // Default
 static float g_exp_find_blob_l_tol_end = CALIB_L_TOLERANCE_STONE;   // Default
 static float g_exp_find_blob_l_tol_step = 5.0f;                     // Default
 static float g_exp_find_blob_ab_tol = CALIB_AB_TOLERANCE_STONE;     // Default
 static std::string &g_exp_find_blob_image_path = g_default_input_image_path;
 
+// --- Globals for Experimental Workflows ---
+std::string g_exp_quadrant_str; // Reused by multiple workflows
+static std::string &g_exp_find_blob_quadrant_str = g_exp_quadrant_str;
+// Globals specific to the NEW Raw Pass 1 workflow
+std::string g_exp_p1_color_str;
+static bool g_run_exp_raw_pass1_workflow = false;
+static float g_p1_l_sep_override = -1.0f;
+static float g_p1_circ_min_override = -1.0f;
+static float g_p1_area_min_factor_override = -1.0f;
+
+// Forward Declaration for the new workflow function
+void experimentalRawPass1Workflow();
+
 // Forward declaration for the new workflow function
 void experimentalFindBlobWorkflow();
+void experimentalRawPass1Workflow();
 
 static const std::string Default_Go_Board_Window_Title = "Simulated Go Board";
 static const int canvas_size_px = 760;
+// In gem.cpp
+
 void displayHelpMessage() {
   CONSOLE_OUT << "Go Environment Manager (GEM)" << endl;
   CONSOLE_OUT << "Usage: gem [options]" << endl;
@@ -53,13 +69,12 @@ void displayHelpMessage() {
                  "output (sets log level to DEBUG)."
               << endl;
   CONSOLE_OUT << "  -O, --log-level <level>           : Set log level (0=NONE, "
-                 "1=ERROR, 2=WARNING, 3=INFO, 4=DEBUG). Default: 3 (INFO)."
-              << endl; // NEW
+                 "1=ERROR, 2=WARNING, 3=INFO, 4=DEBUG, 5=TRACE). Default: 3."
+              << endl;
   CONSOLE_OUT
       << "  -D, --device <device_path>      : Specify video device by number "
-         "(e.g., 0) or path (e.g., /dev/video0). Default: /dev/video0."
-      << endl;
-  // ... (rest of help message options, using CONSOLE_OUT) ...
+         "(e.g., 0) or path (e.g., /dev/video0). Default: "
+      << g_device_path << "." << endl;
   CONSOLE_OUT
       << "  -M, --mode <backend>              : Specify capture backend "
          "('v4l2' "
@@ -68,8 +83,8 @@ void displayHelpMessage() {
   CONSOLE_OUT
       << "  --size <WxH>                      : Specify capture resolution "
          "(e.g., "
-         "1280x720). Default: 640x480."
-      << endl;
+         "1280x720). Default: "
+      << g_capture_width << "x" << g_capture_height << "." << endl;
   CONSOLE_OUT
       << "  -b, --calibration                 : Run capture calibration "
          "workflow."
@@ -85,43 +100,13 @@ void displayHelpMessage() {
       << "  --test-calibration-config         : Load calibration snapshot and "
          "config, draw corners."
       << endl;
-  CONSOLE_OUT << "  --exp-detect-tl                   : (Dev) Experimental TL "
-                 "quadrant stone detection." // NEW OPTION
-              << endl;
-  CONSOLE_OUT << "  --exp-find-blob                   : (Dev) Experimental "
-                 "blob finding with L-tolerance iteration."
-              << endl;
-  CONSOLE_OUT << "      --quadrant <TL|TR|BL|BR>      : Quadrant for "
-                 "--exp-find-blob (default: TR)."
-              << endl;
-  CONSOLE_OUT << "      --image <path>                : Image for "
-                 "--exp-find-blob (default: "
-              << g_default_input_image_path << ")." << endl;
-  CONSOLE_OUT << "      --l_tol_start <float>         : Start L-tolerance for "
-                 "--exp-find-blob (default: "
-              << CALIB_L_TOLERANCE_STONE << ")." << endl;
-  CONSOLE_OUT << "      --l_tol_end <float>           : End L-tolerance for "
-                 "--exp-find-blob (default: "
-              << CALIB_L_TOLERANCE_STONE << ")." << endl;
-  CONSOLE_OUT << "      --l_tol_step <float>          : Step for L-tolerance "
-                 "iteration (default: 5.0)."
-              << endl;
-  CONSOLE_OUT << "      --ab_tol <float>              : Fixed AB-tolerance for "
-                 "--exp-find-blob (default: "
-              << CALIB_AB_TOLERANCE_STONE << ")." << endl;
-  CONSOLE_OUT << "  --robust-corners                : (Dev) Use robust "
-                 "iterative shape and L-value probing for corner detection."
-              << endl;
   CONSOLE_OUT
       << "  -p, --process-image <image_path>   : Process the Go board image."
       << endl;
   CONSOLE_OUT
       << "  -P <col> <row>                    : Detect stone at specified "
          "col/row (0-18)."
-      << endl; // NEW
-  CONSOLE_OUT << "      --image <image_path>          : Optional image for -P "
-                 "(default: "
-              << g_default_input_image_path << ")." << endl; // NEW
+      << endl;
   CONSOLE_OUT
       << "  -g, --generate-sgf <in_img> <out_sgf> : Generate SGF from image."
       << endl;
@@ -150,23 +135,65 @@ void displayHelpMessage() {
               << endl;
   CONSOLE_OUT
       << "      --game-name <prefix>            : Set game name prefix for "
-         "tournament or study mode (default: "
-      << g_default_game_name_prefix << " or 'tournament' if only -t is used)."
+         "tournament or study mode."
       << endl;
   CONSOLE_OUT
       << "      --draw-board <sgf_path>         : Read SGF, draw and display "
          "simulated board."
-      << endl; // NEW
-  CONSOLE_OUT << "  -u, --study             : Start study mode to replay a "
-                 "recorded game."
-              << endl; // NEW
+      << endl;
   CONSOLE_OUT
-      << "      --test-perspective <image_path> : (Dev) Test perspective "
-         "correction." // Removed -t
+      << "  -u, --study                       : Start study mode to replay a "
+         "recorded game."
       << endl;
   CONSOLE_OUT
       << "  -h, --help                          : Display this help message."
       << endl;
+  CONSOLE_OUT << endl << "--- Developer & Experimental Options ---" << endl;
+  CONSOLE_OUT << "      --image <path>                : Image for various "
+                 "workflows (--exp-raw-pass1, -P, etc.)."
+              << endl;
+  CONSOLE_OUT << "  --test-perspective <image_path> : Test perspective "
+                 "correction."
+              << endl;
+  CONSOLE_OUT << "  --robust-corners                : Use robust "
+                 "iterative shape probing for corner detection."
+              << endl;
+  CONSOLE_OUT << "  --exp-detect-tl                   : Experimental TL "
+                 "quadrant stone detection (older version)."
+              << endl;
+  CONSOLE_OUT << "  --exp-find-blob                   : Experimental "
+                 "blob finding with L-tolerance iteration."
+              << endl;
+  CONSOLE_OUT << "  --exp-raw-pass1                   : (NEW) Run experimental "
+                 "Pass 1 stone candidate detection on a raw image."
+              << endl;
+  CONSOLE_OUT << "      --p1-color <BLACK|WHITE>      : (Required for "
+                 "--exp-raw-pass1) Specifies the target stone color."
+              << endl;
+  CONSOLE_OUT << "      --quadrant <TL|TR|BL|BR>      : Quadrant for search "
+                 "(used by --exp-raw-pass1 and --exp-find-blob)."
+              << endl;
+  CONSOLE_OUT << "      --p1-l-sep <float>            : Override dynamic "
+                 "L-separator value for raw Pass 1 search."
+              << endl;
+  CONSOLE_OUT << "      --p1-circ-min <float>         : Override minimum "
+                 "circularity for raw Pass 1 search."
+              << endl;
+  CONSOLE_OUT << "      --p1-area-min <float>         : Override minimum area "
+                 "factor for raw Pass 1 search."
+              << endl;
+  CONSOLE_OUT << "      --l_tol_start <float>         : Start L-tolerance for "
+                 "--exp-find-blob."
+              << endl;
+  CONSOLE_OUT << "      --l_tol_end <float>           : End L-tolerance for "
+                 "--exp-find-blob."
+              << endl;
+  CONSOLE_OUT << "      --l_tol_step <float>          : Step for L-tolerance "
+                 "iteration for --exp-find-blob."
+              << endl;
+  CONSOLE_OUT << "      --ab_tol <float>              : Fixed AB-tolerance for "
+                 "--exp-find-blob."
+              << endl;
   CONSOLE_OUT
       << "\n  Note: Webcam operations may require appropriate permissions "
          "(e.g., user in 'video' group)."
@@ -1930,6 +1957,15 @@ void experimentalDetectTLQuadrantWorkflow() {
   LOG_INFO << "--- Experimental Iterative Refine (V5) Workflow Finished ---";
 }
 
+/**
+ * @brief Orchestrates the new, isolated experimental workflow for hardened Pass
+ * 1 detection.
+ * * This workflow is triggered by the `--exp-raw-pass1` flag. It loads an
+ * image, dynamically determines board color, and then calls the core detection
+ * logic to find all plausible stone candidates in a specified quadrant of the
+ * raw image. It prints a summary of the findings to the console.
+ */
+
 void experimentalFindBlobWorkflow() {
   LOG_INFO << "--- Starting Experimental Find Blob Workflow ---";
   CornerQuadrant targetQuadrant = CornerQuadrant::TOP_RIGHT; // Default
@@ -2231,6 +2267,109 @@ void runAutoCalibrationWorkflow(const std::string &imagePath) {
   }
 }
 
+void experimentalRawPass1Workflow() {
+  LOG_INFO << "--- Starting Experimental Raw Pass 1 Workflow ---";
+
+  // 1. Validate required command-line arguments
+  if (g_exp_quadrant_str.empty() || g_exp_p1_color_str.empty()) {
+    THROWGEMERROR("--exp-raw-pass1 requires both --quadrant <val> and "
+                  "--p1-color <BLACK|WHITE> to be set.");
+  }
+
+  CornerQuadrant targetQuadrant = CornerQuadrant::TOP_LEFT; // Default
+  if (g_exp_quadrant_str == "TR")
+    targetQuadrant = CornerQuadrant::TOP_RIGHT;
+  else if (g_exp_quadrant_str == "BL")
+    targetQuadrant = CornerQuadrant::BOTTOM_LEFT;
+  else if (g_exp_quadrant_str == "BR")
+    targetQuadrant = CornerQuadrant::BOTTOM_RIGHT;
+
+  int expected_color = (g_exp_p1_color_str == "BLACK") ? BLACK : WHITE;
+
+  LOG_INFO << "  Target Quadrant: " << toString(targetQuadrant)
+           << ", Target Color: " << g_exp_p1_color_str;
+
+  // 2. Load the image
+  cv::Mat raw_image = cv::imread(g_default_input_image_path);
+  if (raw_image.empty()) {
+    THROWGEMERROR("Failed to load image for --exp-raw-pass1: " +
+                  g_default_input_image_path);
+  }
+
+  // 3. Set global testing parameters from command line overrides
+  if (g_p1_l_sep_override > 0) {
+    G_RAW_SEARCH_L_SEPARATOR = g_p1_l_sep_override;
+    LOG_INFO << "  Overriding L-Separator to: " << G_RAW_SEARCH_L_SEPARATOR;
+  } else {
+    // Dynamically determine the L-separator if not overridden
+    cv::Vec3f rough_board_color = get_rough_board_lab_color(raw_image);
+    G_RAW_SEARCH_L_SEPARATOR = rough_board_color[0];
+    LOG_INFO << "  Dynamically determined L-Separator: "
+             << G_RAW_SEARCH_L_SEPARATOR;
+  }
+
+  if (g_p1_circ_min_override > 0) {
+    G_MIN_ROUGH_RAW_CIRCULARITY = g_p1_circ_min_override;
+    LOG_INFO << "  Overriding Min Circularity to: "
+             << G_MIN_ROUGH_RAW_CIRCULARITY;
+  }
+  if (g_p1_area_min_factor_override > 0) {
+    G_ROUGH_RAW_AREA_MIN_FACTOR = g_p1_area_min_factor_override;
+    LOG_INFO << "  Overriding Min Area Factor to: "
+             << G_ROUGH_RAW_AREA_MIN_FACTOR;
+  }
+
+  // 4. Load calibration data (needed for color classification inside the
+  // finder)
+  CalibrationData calibData = loadCalibrationData(CALIB_CONFIG_PATH);
+  if (!calibData.colors_loaded) {
+    LOG_WARN << "Calibration data not fully loaded. Color classification of "
+                "blobs may be inaccurate.";
+    // Provide default fallback colors for classification to work
+    calibData.lab_tl = {60.0f, 128.0f, 128.0f};
+    calibData.lab_bl = {60.0f, 128.0f, 128.0f};
+    calibData.lab_tr = {230.0f, 128.0f, 128.0f};
+    calibData.lab_br = {230.0f, 128.0f, 128.0f};
+  }
+
+  // 5. Run the core detection function
+  std::vector<CandidateBlob> found_candidates;
+  find_blob_candidates_in_raw_quadrant(
+      raw_image, targetQuadrant, expected_color, calibData, found_candidates);
+
+  // 6. Print the results
+  CONSOLE_OUT << "\n--- Raw Pass 1 Results ---" << std::endl;
+  CONSOLE_OUT << "Found " << found_candidates.size() << " candidates for "
+              << g_exp_p1_color_str << " in " << g_exp_quadrant_str << "."
+              << std::endl;
+
+  if (!found_candidates.empty()) {
+    CONSOLE_OUT
+        << "----------------------------------------------------------------"
+        << std::endl;
+    CONSOLE_OUT
+        << "  Area     | Circularity | L_Base | L_Tol  | Center (in ROI)"
+        << std::endl;
+    CONSOLE_OUT
+        << "----------------------------------------------------------------"
+        << std::endl;
+    for (const auto &blob : found_candidates) {
+      std::cout << std::fixed << std::setprecision(2) << std::setw(10)
+                << blob.area << " | " << std::setw(11) << blob.circularity
+                << " | " << std::setw(6) << blob.l_base_used << " | "
+                << std::setw(6) << blob.l_tolerance_used << " | ("
+                << (int)blob.center_in_roi_coords.x << ","
+                << (int)blob.center_in_roi_coords.y << ")" << std::endl;
+    }
+    CONSOLE_OUT
+        << "----------------------------------------------------------------"
+        << std::endl;
+    CONSOLE_OUT << "Debug images saved to share/Debug/ folder." << std::endl;
+  }
+
+  LOG_INFO << "--- Experimental Raw Pass 1 Workflow Finished ---";
+}
+
 int main(int argc, char *argv[]) {
   // Initialize logger with default path and level.
   // This allows logging from the very start, even during option parsing if
@@ -2317,6 +2456,11 @@ int main(int argc, char *argv[]) {
         {"l_tol_end", required_argument, nullptr, 4},
         {"l_tol_step", required_argument, nullptr, 5},
         {"ab_tol", required_argument, nullptr, 6},
+        {"exp-raw-pass1", no_argument, nullptr, 0},     // New master flag
+        {"p1-color", required_argument, nullptr, 0},    // New required argument
+        {"p1-l-sep", required_argument, nullptr, 0},    // New optional override
+        {"p1-circ-min", required_argument, nullptr, 0}, // New optional override
+        {"p1-area-min", required_argument, nullptr, 0}, // New optional override
         {nullptr, 0, nullptr, 0}};
 
     int c;
@@ -2486,15 +2630,31 @@ int main(int argc, char *argv[]) {
         run_detect_stone_position_workflow = true;
         break;
       case 0: // Long-only options (val was 0)
-        if (long_options[option_index].name == std::string("image")) {
+        if (long_options[option_index].name == std::string("exp-raw-pass1")) {
+          g_run_exp_raw_pass1_workflow = true;
+        } else if (long_options[option_index].name == std::string("p1-color")) {
+          if (optarg)
+            g_exp_p1_color_str = optarg;
+        } else if (long_options[option_index].name == std::string("quadrant")) {
+          if (optarg)
+            g_exp_quadrant_str = optarg;
+        } else if (long_options[option_index].name == std::string("p1-l-sep")) {
+          if (optarg)
+            g_p1_l_sep_override = std::stof(optarg);
+        } else if (long_options[option_index].name ==
+                   std::string("p1-circ-min")) {
+          if (optarg)
+            g_p1_circ_min_override = std::stof(optarg);
+        } else if (long_options[option_index].name ==
+                   std::string("p1-area-min")) {
+          if (optarg)
+            g_p1_area_min_factor_override = std::stof(optarg);
+        } else if (long_options[option_index].name == std::string("image")) {
           g_default_input_image_path = optarg;
           detect_stone_image_path_arg = optarg; // Store path for -P
         } else if (long_options[option_index].name ==
                    std::string("exp-find-blob")) { // if val was 0
           run_exp_find_blob_workflow = true;
-        } else if (long_options[option_index].name == std::string("quadrant")) {
-          if (optarg)
-            g_exp_find_blob_quadrant_str = optarg;
         } else if (long_options[option_index].name ==
                    std::string("l_tol_start")) {
           if (optarg)
@@ -2661,6 +2821,8 @@ int main(int argc, char *argv[]) {
       LOG_INFO << "--- Test Robust Corner Detection Workflow Finished ---";
     } else if (runAutoCalibration) {
       runAutoCalibrationWorkflow(detect_stone_image_path_arg);
+    } else if (g_run_exp_raw_pass1_workflow) {
+      experimentalRawPass1Workflow();
     } else if (run_exp_find_blob_workflow) {
       experimentalFindBlobWorkflow();
     } else if (run_probe_devices) {

@@ -19,7 +19,7 @@
 
 // Using namespace std; // Avoid global using namespace std for better practice
 // Using namespace cv;  // Avoid global using namespace cv for better practice
-
+extern std::string g_exp_p1_color_str;
 // --- Definition of Global Constants for Lab Color Tolerances ---
 // These are declared as extern in common.h and defined here
 const float CALIB_L_TOLERANCE_STONE = 35.0f;
@@ -117,28 +117,6 @@ struct LineMatch {
   }
 };
 
-struct CandidateBlob {
-  cv::Point2f center_in_roi_coords; // Center within the ROI it was found
-  double area;
-  double circularity;
-  float l_base_used;
-  float l_tolerance_used;
-  double score; // Can be used to reflect confidence or just mark as found
-  std::vector<cv::Point> contour_points_in_roi; // Relative to ROI
-  cv::Vec3f sampled_lab_color_from_contour;     // Lab color sampled from this
-                                                // specific blob
-  int classified_color_after_shape_found;       // BLACK, WHITE, EMPTY/OTHER
-  cv::Rect roi_used_in_search;                  // <<-- ADD THIS LINE
-
-  CandidateBlob()
-      : area(0), circularity(0), l_base_used(0), l_tolerance_used(0),
-        score(-1.0), sampled_lab_color_from_contour(-1, -1, -1),
-        classified_color_after_shape_found(EMPTY) {}
-
-  bool isValid() const {
-    return area > 0 && score >= 0;
-  } // Valid if area is positive and score indicates found
-};
 
 // --- DATA STRUCTURE FOR THE AUTO-CALIBRATION REFACTOR ---
 
@@ -185,6 +163,48 @@ static bool adaptive_detect_stone_robust(
     int &out_pass1_classified_color // Color classified from the robustly found
                                     // shape in Pass 1
 );
+
+// =================================================================================
+// START: CODE FOR HARDENED PASS 1 EXPERIMENTAL WORKFLOW
+// =================================================================================
+
+// --- PARAMETERS FOR HARDENED PASS 1 RAW IMAGE SEARCH ---
+// These are defined as global variables to be modified by command-line options
+// for testing.
+
+// L* value separating "dark" and "light" searches. Can be set dynamically.
+float G_RAW_SEARCH_L_SEPARATOR = 130.0f;
+
+// L* channel search parameters
+float G_RAW_SEARCH_L_MIN_FOR_BLACK = 20.0f;
+float G_RAW_SEARCH_L_MAX_FOR_BLACK = 125.0f;
+float G_RAW_SEARCH_L_MIN_FOR_WHITE = 135.0f;
+float G_RAW_SEARCH_L_MAX_FOR_WHITE = 245.0f;
+float G_RAW_SEARCH_L_STEP = 10.0f;
+
+// A* and B* channel search parameters (narrower range, finer step)
+float G_RAW_SEARCH_AB_MIN = 110.0f;
+float G_RAW_SEARCH_AB_MAX = 145.0f;
+float G_RAW_SEARCH_AB_STEP = 4.0f;
+
+// Tolerance search parameters
+float G_RAW_SEARCH_TOL_L_MIN = 15.0f;
+float G_RAW_SEARCH_TOL_L_MAX = 40.0f;
+float G_RAW_SEARCH_TOL_L_STEP = 5.0f;
+float G_RAW_SEARCH_TOL_AB_MIN = 15.0f;
+float G_RAW_SEARCH_TOL_AB_MAX = 30.0f;
+float G_RAW_SEARCH_TOL_AB_STEP = 5.0f;
+
+// Relaxed Geometry Filtering Parameters
+double G_ROUGH_RAW_AREA_MIN_FACTOR = 0.20;
+double G_ROUGH_RAW_AREA_MAX_FACTOR = 4.0;
+double G_MIN_ROUGH_RAW_CIRCULARITY = 0.35;
+
+// --- CONSTANTS FOR ROUGH BOARD COLOR SAMPLING ---
+// To avoid sampling the exact center (which may have a hoshi point), we sample
+// at four points offset from the center. These define the percentage offset.
+const float ROUGH_SAMPLE_POINT_OFFSET_1 = 0.4f; // e.g., 40% of the way in
+const float ROUGH_SAMPLE_POINT_OFFSET_2 = 0.6f; // e.g., 60% of the way in
 
 cv::Rect calculateGridIntersectionROI(int target_col, int target_row,
                                       int corrected_image_width_px,
@@ -4271,3 +4291,264 @@ bool find_best_round_shape_iterative_full(
   // Return true if we found at least one valid stone.
   return !out_found_blob_vec.empty();
 }
+
+
+/**
+ * @brief Samples the image center to get a rough estimate of the board's
+ * average Lab color.
+ *
+ * To avoid sampling directly on a grid line or a potential center hoshi point,
+ * this function samples four points around the image center and returns the
+ * median color. This provides a more robust estimate for the board's L* value,
+ * which can be used to dynamically separate the search ranges for black and
+ * white stones.
+ *
+ * @param raw_image_bgr The full, raw BGR image.
+ * @return The median cv::Vec3f Lab color of the sampled points.
+ */
+cv::Vec3f get_rough_board_lab_color(const cv::Mat &raw_image_bgr) {
+  cv::Mat lab_image;
+  cv::cvtColor(raw_image_bgr, lab_image, cv::COLOR_BGR2Lab);
+
+  int width = lab_image.cols;
+  int height = lab_image.rows;
+
+  // Sample at four points around the center using named constants
+  std::vector<cv::Point> sample_points = {
+      cv::Point(width * ROUGH_SAMPLE_POINT_OFFSET_1,
+                height * ROUGH_SAMPLE_POINT_OFFSET_1),
+      cv::Point(width * ROUGH_SAMPLE_POINT_OFFSET_2,
+                height * ROUGH_SAMPLE_POINT_OFFSET_1),
+      cv::Point(width * ROUGH_SAMPLE_POINT_OFFSET_1,
+                height * ROUGH_SAMPLE_POINT_OFFSET_2),
+      cv::Point(width * ROUGH_SAMPLE_POINT_OFFSET_2,
+                height * ROUGH_SAMPLE_POINT_OFFSET_2)};
+
+  std::vector<float> l_values, a_values, b_values;
+  for (const auto &pt : sample_points) {
+    if (pt.x >= 0 && pt.x < width && pt.y >= 0 && pt.y < height) {
+      cv::Vec3b lab = lab_image.at<cv::Vec3b>(pt);
+      l_values.push_back(lab[0]);
+      a_values.push_back(lab[1]);
+      b_values.push_back(lab[2]);
+    }
+  }
+
+  if (l_values.empty()) {
+    LOG_WARN << "get_rough_board_lab_color: No valid sample points found. "
+                "Returning default gray.";
+    return cv::Vec3f(130, 128, 128); // Fallback
+  }
+
+  // Find the median value for each channel for robustness against outliers
+  std::sort(l_values.begin(), l_values.end());
+  std::sort(a_values.begin(), a_values.end());
+  std::sort(b_values.begin(), b_values.end());
+
+  float median_l = l_values[l_values.size() / 2];
+  float median_a = a_values[a_values.size() / 2];
+  float median_b = b_values[b_values.size() / 2];
+
+  LOG_DEBUG << "Rough board color estimated as L*" << median_l << ", a*"
+            << median_a << ", b*" << median_b;
+  return cv::Vec3f(median_l, median_a, median_b);
+}
+
+/**
+ * @brief Calculates the cv::Rect for a given quadrant of an image.
+ *
+ * This utility defines a simple rectangular search area, typically covering a
+ * quarter of the image, to focus the search on the relevant corner area.
+ *
+ * @param image_size The cv::Size of the full raw image.
+ * @param quadrant The desired corner quadrant.
+ * @return A cv::Rect representing the search area for that quadrant.
+ */
+static cv::Rect get_raw_image_quadrant_rect(const cv::Size &image_size,
+                                            CornerQuadrant quadrant) {
+  int width = image_size.width;
+  int height = image_size.height;
+  int half_width = width / 2;
+  int half_height = height / 2;
+
+  switch (quadrant) {
+  case CornerQuadrant::TOP_LEFT:
+    return cv::Rect(0, 0, half_width, half_height);
+  case CornerQuadrant::TOP_RIGHT:
+    return cv::Rect(half_width, 0, width - half_width, half_height);
+  case CornerQuadrant::BOTTOM_LEFT:
+    return cv::Rect(0, half_height, half_width, height - half_height);
+  case CornerQuadrant::BOTTOM_RIGHT:
+    return cv::Rect(half_width, half_height, width - half_width,
+                    height - half_height);
+  default:
+    LOG_ERROR << "Invalid quadrant specified in get_raw_image_quadrant_rect.";
+    return cv::Rect(0, 0, 0, 0);
+  }
+}
+
+/**
+ * @brief Finds plausible stone candidates within a specified quadrant of a raw,
+ * uncorrected image.
+ *
+ * This function operates without any prior perspective correction. It
+ * intelligently iterates through a targeted L*a*b* color space based on the
+ * expected stone color (BLACK or WHITE) and uses highly relaxed geometric
+ * filters to identify all potential candidates, which will be rigorously
+ * verified in a later pass after perspective correction.
+ *
+ * @param raw_image_bgr The full, raw BGR image from the camera.
+ * @param quadrant The corner quadrant (e.g., TOP_LEFT) to search within.
+ * @param expected_stone_color The color of the stone we are looking for (BLACK
+ * or WHITE).
+ * @param calibData A reference to the calibration data for color
+ * classification.
+ * @param out_candidate_blobs A vector to be populated with all plausible
+ * candidates found.
+ * @return true if at least one plausible candidate is found, false otherwise.
+ */
+bool find_blob_candidates_in_raw_quadrant(
+    const cv::Mat &raw_image_bgr, CornerQuadrant quadrant,
+    int expected_stone_color, const CalibrationData &calibData,
+    std::vector<CandidateBlob> &out_candidate_blobs) {
+
+  LOG_INFO << "Starting raw quadrant search for "
+           << (expected_stone_color == BLACK ? "BLACK" : "WHITE")
+           << " stones in " << toString(quadrant) << " quadrant.";
+
+  if (raw_image_bgr.empty()) {
+    LOG_ERROR << "find_blob_candidates_in_raw_quadrant: Input raw BGR image is "
+                 "empty.";
+    return false;
+  }
+
+  out_candidate_blobs.clear();
+
+  // 1. Define the search area (the quadrant rectangle)
+  cv::Rect search_rect =
+      get_raw_image_quadrant_rect(raw_image_bgr.size(), quadrant);
+  if (search_rect.area() == 0)
+    return false;
+
+  cv::Mat roi_bgr = raw_image_bgr(search_rect);
+  cv::Mat roi_lab;
+  cv::cvtColor(roi_bgr, roi_lab, cv::COLOR_BGR2Lab);
+
+  // 2. Define geometry constraints using the relaxed global parameters
+  // We need an estimate of a "normal" stone radius if the image were corrected.
+  // A reasonable guess is ~1/40th of the image width.
+  float est_uncorrected_radius = (float)raw_image_bgr.cols / 40.0f;
+  double expected_area =
+      CV_PI * est_uncorrected_radius * est_uncorrected_radius;
+
+  StoneGeometryConstraints relaxed_constraints;
+  relaxed_constraints.min_acceptable_area =
+      expected_area * G_ROUGH_RAW_AREA_MIN_FACTOR;
+  relaxed_constraints.max_acceptable_area =
+      expected_area * G_ROUGH_RAW_AREA_MAX_FACTOR;
+  relaxed_constraints.min_acceptable_circularity = G_MIN_ROUGH_RAW_CIRCULARITY;
+
+  LOG_DEBUG << "Using relaxed constraints: Area "
+            << relaxed_constraints.min_acceptable_area << "-"
+            << relaxed_constraints.max_acceptable_area
+            << ", Min Circ: " << relaxed_constraints.min_acceptable_circularity;
+
+  // 3. Set up targeted color iteration ranges
+  float l_start = (expected_stone_color == BLACK)
+                      ? G_RAW_SEARCH_L_MIN_FOR_BLACK
+                      : G_RAW_SEARCH_L_MIN_FOR_WHITE;
+  float l_end = (expected_stone_color == BLACK) ? G_RAW_SEARCH_L_MAX_FOR_BLACK
+                                                : G_RAW_SEARCH_L_MAX_FOR_WHITE;
+  l_end = std::min(l_end, (expected_stone_color == BLACK)
+                              ? G_RAW_SEARCH_L_SEPARATOR - 5.0f
+                              : G_RAW_SEARCH_L_MAX_FOR_WHITE);
+  l_start = std::max(l_start, (expected_stone_color == WHITE)
+                                  ? G_RAW_SEARCH_L_SEPARATOR + 5.0f
+                                  : G_RAW_SEARCH_L_MIN_FOR_BLACK);
+
+  // 4. Main iteration loops
+  for (float l_base = l_start; l_base <= l_end; l_base += G_RAW_SEARCH_L_STEP) {
+    for (float a_base = G_RAW_SEARCH_AB_MIN; a_base <= G_RAW_SEARCH_AB_MAX;
+         a_base += G_RAW_SEARCH_AB_STEP) {
+      for (float b_base = G_RAW_SEARCH_AB_MIN; b_base <= G_RAW_SEARCH_AB_MAX;
+           b_base += G_RAW_SEARCH_AB_STEP) {
+        for (float l_tol = G_RAW_SEARCH_TOL_L_MIN;
+             l_tol <= G_RAW_SEARCH_TOL_L_MAX;
+             l_tol += G_RAW_SEARCH_TOL_L_STEP) {
+          for (float ab_tol = G_RAW_SEARCH_TOL_AB_MIN;
+               ab_tol <= G_RAW_SEARCH_TOL_AB_MAX;
+               ab_tol += G_RAW_SEARCH_TOL_AB_STEP) {
+
+            LOG_TRACE << "  Raw Search Iter: L*a*b*: (" << l_base << ","
+                      << a_base << "," << b_base << ") Tol(L,AB): (" << l_tol
+                      << "," << ab_tol << ")";
+
+            std::vector<std::vector<cv::Point>> contours;
+            if (!find_contours_in_area_range(roi_lab, l_base, l_tol, a_base,
+                                             b_base, ab_tol,
+                                             relaxed_constraints, contours)) {
+              continue;
+            }
+
+            for (const auto &contour : contours) {
+              if (validate_contour_geometry(contour, relaxed_constraints)) {
+                CandidateBlob blob;
+                // Note: We use l_base and l_tol here for populating the blob
+                // struct, even though we iterated all 3 channels.
+                finalize_and_classify_blob(contour, roi_lab, calibData, l_base,
+                                           l_tol, blob);
+
+                if (blob.classified_color_after_shape_found ==
+                    expected_stone_color) {
+                  blob.roi_used_in_search = search_rect;
+                  out_candidate_blobs.push_back(blob);
+
+                  // Enhanced Debug Visualization
+                  if (Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
+                    std::stringstream ss_base;
+                    ss_base << "share/Debug/P1_RAW_" << toString(quadrant)
+                            << "_L" << (int)l_base << "_A" << (int)a_base
+                            << "_B" << (int)b_base << "_TolL" << (int)l_tol
+                            << "_TolAB" << (int)ab_tol << "_Area"
+                            << (int)blob.area << "_Circ" << std::fixed
+                            << std::setprecision(2) << blob.circularity;
+
+                    cv::Mat debug_roi_bgr = raw_image_bgr(search_rect).clone();
+                    cv::drawContours(debug_roi_bgr, {contour}, -1,
+                                     cv::Scalar(0, 255, 0), 2);
+                    cv::imwrite(ss_base.str() + "_roi.jpg", debug_roi_bgr);
+
+                    cv::Mat debug_full_raw_bgr = raw_image_bgr.clone();
+                    cv::rectangle(debug_full_raw_bgr, search_rect,
+                                  cv::Scalar(255, 0, 0), 2);
+                    cv::drawContours(debug_full_raw_bgr, {contour}, -1,
+                                     cv::Scalar(0, 255, 255), 2, cv::LINE_AA,
+                                     cv::noArray(), 0, search_rect.tl());
+                    cv::Point2f center_in_full_image =
+                        blob.center_in_roi_coords +
+                        cv::Point2f(search_rect.tl());
+                    cv::circle(debug_full_raw_bgr, center_in_full_image, 5,
+                               cv::Scalar(0, 0, 255), -1);
+                    cv::imwrite(ss_base.str() + "_full.jpg",
+                                debug_full_raw_bgr);
+                    LOG_TRACE << "Saved debug images for candidate: "
+                              << ss_base.str();
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  LOG_INFO << "Found " << out_candidate_blobs.size()
+           << " plausible candidates in " << toString(quadrant) << " quadrant.";
+  return !out_candidate_blobs.empty();
+}
+
+// =================================================================================
+// END: CODE FOR HARDENED PASS 1 EXPERIMENTAL WORKFLOW
+// =================================================================================
+

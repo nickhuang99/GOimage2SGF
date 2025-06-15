@@ -19,6 +19,7 @@ extern bool bDebug;
 extern int g_capture_width;
 extern int g_capture_height;
 extern std::string g_device_path;
+extern std::string g_exp_quadrant_str;
 
 extern const std::string CALIB_CONFIG_PATH;
 extern const std::string CALIB_SNAPSHOT_PATH;
@@ -37,6 +38,11 @@ extern const double MAX_STONE_AREA_RATIO;
 extern const double MIN_STONE_CIRCULARITY_WHITE;
 extern const double MIN_STONE_CIRCULARITY_BLACK;
 extern const int MIN_CONTOUR_POINTS_STONE;
+
+extern float G_RAW_SEARCH_L_SEPARATOR;
+extern double G_ROUGH_RAW_AREA_MIN_FACTOR;
+extern double G_ROUGH_RAW_AREA_MAX_FACTOR;
+extern double G_MIN_ROUGH_RAW_CIRCULARITY;
 
 #define WHITE 2
 #define BLACK 1
@@ -182,6 +188,32 @@ struct Move {
             capturedStones == other.capturedStones);
   }
 };
+
+struct CandidateBlob {
+  cv::Point2f center_in_roi_coords; // Center within the ROI it was found
+  double area;
+  double circularity;
+  float l_base_used;
+  float l_tolerance_used;
+  double score; // Can be used to reflect confidence or just mark as found
+  std::vector<cv::Point> contour_points_in_roi; // Relative to ROI
+  cv::Vec3f sampled_lab_color_from_contour;     // Lab color sampled from this
+                                                // specific blob
+  int classified_color_after_shape_found;       // BLACK, WHITE, EMPTY/OTHER
+  cv::Rect roi_used_in_search;                  // <<-- ADD THIS LINE
+
+  CandidateBlob()
+      : area(0), circularity(0), l_base_used(0), l_tolerance_used(0),
+        score(-1.0), sampled_lab_color_from_contour(-1, -1, -1),
+        classified_color_after_shape_found(EMPTY) {}
+
+  bool isValid() const {
+    return area > 0 && score >= 0;
+  } // Valid if area is positive and score indicates found
+};
+
+cv::Vec3f get_rough_board_lab_color(const cv::Mat &raw_image_bgr);
+
 std::string getFormatDescription(uint32_t format);
 std::string getCapabilityDescription(uint32_t cap);
 std::pair<std::vector<double>, std::vector<double>>
@@ -366,4 +398,9 @@ bool verifyCalibrationAfterSave(const cv::Mat &raw_image_for_verification);
 
 bool detectCalibratedBoardState(const cv::Mat &rawBgrImage,
                                 CalibrationData &out_calib_data);
+
+bool find_blob_candidates_in_raw_quadrant(
+    const cv::Mat &raw_image_bgr, CornerQuadrant quadrant,
+    int expected_stone_color, const CalibrationData &calibData,
+    std::vector<CandidateBlob> &out_candidate_blobs);
 #endif // UTILITY_H
