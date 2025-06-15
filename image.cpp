@@ -66,6 +66,33 @@ const float MINIMUM_PCT_VALUE = 0.05;
 const float MAXIMUM_PCT_VALUE = 0.5 - MINIMUM_PCT_VALUE;
 const int MAX_GUESS_DIVIDENT = int(MAXIMUM_PCT_VALUE / MINIMUM_PCT_VALUE) + 1;
 const int MAX_GUESS_ATTEMPTS = MAX_GUESS_DIVIDENT * MAX_GUESS_DIVIDENT;
+
+// --- NEW CONSTANT DEFINITIONS for find_best_round_shape_iterative_full ---
+
+// L-channel iteration parameters
+const float ITER_FULL_L_MIN = 20.0f;
+const float ITER_FULL_L_MAX = 245.0f;
+const float ITER_FULL_L_STEP = 5.0f; // A larger step for the base L value
+
+// A-channel iteration parameters
+const float ITER_FULL_A_MIN = 90.0f;
+const float ITER_FULL_A_MAX = 160.0f;
+const float ITER_FULL_A_STEP = 2.0f;
+
+// B-channel iteration parameters
+const float ITER_FULL_B_MIN = 90.0f;
+const float ITER_FULL_B_MAX = 160.0f;
+const float ITER_FULL_B_STEP = 2.0f;
+
+// Tolerance iteration parameters for both L and AB channels
+const float ITER_FULL_TOL_L_MIN = 10.0f;
+const float ITER_FULL_TOL_L_MAX = 35.0f;
+const float ITER_FULL_TOL_L_STEP = 5.0f;
+
+const float ITER_FULL_TOL_AB_MIN = 10.0f;
+const float ITER_FULL_TOL_AB_MAX = 25.0f;
+const float ITER_FULL_TOL_AB_STEP = 5.0f;
+
 struct Line {
   double value; // y for horizontal, x for vertical
   double angle;
@@ -131,6 +158,11 @@ std::ostream &operator<<(std::ostream &os, CornerQuadrant quadrant) {
 
 bool compareLines(const Line &a, const Line &b) { return a.value < b.value; }
 
+static bool find_best_round_shape_iterative_full(
+    const cv::Mat &image_to_search_bgr, const cv::Rect &roi_in_image,
+    float expected_stone_radius_in_image,
+    const CalibrationData &calibDataForColorClassification,
+    std::vector<CandidateBlob> &out_found_blob_vec);
 // Forward declarations for static helper functions if defined later
 static int classifySingleIntersectionByDistance(
     const cv::Vec3f &intersection_lab_color, const cv::Vec3f &avg_black_calib,
@@ -3306,14 +3338,18 @@ perform_pass1_blob_detection(const cv::Mat &image_pass1_corrected,
       calculateAdaptiveSampleRadius(p1_board_width_est, p1_board_height_est);
 
   // Call the iterative shape finder.
-  bool blob_found = find_best_round_shape_iterative(
+  bool blob_found = find_best_round_shape_iterative_full(
       image_pass1_corrected, out_roi_quadrant_pass1, expected_radius_pass1,
-      hint_target_L_lab_from_calib[0], ITERATIVE_L_BASE_MIN,
-      ITERATIVE_L_BASE_MAX, ITERATIVE_L_BASE_STEP, ITERATIVE_L_TOL_MIN,
-      ITERATIVE_L_TOL_MAX, ITERATIVE_L_TOL_STEP, ITERATIVE_AB_TARGET_NEUTRAL,
-      ITERATIVE_AB_TARGET_NEUTRAL,
-      CALIB_AB_TOLERANCE_STONE + ITERATIVE_AB_TOL_MARGIN, out_found_blob_pass1,
-      calibData);
+      calibData, out_found_blob_pass1);
+
+  // bool blob_found = find_best_round_shape_iterative(
+  //     image_pass1_corrected, out_roi_quadrant_pass1, expected_radius_pass1,
+  //     hint_target_L_lab_from_calib[0], ITERATIVE_L_BASE_MIN,
+  //     ITERATIVE_L_BASE_MAX, ITERATIVE_L_BASE_STEP, ITERATIVE_L_TOL_MIN,
+  //     ITERATIVE_L_TOL_MAX, ITERATIVE_L_TOL_STEP, ITERATIVE_AB_TARGET_NEUTRAL,
+  //     ITERATIVE_AB_TARGET_NEUTRAL,
+  //     CALIB_AB_TOLERANCE_STONE + ITERATIVE_AB_TOL_MARGIN,
+  //     out_found_blob_pass1, calibData);
 
   if (!blob_found) {
     LOG_WARN
@@ -4120,4 +4156,118 @@ bool detectCalibratedBoardState(const cv::Mat &rawBgrImage,
 
   LOG_INFO << "Auto-calibration data successfully generated.";
   return true;
+}
+
+/**
+ * @brief Iteratively searches for the best round, stone-like shape within a
+ * region of interest (ROI) by exploring a full L*a*b* color space.
+ *
+ * This function improves upon its predecessor by iterating not only through the
+ * L (lightness) channel but also through the A and B (color-opponent) channels.
+ * It uses a predefined set of global constants for the iteration ranges and
+ * steps, making the search logic self-contained. The goal is to robustly find
+ * Go stones of varying colors under different lighting conditions without
+ * needing runtime iteration parameters.
+ *
+ * @param image_to_search_bgr The source BGR image containing the board.
+ * @param roi_in_image The specific cv::Rect region within the source image to
+ * search.
+ * @param expected_stone_radius_in_image An estimate of the stone's radius in
+ * pixels, used to calculate acceptable area and circularity constraints.
+ * @param calibDataForColorClassification Calibration data containing reference
+ * colors, used to classify a geometrically valid blob as BLACK, WHITE, or
+ * EMPTY.
+ * @param out_found_blob_vec A vector of CandidateBlob structs that is populated
+ * with all valid stones found during the iterative search.
+ * @return true if at least one valid stone is found, false otherwise.
+ */
+bool find_best_round_shape_iterative_full(
+    const cv::Mat &image_to_search_bgr, const cv::Rect &roi_in_image,
+    float expected_stone_radius_in_image,
+    const CalibrationData &calibDataForColorClassification,
+    std::vector<CandidateBlob> &out_found_blob_vec) {
+
+  LOG_DEBUG << "find_best_round_shape_iterative_full in ROI: " << roi_in_image;
+
+  // STEP 1: Prepare common variables, validate inputs, and set geometry
+  // constraints.
+  cv::Rect valid_roi;
+  cv::Mat roi_lab_content;
+  StoneGeometryConstraints constraints;
+  if (!prepare_iteration_parameters(image_to_search_bgr, roi_in_image,
+                                    expected_stone_radius_in_image, valid_roi,
+                                    roi_lab_content, constraints)) {
+    return false; // Exit if inputs are invalid.
+  }
+
+  // STEP 2: Main iteration loops. Explore the L, A, and B color space.
+  for (float l_base = ITER_FULL_L_MIN; l_base <= ITER_FULL_L_MAX;
+       l_base += ITER_FULL_L_STEP) {
+    for (float a_base = ITER_FULL_A_MIN; a_base <= ITER_FULL_A_MAX;
+         a_base += ITER_FULL_A_STEP) {
+      for (float b_base = ITER_FULL_B_MIN; b_base <= ITER_FULL_B_MAX;
+           b_base += ITER_FULL_B_STEP) {
+        // Iterate through different tolerance levels for the current LAB base
+        // color.
+        for (float l_tol = ITER_FULL_TOL_L_MIN; l_tol <= ITER_FULL_TOL_L_MAX;
+             l_tol += ITER_FULL_TOL_L_STEP) {
+          for (float ab_tol = ITER_FULL_TOL_AB_MIN;
+               ab_tol <= ITER_FULL_TOL_AB_MAX;
+               ab_tol += ITER_FULL_TOL_AB_STEP) {
+
+            LOG_TRACE << "  FBS_Full Iteration: Trying L*a*b*: (" << l_base
+                      << ", " << a_base << ", " << b_base << ") "
+                      << "with Tol(L,AB): (" << l_tol << ", " << ab_tol << ")";
+
+            // STEP 3: Find all contours that match the current color range and
+            // rough area filter.
+            std::vector<std::vector<cv::Point>> candidate_contours;
+            if (!find_contours_in_area_range(roi_lab_content, l_base, l_tol,
+                                             a_base, b_base, ab_tol,
+                                             constraints, candidate_contours)) {
+              continue; // No contours found, move to the next iteration.
+            }
+
+            // STEP 4: Validate each candidate contour for stone-like geometry
+            // (circularity).
+            for (const auto &contour : candidate_contours) {
+              if (validate_contour_geometry(contour, constraints)) {
+                // This is a geometrically valid candidate.
+                CandidateBlob found_blob;
+
+                // STEP 5: Finalize the blob's properties and classify its
+                // color.
+                finalize_and_classify_blob(contour, roi_lab_content,
+                                           calibDataForColorClassification,
+                                           l_base, l_tol, found_blob);
+
+                // STEP 6: Accept the blob only if it's a stone (not empty
+                // board).
+                if (found_blob.classified_color_after_shape_found != EMPTY) {
+                  LOG_DEBUG
+                      << "      => Candidate PASSED all checks. Accepting blob "
+                         "classified as: "
+                      << (found_blob.classified_color_after_shape_found == BLACK
+                              ? "BLACK"
+                              : "WHITE");
+                  found_blob.roi_used_in_search = roi_in_image;
+                  out_found_blob_vec.push_back(found_blob);
+                } else {
+                  LOG_TRACE << "      => Candidate FAILED color validation "
+                               "(classified as EMPTY). Rejecting.";
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+
+  if (out_found_blob_vec.empty()) {
+    LOG_WARN << "  FBS_Full: No blob met all criteria after full iteration.";
+  }
+
+  // Return true if we found at least one valid stone.
+  return !out_found_blob_vec.empty();
 }
