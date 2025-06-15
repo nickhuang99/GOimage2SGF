@@ -75,13 +75,13 @@ const float ITER_FULL_L_MAX = 245.0f;
 const float ITER_FULL_L_STEP = 5.0f; // A larger step for the base L value
 
 // A-channel iteration parameters
-const float ITER_FULL_A_MIN = 90.0f;
-const float ITER_FULL_A_MAX = 160.0f;
+const float ITER_FULL_A_MIN = 110.0f;
+const float ITER_FULL_A_MAX = 128.0f;
 const float ITER_FULL_A_STEP = 2.0f;
 
 // B-channel iteration parameters
-const float ITER_FULL_B_MIN = 90.0f;
-const float ITER_FULL_B_MAX = 160.0f;
+const float ITER_FULL_B_MIN = 110.0f;
+const float ITER_FULL_B_MAX = 128.0f;
 const float ITER_FULL_B_STEP = 2.0f;
 
 // Tolerance iteration parameters for both L and AB channels
@@ -4215,7 +4215,7 @@ bool find_best_round_shape_iterative_full(
                ab_tol <= ITER_FULL_TOL_AB_MAX;
                ab_tol += ITER_FULL_TOL_AB_STEP) {
 
-            LOG_TRACE << "  FBS_Full Iteration: Trying L*a*b*: (" << l_base
+            LOG_DEBUG << "  FBS_Full Iteration: Trying L*a*b*: (" << l_base
                       << ", " << a_base << ", " << b_base << ") "
                       << "with Tol(L,AB): (" << l_tol << ", " << ab_tol << ")";
 
