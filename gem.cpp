@@ -2338,33 +2338,32 @@ void experimentalRawPass1Workflow() {
       raw_image, targetQuadrant, expected_color, calibData, found_candidates);
 
   // 6. Print the results
-  CONSOLE_OUT << "\n--- Raw Pass 1 Results ---" << std::endl;
-  CONSOLE_OUT << "Found " << found_candidates.size() << " candidates for "
-              << g_exp_p1_color_str << " in " << g_exp_quadrant_str << "."
-              << std::endl;
+  LOG_INFO << "\n--- Raw Pass 1 Results ---" << std::endl;
+  LOG_INFO << "Found " << found_candidates.size() << " candidates for "
+           << g_exp_p1_color_str << " in " << g_exp_quadrant_str << "."
+           << std::endl;
 
   if (!found_candidates.empty()) {
-    CONSOLE_OUT
+    LOG_INFO
         << "----------------------------------------------------------------"
         << std::endl;
-    CONSOLE_OUT
-        << "  Area     | Circularity | L_Base | L_Tol  | Center (in ROI)"
-        << std::endl;
-    CONSOLE_OUT
+    LOG_INFO << "  Area     | Circularity | L_Base | L_Tol  | Center (in ROI)"
+             << std::endl;
+    LOG_INFO
         << "----------------------------------------------------------------"
         << std::endl;
     for (const auto &blob : found_candidates) {
-      std::cout << std::fixed << std::setprecision(2) << std::setw(10)
-                << blob.area << " | " << std::setw(11) << blob.circularity
-                << " | " << std::setw(6) << blob.l_base_used << " | "
-                << std::setw(6) << blob.l_tolerance_used << " | ("
-                << (int)blob.center_in_roi_coords.x << ","
-                << (int)blob.center_in_roi_coords.y << ")" << std::endl;
+      LOG_INFO << std::fixed << std::setprecision(2) << std::setw(10)
+               << blob.area << " | " << std::setw(11) << blob.circularity
+               << " | " << std::setw(6) << blob.l_base_used << " | "
+               << std::setw(6) << blob.l_tolerance_used << " | ("
+               << (int)blob.center_in_roi_coords.x << ","
+               << (int)blob.center_in_roi_coords.y << ")" << std::endl;
     }
-    CONSOLE_OUT
+    LOG_INFO
         << "----------------------------------------------------------------"
         << std::endl;
-    CONSOLE_OUT << "Debug images saved to share/Debug/ folder." << std::endl;
+    LOG_INFO << "Debug images saved to share/Debug/ folder." << std::endl;
   }
 
   LOG_INFO << "--- Experimental Raw Pass 1 Workflow Finished ---";

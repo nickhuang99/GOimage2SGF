@@ -26,7 +26,7 @@ const float CALIB_L_TOLERANCE_STONE = 35.0f;
 const float CALIB_AB_TOLERANCE_STONE = 15.0f;
 
 // --- NEW CONSTANT DEFINITIONS for detectSpecificColoredRoundShape ---
-const int MORPH_OPEN_KERNEL_SIZE_STONE = 5;
+const int MORPH_OPEN_KERNEL_SIZE_STONE = 3;
 const int MORPH_OPEN_ITERATIONS_STONE = 1; // MODIFIED (was 2, less aggressive)
 const int MORPH_CLOSE_KERNEL_SIZE_STONE = 3;
 const int MORPH_CLOSE_ITERATIONS_STONE =
@@ -117,7 +117,6 @@ struct LineMatch {
   }
 };
 
-
 // --- DATA STRUCTURE FOR THE AUTO-CALIBRATION REFACTOR ---
 
 // A structure to hold the complete result for a single detected corner,
@@ -196,7 +195,7 @@ float G_RAW_SEARCH_TOL_AB_MAX = 30.0f;
 float G_RAW_SEARCH_TOL_AB_STEP = 5.0f;
 
 // Relaxed Geometry Filtering Parameters
-double G_ROUGH_RAW_AREA_MIN_FACTOR = 0.20;
+double G_ROUGH_RAW_AREA_MIN_FACTOR = 0.05;
 double G_ROUGH_RAW_AREA_MAX_FACTOR = 4.0;
 double G_MIN_ROUGH_RAW_CIRCULARITY = 0.35;
 
@@ -4292,7 +4291,6 @@ bool find_best_round_shape_iterative_full(
   return !out_found_blob_vec.empty();
 }
 
-
 /**
  * @brief Samples the image center to get a rough estimate of the board's
  * average Lab color.
@@ -4385,6 +4383,84 @@ static cv::Rect get_raw_image_quadrant_rect(const cv::Size &image_size,
     LOG_ERROR << "Invalid quadrant specified in get_raw_image_quadrant_rect.";
     return cv::Rect(0, 0, 0, 0);
   }
+}
+
+/**
+ * @brief Creates a color mask, performs morphology, and filters contours by
+ * geometry.
+ *
+ * This function encapsulates the entire process of finding valid candidates. It
+ * takes a Lab image and color parameters, creates a binary mask, cleans it up,
+ * finds all contours, and returns only those that meet the specified geometric
+ * constraints.
+ *
+ * @param roi_lab_image The input Lab image ROI to search within.
+ * @param l_base The target L* value for the color range.
+ * @param a_base The target a* value for the color range.
+ * @param b_base The target b* value for the color range.
+ * @param l_tol The tolerance for the L* channel.
+ * @param ab_tol The tolerance for the a* and b* channels.
+ * @param constraints The geometric constraints (area, circularity) to apply.
+ * @param out_filtered_contours The output vector to be populated with valid
+ * contours.
+ * @return true if at least one valid contour is found, false otherwise.
+ */
+static bool find_and_filter_contours_from_lab(
+    const cv::Mat &roi_lab_image, float l_base, float a_base, float b_base,
+    float l_tol, float ab_tol, const StoneGeometryConstraints &constraints,
+    std::vector<std::vector<cv::Point>> &out_filtered_contours) {
+  // 1. Create the color mask
+  cv::Mat color_mask;
+  cv::Scalar lab_lower(std::max(0.f, l_base - l_tol),
+                       std::max(0.f, a_base - ab_tol),
+                       std::max(0.f, b_base - ab_tol));
+  cv::Scalar lab_upper(std::min(255.f, l_base + l_tol),
+                       std::min(255.f, a_base + ab_tol),
+                       std::min(255.f, b_base + ab_tol));
+  cv::inRange(roi_lab_image, lab_lower, lab_upper, color_mask);
+
+  // 2. Perform morphology
+  cv::Mat open_kernel =
+      cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(3, 3));
+  cv::Mat close_kernel = cv::getStructuringElement(
+      cv::MORPH_ELLIPSE,
+      cv::Size(MORPH_CLOSE_KERNEL_SIZE_STONE, MORPH_CLOSE_KERNEL_SIZE_STONE));
+  cv::morphologyEx(color_mask, color_mask, cv::MORPH_OPEN, open_kernel,
+                   cv::Point(-1, -1), MORPH_OPEN_ITERATIONS_STONE);
+  cv::morphologyEx(color_mask, color_mask, cv::MORPH_CLOSE, close_kernel,
+                   cv::Point(-1, -1), MORPH_CLOSE_ITERATIONS_STONE);
+
+  // 3. Find and filter contours
+  out_filtered_contours.clear();
+  std::vector<std::vector<cv::Point>> all_contours;
+  cv::findContours(color_mask, all_contours, cv::RETR_EXTERNAL,
+                   cv::CHAIN_APPROX_SIMPLE);
+
+  if (all_contours.empty()) {
+    return false;
+  }
+
+  for (const auto &contour : all_contours) {
+    if (contour.size() < MIN_CONTOUR_POINTS_STONE) {
+      continue;
+    }
+    double area = cv::contourArea(contour);
+    if (area < constraints.min_acceptable_area ||
+        area > constraints.max_acceptable_area) {
+      continue;
+    }
+    double perimeter = cv::arcLength(contour, true);
+    if (perimeter < 1.0) {
+      continue;
+    }
+    double circularity = (4 * CV_PI * area) / (perimeter * perimeter);
+    if (circularity < constraints.min_acceptable_circularity) {
+      continue;
+    }
+    out_filtered_contours.push_back(contour);
+  }
+
+  return !out_filtered_contours.empty();
 }
 
 /**
@@ -4484,12 +4560,13 @@ bool find_blob_candidates_in_raw_quadrant(
                       << "," << ab_tol << ")";
 
             std::vector<std::vector<cv::Point>> contours;
-            if (!find_contours_in_area_range(roi_lab, l_base, l_tol, a_base,
-                                             b_base, ab_tol,
-                                             relaxed_constraints, contours)) {
+            if (!find_and_filter_contours_from_lab(
+                    roi_lab, l_base, l_tol, a_base, b_base, ab_tol,
+                    relaxed_constraints, contours)) {
               continue;
             }
-
+            LOG_DEBUG << "find_contours_in_area_range retrieves "
+                      << contours.size() << " contours";
             for (const auto &contour : contours) {
               if (validate_contour_geometry(contour, relaxed_constraints)) {
                 CandidateBlob blob;
@@ -4514,16 +4591,21 @@ bool find_blob_candidates_in_raw_quadrant(
                             << std::setprecision(2) << blob.circularity;
 
                     cv::Mat debug_roi_bgr = raw_image_bgr(search_rect).clone();
-                    cv::drawContours(debug_roi_bgr, {contour}, -1,
-                                     cv::Scalar(0, 255, 0), 2);
+                    cv::drawContours(
+                        debug_roi_bgr,
+                        std::vector<std::vector<cv::Point>>{contour}, -1,
+                        cv::Scalar(0, 255, 0), 2, cv::LINE_AA, cv::noArray(), 0,
+                        search_rect.tl());
                     cv::imwrite(ss_base.str() + "_roi.jpg", debug_roi_bgr);
 
                     cv::Mat debug_full_raw_bgr = raw_image_bgr.clone();
                     cv::rectangle(debug_full_raw_bgr, search_rect,
                                   cv::Scalar(255, 0, 0), 2);
-                    cv::drawContours(debug_full_raw_bgr, {contour}, -1,
-                                     cv::Scalar(0, 255, 255), 2, cv::LINE_AA,
-                                     cv::noArray(), 0, search_rect.tl());
+                    cv::drawContours(
+                        debug_full_raw_bgr,
+                        std::vector<std::vector<cv::Point>>{contour}, -1,
+                        cv::Scalar(0, 255, 255), 2, cv::LINE_AA, cv::noArray(),
+                        0, search_rect.tl());
                     cv::Point2f center_in_full_image =
                         blob.center_in_roi_coords +
                         cv::Point2f(search_rect.tl());
@@ -4551,4 +4633,3 @@ bool find_blob_candidates_in_raw_quadrant(
 // =================================================================================
 // END: CODE FOR HARDENED PASS 1 EXPERIMENTAL WORKFLOW
 // =================================================================================
-
