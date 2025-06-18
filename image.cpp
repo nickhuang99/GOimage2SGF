@@ -4373,12 +4373,11 @@ static cv::Rect get_raw_image_quadrant_rect(const cv::Size &image_size,
   case CornerQuadrant::TOP_LEFT:
     return cv::Rect(0, 0, half_width, half_height);
   case CornerQuadrant::TOP_RIGHT:
-    return cv::Rect(half_width, 0, width - half_width, half_height);
+    return cv::Rect(half_width, 0, half_width, half_height);
   case CornerQuadrant::BOTTOM_LEFT:
-    return cv::Rect(0, half_height, half_width, height - half_height);
+    return cv::Rect(0, half_height, half_width, half_height);
   case CornerQuadrant::BOTTOM_RIGHT:
-    return cv::Rect(half_width, half_height, width - half_width,
-                    height - half_height);
+    return cv::Rect(half_width, half_height, half_width, half_height);
   default:
     LOG_ERROR << "Invalid quadrant specified in get_raw_image_quadrant_rect.";
     return cv::Rect(0, 0, 0, 0);
@@ -4409,6 +4408,9 @@ static bool find_and_filter_contours_from_lab(
     const cv::Mat &roi_lab_image, float l_base, float a_base, float b_base,
     float l_tol, float ab_tol, const StoneGeometryConstraints &constraints,
     std::vector<std::vector<cv::Point>> &out_filtered_contours) {
+  // LOG_TRACE << "find_and_filter_contours_from_lab:" << "L:" << l_base
+  //           << " A:" << a_base << " B:" << b_base << " L_tol:" << l_tol
+  //           << " AB_tol:" << ab_tol;
   // 1. Create the color mask
   cv::Mat color_mask;
   cv::Scalar lab_lower(std::max(0.f, l_base - l_tol),
@@ -4420,8 +4422,9 @@ static bool find_and_filter_contours_from_lab(
   cv::inRange(roi_lab_image, lab_lower, lab_upper, color_mask);
 
   // 2. Perform morphology
-  cv::Mat open_kernel =
-      cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(3, 3));
+  cv::Mat open_kernel = cv::getStructuringElement(
+      cv::MORPH_ELLIPSE,
+      cv::Size(MORPH_OPEN_KERNEL_SIZE_STONE, MORPH_OPEN_KERNEL_SIZE_STONE));
   cv::Mat close_kernel = cv::getStructuringElement(
       cv::MORPH_ELLIPSE,
       cv::Size(MORPH_CLOSE_KERNEL_SIZE_STONE, MORPH_CLOSE_KERNEL_SIZE_STONE));
@@ -4437,29 +4440,47 @@ static bool find_and_filter_contours_from_lab(
                    cv::CHAIN_APPROX_SIMPLE);
 
   if (all_contours.empty()) {
+    LOG_WARN << "cannot find any contours!";
+    if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::TRACE) {
+      cv::Mat debug_img = roi_lab_image.clone();
+      cv::imwrite("share/Debug/no_contour_" +
+                      std::to_string(l_base).substr(0, 4) + "_" +
+                      std::to_string(a_base).substr(0, 4) + "_" +
+                      std::to_string(b_base).substr(0, 4) + ".jpg",
+                  debug_img);
+    }
     return false;
   }
 
   for (const auto &contour : all_contours) {
     if (contour.size() < MIN_CONTOUR_POINTS_STONE) {
+      LOG_TRACE << "contour.size() " << contour.size()
+                << " < MIN_CONTOUR_POINTS_STONE " << MIN_CONTOUR_POINTS_STONE;
       continue;
     }
     double area = cv::contourArea(contour);
     if (area < constraints.min_acceptable_area ||
         area > constraints.max_acceptable_area) {
+      LOG_TRACE << "area " << area << " < constraints.min_acceptable_area "
+                << constraints.min_acceptable_area
+                << " or > constraints.max_acceptable_area"
+                << constraints.max_acceptable_area;
       continue;
     }
     double perimeter = cv::arcLength(contour, true);
     if (perimeter < 1.0) {
+      LOG_ERROR << "perimeter " << perimeter << " < 1.0";
       continue;
     }
     double circularity = (4 * CV_PI * area) / (perimeter * perimeter);
     if (circularity < constraints.min_acceptable_circularity) {
+      LOG_TRACE << "circularity " << circularity
+                << " < constraints.min_acceptable_circularity"
+                << constraints.min_acceptable_circularity;
       continue;
     }
     out_filtered_contours.push_back(contour);
   }
-
   return !out_filtered_contours.empty();
 }
 
@@ -4561,8 +4582,9 @@ bool find_blob_candidates_in_raw_quadrant(
 
             std::vector<std::vector<cv::Point>> contours;
             if (!find_and_filter_contours_from_lab(
-                    roi_lab, l_base, l_tol, a_base, b_base, ab_tol,
+                    roi_lab, l_base, a_base, b_base, l_tol, ab_tol,
                     relaxed_constraints, contours)) {
+              LOG_TRACE << "find_and_filter_contours_from_lab fails";
               continue;
             }
             LOG_DEBUG << "find_contours_in_area_range retrieves "
