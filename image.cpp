@@ -4842,13 +4842,17 @@ bool find_corner_candidates_by_minmax(
   // 3. Perform four independent, iterative searches.
   cv::Point tl_loc, tr_loc, bl_loc, br_loc;
   bool tl_found = find_verified_extreme_pixel_iteratively(
-      l_channel(tl_quad_rect), ExtremeSearchMode::DARKEST, "TL", tl_loc);
+      l_channel(tl_quad_rect), ExtremeSearchMode::DARKEST,
+      toString(CornerQuadrant::TOP_LEFT), tl_loc);
   bool tr_found = find_verified_extreme_pixel_iteratively(
-      l_channel(tr_quad_rect), ExtremeSearchMode::BRIGHTEST, "TR", tr_loc);
+      l_channel(tr_quad_rect), ExtremeSearchMode::BRIGHTEST,
+      toString(CornerQuadrant::TOP_RIGHT), tr_loc);
   bool bl_found = find_verified_extreme_pixel_iteratively(
-      l_channel(bl_quad_rect), ExtremeSearchMode::DARKEST, "BL", bl_loc);
+      l_channel(bl_quad_rect), ExtremeSearchMode::DARKEST,
+      toString(CornerQuadrant::BOTTOM_LEFT), bl_loc);
   bool br_found = find_verified_extreme_pixel_iteratively(
-      l_channel(br_quad_rect), ExtremeSearchMode::BRIGHTEST, "BR", br_loc);
+      l_channel(br_quad_rect), ExtremeSearchMode::BRIGHTEST,
+      toString(CornerQuadrant::BOTTOM_RIGHT), br_loc);
 
   if (!(tl_found && tr_found && bl_found && br_found)) {
     LOG_ERROR << "Could not find all four corner candidates. "
