@@ -2408,7 +2408,7 @@ void runMinMaxCornersWorkflow(const std::string &imagePath) {
 
   // 2. Run the positional detection algorithm
   std::vector<cv::Point2f> candidates;
-  if (find_corner_candidates_by_position(frame, candidates)) {
+  if (find_corner_candidates_by_minmax(frame, candidates)) {
     LOG_INFO << "Positional detection successful. Found 4 candidates.";
 
     // 3. Draw the results for visual verification

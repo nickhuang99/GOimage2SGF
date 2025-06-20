@@ -4656,134 +4656,150 @@ bool find_blob_candidates_in_raw_quadrant(
 // END: CODE FOR HARDENED PASS 1 EXPERIMENTAL WORKFLOW
 // =================================================================================
 
-// --- STEP 1: The Core Workhorse Utility ---
+// --- STEP 1: Define the Small, Purposeful Utility Functions ---
+
+// An enum to make the function's purpose clear to the caller.
+enum class ExtremeSearchMode { DARKEST, BRIGHTEST };
 
 /**
- * @brief Finds all contours within a given lightness range.
- *
- * This utility function performs a simple thresholding to create a binary mask
- * for either dark or bright regions and finds all contours within that mask.
- * It performs NO geometric or positional filtering. Its only job is to generate
- * a list of all possible candidate blobs.
- *
- * @param l_channel_roi The input single-channel L* (lightness) image region.
- * @param find_dark_blobs If true, thresholds for dark objects; otherwise, for
- * bright objects.
- * @return A vector of all contours found.
+ * @brief Utility 1: Searches for a single extreme pixel in an image region.
+ * This is a simple wrapper around cv::minMaxLoc. Its only job is to find one
+ * point.
  */
-static std::vector<std::vector<cv::Point>>
-find_blobs_by_lightness(const cv::Mat &l_channel_roi, bool find_dark_blobs) {
-  cv::Mat mask;
-  // Use a simple, broad threshold. The goal is just to separate dark from
-  // light.
-  if (find_dark_blobs) {
-    // Find all objects darker than a generous lightness value of 90.
-    cv::threshold(l_channel_roi, mask, 90, 255, cv::THRESH_BINARY_INV);
+static void search_one_extreme_pixel(const cv::Mat &l_channel_roi,
+                                     ExtremeSearchMode mode,
+                                     cv::Point &out_loc) {
+  if (mode == ExtremeSearchMode::DARKEST) {
+    cv::minMaxLoc(l_channel_roi, nullptr, nullptr, &out_loc, nullptr);
   } else {
-    // Find all objects brighter than a generous lightness value of 180.
-    cv::threshold(l_channel_roi, mask, 180, 255, cv::THRESH_BINARY);
+    cv::minMaxLoc(l_channel_roi, nullptr, nullptr, nullptr, &out_loc);
+  }
+}
+
+/**
+ * @brief Utility 2: Verifies if a pixel is part of a coherent color cluster.
+ * Implements the user's "neighbor counting" algorithm. It checks a circular
+ * area around a given point and counts how many pixels have a similar color.
+ * @return true if the point is part of a substantial blob, false if it is
+ * likely noise.
+ */
+const int minmax_search_radius = 10;
+static bool verify_pixel_is_in_cluster(const cv::Mat &l_channel_roi,
+                                       const cv::Point &loc_to_verify) {
+  
+  const int color_proximity_threshold = 20;
+  const float required_match_percentage =
+      0.60f; // 60% of pixels in the circle must match.
+
+  uchar seed_value = l_channel_roi.at<uchar>(loc_to_verify);
+  int matched_pixel_count = 0;
+  int total_pixels_in_circle = 0;
+
+  int x_start = std::max(0, loc_to_verify.x - minmax_search_radius);
+  int y_start = std::max(0, loc_to_verify.y - minmax_search_radius);
+  int x_end = std::min(l_channel_roi.cols, loc_to_verify.x + minmax_search_radius);
+  int y_end = std::min(l_channel_roi.rows, loc_to_verify.y + minmax_search_radius);
+
+  for (int y = y_start; y < y_end; ++y) {
+    for (int x = x_start; x < x_end; ++x) {
+      if (std::pow(x - loc_to_verify.x, 2) + std::pow(y - loc_to_verify.y, 2) <=
+          std::pow(minmax_search_radius, 2)) {
+        total_pixels_in_circle++;
+        uchar current_pixel_value = l_channel_roi.at<uchar>(y, x);
+        if (std::abs(current_pixel_value - seed_value) <
+            color_proximity_threshold) {
+          matched_pixel_count++;
+        }
+      }
+    }
   }
 
-  // Use a small amount of morphology to clean up minor noise.
-  cv::Mat kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(3, 3));
-  cv::morphologyEx(mask, mask, cv::MORPH_OPEN, kernel);
+  if (total_pixels_in_circle == 0)
+    return false;
 
-  std::vector<std::vector<cv::Point>> contours;
-  cv::findContours(mask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
-  return contours;
+  float match_percentage =
+      static_cast<float>(matched_pixel_count) / total_pixels_in_circle;
+  return match_percentage >= required_match_percentage;
 }
 
 // --- STEP 2: The Quadrant-Level Orchestrator (Workhorse) ---
 
 /**
- * @brief Finds the best candidate blob in a quadrant based on its position.
+ * @brief Finds a verified extreme pixel within a quadrant, searching
+ * iteratively if necessary.
  *
- * This function orchestrates the search for a single corner. It finds all
- * relevant (dark or bright) blobs in the quadrant and then selects the single
- * best one by finding the contour whose center is closest to an ideal target
- * point within the quadrant.
+ * This function orchestrates the search-and-verify loop for a single quadrant.
+ * It repeatedly finds the most extreme pixel and checks if it's part of a valid
+ * cluster. If not, it "erases" the invalid spot and tries again, up to a
+ * maximum number of attempts.
  *
  * @param l_channel_roi The single-channel L* image region for the quadrant.
- * @param find_dark_blobs Specifies whether to search for dark or bright blobs.
- * @param out_best_loc The location of the center of the best-positioned blob.
- * @return true if at least one valid candidate was found, false otherwise.
+ * @param mode Specifies whether to search for the DARKEST or BRIGHTEST pixel.
+ * @param out_loc The location of the successfully verified pixel.
+ * @return true if a verified point was found within the attempt limit, false
+ * otherwise.
  */
-static bool find_best_candidate_in_quadrant(const cv::Mat &l_channel_roi,
-                                            bool find_dark_blobs,
-                                            cv::Point &out_best_loc) {
-  std::vector<std::vector<cv::Point>> candidates =
-      find_blobs_by_lightness(l_channel_roi, find_dark_blobs);
+static bool find_verified_extreme_pixel_iteratively(
+    const cv::Mat &l_channel_roi, ExtremeSearchMode mode, cv::Point &out_loc) {
+  // Create a clone of the ROI so we can modify it (erase rejected points).
+  cv::Mat searchable_roi = l_channel_roi.clone();
 
-  if (candidates.empty()) {
-    LOG_WARN << "No " << (find_dark_blobs ? "dark" : "bright")
-             << " blobs found in quadrant.";
-    return false;
-  }
+  const int max_attempts =
+      5; // Try up to 5 times to find a valid point in this quadrant.
+  for (int attempt = 0; attempt < max_attempts; ++attempt) {
+    cv::Point candidate_loc;
+    search_one_extreme_pixel(searchable_roi, mode, candidate_loc);
 
-  double best_distance = std::numeric_limits<double>::max();
+    if (verify_pixel_is_in_cluster(searchable_roi, candidate_loc)) {
+      // Success! The candidate is valid.
+      out_loc = candidate_loc;
+      LOG_TRACE << "Found verified point in quadrant on attempt "
+                << attempt + 1;
+      return true;
+    } else {
+      // Verification failed. This point is noise. Erase it and try again.
+      LOG_TRACE << "Rejected point at " << candidate_loc << " on attempt "
+                << attempt + 1 << ". Erasing and retrying.";
 
-  // The "ideal" target is not in the center, but offset towards the middle of
-  // the board. This helps avoid selecting blobs at the extreme edges of the
-  // image.
-  cv::Point ideal_target_point(l_channel_roi.cols * 0.5,
-                               l_channel_roi.rows * 0.5);
-  if (find_dark_blobs) { // For TL and BL stones on the left
-    ideal_target_point.x = l_channel_roi.cols * 0.6;
-  } else { // For TR and BR stones on the right
-    ideal_target_point.x = l_channel_roi.cols * 0.4;
-  }
-
-  bool found_one = false;
-  for (const auto &contour : candidates) {
-    // We must apply a minimal area check to discard obvious noise.
-    if (cv::contourArea(contour) < 50) {
-      continue;
-    }
-
-    cv::Moments M = cv::moments(contour);
-    if (M.m00 > 0) {
-      cv::Point center(static_cast<int>(M.m10 / M.m00),
-                       static_cast<int>(M.m01 / M.m00));
-      double dist = cv::norm(center - ideal_target_point);
-
-      if (dist < best_distance) {
-        best_distance = dist;
-        out_best_loc = center;
-        found_one = true;
-      }
+      // "Erase" the area around the rejected point so we don't find it again.
+      // For a darkest search, we fill with white. For brightest, we fill with
+      // black.
+      cv::Scalar erase_color = (mode == ExtremeSearchMode::DARKEST)
+                                   ? cv::Scalar(255)
+                                   : cv::Scalar(0);
+      cv::circle(searchable_roi, candidate_loc, minmax_search_radius, erase_color,
+                 -1); // Erase a 15px radius circle.
     }
   }
 
-  if (!found_one) {
-    LOG_WARN
-        << "Found blobs, but all were smaller than the minimum area threshold.";
-  }
-
-  return found_one;
+  LOG_ERROR << "Failed to find a verified extreme point in quadrant after "
+            << max_attempts << " attempts.";
+  return false;
 }
 
 // --- STEP 3: The Top-Level Orchestrator ---
 
 /**
  * @brief Finds the four corner stone candidates using a "Divide and Conquer"
- * strategy.
+ * min/max strategy.
  *
- * This top-level function divides the image into four quadrants and calls the
- * positional search utility on each one to get the four most plausible
- * candidates.
+ * This function orchestrates the Pass 1 workflow. It divides the image into
+ * four quadrants and calls the `find_verified_extreme_pixel_iteratively`
+ * utility on each one.
  *
  * @param raw_bgr_image The full, raw BGR image from the camera.
- * @param out_corner_candidates A vector to be populated with the four found
- * corner points (TL, TR, BR, BL).
- * @return true if four valid candidates were found, false otherwise.
+ * @param out_corner_candidates A vector that will be populated with the four
+ * found corner points (TL, TR, BL, BR).
+ * @return true if four valid candidates were found in their expected quadrants,
+ * false otherwise.
  */
-bool find_corner_candidates_by_position(
+bool find_corner_candidates_by_minmax(
     const cv::Mat &raw_bgr_image,
     std::vector<cv::Point2f> &out_corner_candidates) {
-  LOG_INFO << "Starting Pass 1 detection using 'Divide and Conquer' Positional "
-              "strategy.";
+  LOG_INFO << "Starting Pass 1 detection using iterative 'Divide and Conquer' "
+              "MinMax strategy.";
   if (raw_bgr_image.empty()) {
-    LOG_ERROR << "find_corner_candidates_by_position: Input image is empty.";
+    LOG_ERROR << "find_corner_candidates_by_minmax: Input image is empty.";
     return false;
   }
 
@@ -4793,28 +4809,26 @@ bool find_corner_candidates_by_position(
   cv::extractChannel(lab_image, l_channel, 0);
 
   // 2. Define the four quadrants.
-  int width = l_channel.cols;
-  int height = l_channel.rows;
-  cv::Rect tl_quad_rect(0, 0, width / 2, height / 2);
-  cv::Rect tr_quad_rect(width / 2, 0, width - (width / 2), height / 2);
-  cv::Rect bl_quad_rect(0, height / 2, width / 2, height - (height / 2));
-  cv::Rect br_quad_rect(width / 2, height / 2, width - (width / 2),
-                        height - (height / 2));
+  const int halfWidth = l_channel.cols / 2;
+  const int halfHeight = l_channel.rows / 2;
+  cv::Rect tl_quad_rect(0, 0, halfWidth, halfHeight);
+  cv::Rect tr_quad_rect(halfWidth, 0, halfWidth, halfHeight);
+  cv::Rect bl_quad_rect(0, halfHeight, halfWidth, halfHeight);
+  cv::Rect br_quad_rect(halfWidth, halfHeight, halfWidth, halfHeight);
 
-  // 3. Perform four independent searches for the best-positioned blob in each
-  // quadrant.
+  // 3. Perform four independent, iterative searches.
   cv::Point tl_loc, tr_loc, bl_loc, br_loc;
-  bool tl_found = find_best_candidate_in_quadrant(l_channel(tl_quad_rect), true,
-                                                  tl_loc); // Find dark
-  bool tr_found = find_best_candidate_in_quadrant(l_channel(tr_quad_rect),
-                                                  false, tr_loc); // Find bright
-  bool bl_found = find_best_candidate_in_quadrant(l_channel(bl_quad_rect), true,
-                                                  bl_loc); // Find dark
-  bool br_found = find_best_candidate_in_quadrant(l_channel(br_quad_rect),
-                                                  false, br_loc); // Find bright
+  bool tl_found = find_verified_extreme_pixel_iteratively(
+      l_channel(tl_quad_rect), ExtremeSearchMode::DARKEST, tl_loc);
+  bool tr_found = find_verified_extreme_pixel_iteratively(
+      l_channel(tr_quad_rect), ExtremeSearchMode::BRIGHTEST, tr_loc);
+  bool bl_found = find_verified_extreme_pixel_iteratively(
+      l_channel(bl_quad_rect), ExtremeSearchMode::DARKEST, bl_loc);
+  bool br_found = find_verified_extreme_pixel_iteratively(
+      l_channel(br_quad_rect), ExtremeSearchMode::BRIGHTEST, br_loc);
 
   if (!(tl_found && tr_found && bl_found && br_found)) {
-    LOG_ERROR << "Could not find a plausible candidate in all four quadrants. "
+    LOG_ERROR << "Could not find all four corner candidates. "
               << "TL:" << tl_found << ", TR:" << tr_found << ", BL:" << bl_found
               << ", BR:" << br_found;
     return false;

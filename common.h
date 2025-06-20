@@ -403,7 +403,7 @@ bool find_blob_candidates_in_raw_quadrant(
     const cv::Mat &raw_image_bgr, CornerQuadrant quadrant,
     int expected_stone_color, const CalibrationData &calibData,
     std::vector<CandidateBlob> &out_candidate_blobs);
-bool find_corner_candidates_by_position(
+bool find_corner_candidates_by_minmax(
     const cv::Mat &raw_bgr_image,
     std::vector<cv::Point2f> &out_corner_candidates);
 
