@@ -4712,7 +4712,9 @@ static bool verify_pixel_is_in_cluster(const cv::Mat &l_channel_roi,
       }
     }
   }
-
+  LOG_TRACE << "location to verify:" << loc_to_verify
+            << " result: " << matched_pixel_count << "/"
+            << total_pixels_in_circle;
   if (total_pixels_in_circle == 0)
     return false;
 
@@ -4837,7 +4839,7 @@ bool find_corner_candidates_by_minmax(
   cv::Rect tl_quad_rect(0, 0, halfWidth, halfHeight);
   cv::Rect tr_quad_rect(halfWidth, 0, halfWidth, halfHeight);
   cv::Rect br_quad_rect(halfWidth, halfHeight, halfWidth, halfHeight);
-  cv::Rect bl_quad_rect(0, halfHeight, halfWidth, halfHeight);  
+  cv::Rect bl_quad_rect(0, halfHeight, halfWidth, halfHeight);
 
   // 3. Perform four independent, iterative searches.
   cv::Point tl_loc, tr_loc, bl_loc, br_loc;
@@ -4849,34 +4851,38 @@ bool find_corner_candidates_by_minmax(
       toString(CornerQuadrant::TOP_RIGHT), tr_loc);
   bool br_found = find_verified_extreme_pixel_iteratively(
       l_channel(br_quad_rect), ExtremeSearchMode::BRIGHTEST,
-      toString(CornerQuadrant::BOTTOM_RIGHT), br_loc);      
+      toString(CornerQuadrant::BOTTOM_RIGHT), br_loc);
   bool bl_found = find_verified_extreme_pixel_iteratively(
       l_channel(bl_quad_rect), ExtremeSearchMode::DARKEST,
       toString(CornerQuadrant::BOTTOM_LEFT), bl_loc);
 
-  if (!(tl_found && tr_found && bl_found && br_found)) {
+  // we want to return as much info as possible for debugging
+  out_corner_candidates.clear();
+  // Assemble the final candidate list, adjusting for ROI offsets.
+  if (tl_found)
+    out_corner_candidates.push_back(cv::Point2f(tl_loc) +
+                                    cv::Point2f(tl_quad_rect.tl()));
+  if (tr_found)
+    out_corner_candidates.push_back(cv::Point2f(tr_loc) +
+                                    cv::Point2f(tr_quad_rect.tl()));
+  if (br_found)
+    out_corner_candidates.push_back(cv::Point2f(br_loc) +
+                                    cv::Point2f(br_quad_rect.tl()));
+  if (bl_found)
+    out_corner_candidates.push_back(cv::Point2f(bl_loc) +
+                                    cv::Point2f(bl_quad_rect.tl()));
+
+  bool final_result = tl_found && tr_found && bl_found && br_found;
+  if (!final_result) {
     LOG_ERROR << "Could not find all four corner candidates. "
               << "TL:" << tl_found << ", TR:" << tr_found << ", BL:" << bl_found
               << ", BR:" << br_found;
-    return false;
+  } else {
+    LOG_INFO << "Successfully found 4 raw candidates: " << "TL at "
+             << out_corner_candidates[0] << ", " << "TR at "
+             << out_corner_candidates[1] << ", " << "BR at "
+             << out_corner_candidates[2] << ", " << "BL at "
+             << out_corner_candidates[3];
   }
-
-  // 4. Assemble the final candidate list, adjusting for ROI offsets.
-  out_corner_candidates.clear();
-  out_corner_candidates.push_back(cv::Point2f(tl_loc) +
-                                  cv::Point2f(tl_quad_rect.tl()));
-  out_corner_candidates.push_back(cv::Point2f(tr_loc) +
-                                  cv::Point2f(tr_quad_rect.tl()));
-  out_corner_candidates.push_back(cv::Point2f(br_loc) +
-                                  cv::Point2f(br_quad_rect.tl()));
-  out_corner_candidates.push_back(cv::Point2f(bl_loc) +
-                                  cv::Point2f(bl_quad_rect.tl()));
-
-  LOG_INFO << "Successfully found 4 raw candidates: " << "TL at "
-           << out_corner_candidates[0] << ", " << "TR at "
-           << out_corner_candidates[1] << ", " << "BR at "
-           << out_corner_candidates[2] << ", " << "BL at "
-           << out_corner_candidates[3];
-
-  return true;
+  return final_result;
 }
