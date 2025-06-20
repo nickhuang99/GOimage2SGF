@@ -4656,11 +4656,9 @@ bool find_blob_candidates_in_raw_quadrant(
 // END: CODE FOR HARDENED PASS 1 EXPERIMENTAL WORKFLOW
 // =================================================================================
 
-// --- STEP 1: Define the Small, Purposeful Utility Functions ---
-
 // An enum to make the function's purpose clear to the caller.
 enum class ExtremeSearchMode { DARKEST, BRIGHTEST };
-
+static const int MINMAX_NEIGHBORHOOD_RADIUS = 15;
 /**
  * @brief Utility 1: Searches for a single extreme pixel in an image region.
  * This is a simple wrapper around cv::minMaxLoc. Its only job is to find one
@@ -4683,10 +4681,9 @@ static void search_one_extreme_pixel(const cv::Mat &l_channel_roi,
  * @return true if the point is part of a substantial blob, false if it is
  * likely noise.
  */
-const int minmax_search_radius = 10;
 static bool verify_pixel_is_in_cluster(const cv::Mat &l_channel_roi,
                                        const cv::Point &loc_to_verify) {
-  
+  // Using the new shared constant for radius
   const int color_proximity_threshold = 20;
   const float required_match_percentage =
       0.60f; // 60% of pixels in the circle must match.
@@ -4695,15 +4692,17 @@ static bool verify_pixel_is_in_cluster(const cv::Mat &l_channel_roi,
   int matched_pixel_count = 0;
   int total_pixels_in_circle = 0;
 
-  int x_start = std::max(0, loc_to_verify.x - minmax_search_radius);
-  int y_start = std::max(0, loc_to_verify.y - minmax_search_radius);
-  int x_end = std::min(l_channel_roi.cols, loc_to_verify.x + minmax_search_radius);
-  int y_end = std::min(l_channel_roi.rows, loc_to_verify.y + minmax_search_radius);
+  int x_start = std::max(0, loc_to_verify.x - MINMAX_NEIGHBORHOOD_RADIUS);
+  int y_start = std::max(0, loc_to_verify.y - MINMAX_NEIGHBORHOOD_RADIUS);
+  int x_end = std::min(l_channel_roi.cols,
+                       loc_to_verify.x + MINMAX_NEIGHBORHOOD_RADIUS);
+  int y_end = std::min(l_channel_roi.rows,
+                       loc_to_verify.y + MINMAX_NEIGHBORHOOD_RADIUS);
 
   for (int y = y_start; y < y_end; ++y) {
     for (int x = x_start; x < x_end; ++x) {
       if (std::pow(x - loc_to_verify.x, 2) + std::pow(y - loc_to_verify.y, 2) <=
-          std::pow(minmax_search_radius, 2)) {
+          std::pow(MINMAX_NEIGHBORHOOD_RADIUS, 2)) {
         total_pixels_in_circle++;
         uchar current_pixel_value = l_channel_roi.at<uchar>(y, x);
         if (std::abs(current_pixel_value - seed_value) <
@@ -4722,8 +4721,69 @@ static bool verify_pixel_is_in_cluster(const cv::Mat &l_channel_roi,
   return match_percentage >= required_match_percentage;
 }
 
-// --- STEP 2: The Quadrant-Level Orchestrator (Workhorse) ---
+/**
+ * @brief Utility 2: Verifies if a pixel is part of a coherent color cluster.
+ * Implements the user's "neighbor counting" algorithm. It checks a circular
+ * area around a given point and counts how many pixels have a similar color.
+ * @return true if the point is part of a substantial blob, false if it is
+ * likely noise.
+ */
 
+static bool find_verified_extreme_pixel_iteratively(
+    const cv::Mat &l_channel_roi, ExtremeSearchMode mode,
+    const std::string &quadrant_name, cv::Point &out_loc) {
+  // Create a clone of the ROI so we can modify it (erase rejected points).
+  cv::Mat searchable_roi = l_channel_roi.clone();
+
+  const int max_attempts =
+      5; // Try up to 5 times to find a valid point in this quadrant.
+  for (int attempt = 0; attempt < max_attempts; ++attempt) {
+    cv::Point candidate_loc;
+    search_one_extreme_pixel(searchable_roi, mode, candidate_loc);
+
+    if (verify_pixel_is_in_cluster(searchable_roi, candidate_loc)) {
+      // Success! The candidate is valid.
+      out_loc = candidate_loc;
+      LOG_TRACE << "Found verified point in quadrant " << quadrant_name
+                << " on attempt " << attempt + 1;
+      return true;
+    } else {
+      // Verification failed. This point is noise. Erase it and try again.
+      LOG_TRACE << "Rejected point at " << candidate_loc << " in "
+                << quadrant_name << " on attempt " << attempt + 1
+                << ". Erasing and retrying.";
+
+      // --- NEW: DEBUG IMAGE SAVING FOR FAILED ATTEMPTS ---
+      if (Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
+        cv::Mat debug_image;
+        cv::cvtColor(searchable_roi, debug_image, cv::COLOR_GRAY2BGR);
+        cv::drawMarker(debug_image, candidate_loc, cv::Scalar(0, 0, 255),
+                       cv::MARKER_CROSS, 20, 2);
+        cv::putText(debug_image, "Rejected", candidate_loc + cv::Point(10, -10),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.4, cv::Scalar(0, 0, 255), 1);
+
+        std::string filename = "share/Debug/MinMax_Fail_" + quadrant_name +
+                               "_Attempt_" + std::to_string(attempt + 1) +
+                               ".jpg";
+        cv::imwrite(filename, debug_image);
+        LOG_DEBUG << "Saved failed verification debug image to " << filename;
+      }
+
+      // "Erase" the area around the rejected point so we don't find it again.
+      // For a darkest search, we fill with white. For brightest, we fill with
+      // black.
+      cv::Scalar erase_color = (mode == ExtremeSearchMode::DARKEST)
+                                   ? cv::Scalar(255)
+                                   : cv::Scalar(0);
+      cv::circle(searchable_roi, candidate_loc, MINMAX_NEIGHBORHOOD_RADIUS,
+                 erase_color, -1);
+    }
+  }
+
+  LOG_ERROR << "Failed to find a verified extreme point in quadrant "
+            << quadrant_name << " after " << max_attempts << " attempts.";
+  return false;
+}
 /**
  * @brief Finds a verified extreme pixel within a quadrant, searching
  * iteratively if necessary.
@@ -4739,45 +4799,8 @@ static bool verify_pixel_is_in_cluster(const cv::Mat &l_channel_roi,
  * @return true if a verified point was found within the attempt limit, false
  * otherwise.
  */
-static bool find_verified_extreme_pixel_iteratively(
-    const cv::Mat &l_channel_roi, ExtremeSearchMode mode, cv::Point &out_loc) {
-  // Create a clone of the ROI so we can modify it (erase rejected points).
-  cv::Mat searchable_roi = l_channel_roi.clone();
 
-  const int max_attempts =
-      5; // Try up to 5 times to find a valid point in this quadrant.
-  for (int attempt = 0; attempt < max_attempts; ++attempt) {
-    cv::Point candidate_loc;
-    search_one_extreme_pixel(searchable_roi, mode, candidate_loc);
-
-    if (verify_pixel_is_in_cluster(searchable_roi, candidate_loc)) {
-      // Success! The candidate is valid.
-      out_loc = candidate_loc;
-      LOG_TRACE << "Found verified point in quadrant on attempt "
-                << attempt + 1;
-      return true;
-    } else {
-      // Verification failed. This point is noise. Erase it and try again.
-      LOG_TRACE << "Rejected point at " << candidate_loc << " on attempt "
-                << attempt + 1 << ". Erasing and retrying.";
-
-      // "Erase" the area around the rejected point so we don't find it again.
-      // For a darkest search, we fill with white. For brightest, we fill with
-      // black.
-      cv::Scalar erase_color = (mode == ExtremeSearchMode::DARKEST)
-                                   ? cv::Scalar(255)
-                                   : cv::Scalar(0);
-      cv::circle(searchable_roi, candidate_loc, minmax_search_radius, erase_color,
-                 -1); // Erase a 15px radius circle.
-    }
-  }
-
-  LOG_ERROR << "Failed to find a verified extreme point in quadrant after "
-            << max_attempts << " attempts.";
-  return false;
-}
-
-// --- STEP 3: The Top-Level Orchestrator ---
+// The Top-Level Orchestrator ---
 
 /**
  * @brief Finds the four corner stone candidates using a "Divide and Conquer"
@@ -4819,13 +4842,13 @@ bool find_corner_candidates_by_minmax(
   // 3. Perform four independent, iterative searches.
   cv::Point tl_loc, tr_loc, bl_loc, br_loc;
   bool tl_found = find_verified_extreme_pixel_iteratively(
-      l_channel(tl_quad_rect), ExtremeSearchMode::DARKEST, tl_loc);
+      l_channel(tl_quad_rect), ExtremeSearchMode::DARKEST, "TL", tl_loc);
   bool tr_found = find_verified_extreme_pixel_iteratively(
-      l_channel(tr_quad_rect), ExtremeSearchMode::BRIGHTEST, tr_loc);
+      l_channel(tr_quad_rect), ExtremeSearchMode::BRIGHTEST, "TR", tr_loc);
   bool bl_found = find_verified_extreme_pixel_iteratively(
-      l_channel(bl_quad_rect), ExtremeSearchMode::DARKEST, bl_loc);
+      l_channel(bl_quad_rect), ExtremeSearchMode::DARKEST, "BL", bl_loc);
   bool br_found = find_verified_extreme_pixel_iteratively(
-      l_channel(br_quad_rect), ExtremeSearchMode::BRIGHTEST, br_loc);
+      l_channel(br_quad_rect), ExtremeSearchMode::BRIGHTEST, "BR", br_loc);
 
   if (!(tl_found && tr_found && bl_found && br_found)) {
     LOG_ERROR << "Could not find all four corner candidates. "
