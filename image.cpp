@@ -4736,7 +4736,7 @@ static bool find_verified_extreme_pixel_iteratively(
   cv::Mat searchable_roi = l_channel_roi.clone();
 
   const int max_attempts =
-      5; // Try up to 5 times to find a valid point in this quadrant.
+      15; // Try up to 15 times to find a valid point in this quadrant.
   for (int attempt = 0; attempt < max_attempts; ++attempt) {
     cv::Point candidate_loc;
     search_one_extreme_pixel(searchable_roi, mode, candidate_loc);
@@ -4754,7 +4754,7 @@ static bool find_verified_extreme_pixel_iteratively(
                 << ". Erasing and retrying.";
 
       // --- NEW: DEBUG IMAGE SAVING FOR FAILED ATTEMPTS ---
-      if (Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
+      if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
         cv::Mat debug_image;
         cv::cvtColor(searchable_roi, debug_image, cv::COLOR_GRAY2BGR);
         cv::drawMarker(debug_image, candidate_loc, cv::Scalar(0, 0, 255),
@@ -4836,8 +4836,8 @@ bool find_corner_candidates_by_minmax(
   const int halfHeight = l_channel.rows / 2;
   cv::Rect tl_quad_rect(0, 0, halfWidth, halfHeight);
   cv::Rect tr_quad_rect(halfWidth, 0, halfWidth, halfHeight);
-  cv::Rect bl_quad_rect(0, halfHeight, halfWidth, halfHeight);
   cv::Rect br_quad_rect(halfWidth, halfHeight, halfWidth, halfHeight);
+  cv::Rect bl_quad_rect(0, halfHeight, halfWidth, halfHeight);  
 
   // 3. Perform four independent, iterative searches.
   cv::Point tl_loc, tr_loc, bl_loc, br_loc;
@@ -4847,12 +4847,12 @@ bool find_corner_candidates_by_minmax(
   bool tr_found = find_verified_extreme_pixel_iteratively(
       l_channel(tr_quad_rect), ExtremeSearchMode::BRIGHTEST,
       toString(CornerQuadrant::TOP_RIGHT), tr_loc);
+  bool br_found = find_verified_extreme_pixel_iteratively(
+      l_channel(br_quad_rect), ExtremeSearchMode::BRIGHTEST,
+      toString(CornerQuadrant::BOTTOM_RIGHT), br_loc);      
   bool bl_found = find_verified_extreme_pixel_iteratively(
       l_channel(bl_quad_rect), ExtremeSearchMode::DARKEST,
       toString(CornerQuadrant::BOTTOM_LEFT), bl_loc);
-  bool br_found = find_verified_extreme_pixel_iteratively(
-      l_channel(br_quad_rect), ExtremeSearchMode::BRIGHTEST,
-      toString(CornerQuadrant::BOTTOM_RIGHT), br_loc);
 
   if (!(tl_found && tr_found && bl_found && br_found)) {
     LOG_ERROR << "Could not find all four corner candidates. "

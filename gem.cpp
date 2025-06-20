@@ -2410,43 +2410,32 @@ void runMinMaxCornersWorkflow(const std::string &imagePath) {
   std::vector<cv::Point2f> candidates;
   if (find_corner_candidates_by_minmax(frame, candidates)) {
     LOG_INFO << "Positional detection successful. Found 4 candidates.";
-
-    // 3. Draw the results for visual verification
-    cv::Mat display_image = frame.clone();
-    cv::Scalar color_tl(0, 255, 0);   // Green
-    cv::Scalar color_tr(255, 255, 0); // Cyan
-    cv::Scalar color_br(0, 165, 255); // Orange
-    cv::Scalar color_bl(255, 0, 255); // Magenta
-
-    // Draw markers on the found locations
-    cv::drawMarker(display_image, candidates[0], color_tl, cv::MARKER_CROSS, 20,
-                   2);
-    cv::drawMarker(display_image, candidates[1], color_tr, cv::MARKER_CROSS, 20,
-                   2);
-    cv::drawMarker(display_image, candidates[2], color_br, cv::MARKER_CROSS, 20,
-                   2);
-    cv::drawMarker(display_image, candidates[3], color_bl, cv::MARKER_CROSS, 20,
-                   2);
-
-    cv::putText(display_image, "TL", candidates[0] + cv::Point2f(15, 0),
-                cv::FONT_HERSHEY_SIMPLEX, 0.6, color_tl, 2);
-    cv::putText(display_image, "TR", candidates[1] + cv::Point2f(15, 0),
-                cv::FONT_HERSHEY_SIMPLEX, 0.6, color_tr, 2);
-    cv::putText(display_image, "BR", candidates[2] + cv::Point2f(15, 0),
-                cv::FONT_HERSHEY_SIMPLEX, 0.6, color_br, 2);
-    cv::putText(display_image, "BL", candidates[3] + cv::Point2f(15, 0),
-                cv::FONT_HERSHEY_SIMPLEX, 0.6, color_bl, 2);
-
-    cv::imshow("MinMax Corner Detection Test Result", display_image);
-    LOG_INFO << "Displaying results. Press any key to exit.";
-    cv::waitKey(0);
-    cv::destroyAllWindows();
-
   } else {
     LOG_ERROR
         << "Positional detection FAILED. Could not find all four candidates.";
     // No image to show if the function fails, just the log message.
   }
+  // 3. Draw the results for visual verification
+  cv::Mat display_image = frame.clone();
+  cv::Scalar colors = {
+      (0, 255, 0),   // Green
+      (255, 255, 0), // Cyan
+      (0, 165, 255), // Orange
+      (255, 0, 255)  // Magenta
+  };
+
+  // Draw markers on the found locations
+  for (size_t i = 0; i < candidates.size(); i++) {
+    cv::drawMarker(display_image, candidates[i], colors[i], cv::MARKER_CROSS,
+                   20, 2);
+    cv::putText(display_image, toString(static_cast<CornerQuadrant>(i)),
+                candidates[i] + cv::Point2f(15, 10), cv::FONT_HERSHEY_SIMPLEX,
+                0.6, colors[i], 2);
+  }
+  cv::imshow("MinMax Corner Detection Test Result", display_image);
+  LOG_INFO << "Displaying results. Press any key to exit.";
+  cv::waitKey(0);
+  cv::destroyAllWindows();
   LOG_INFO << "--- MinMax Corner Detection Test Workflow Finished ---";
 }
 
@@ -2874,7 +2863,7 @@ int main(int argc, char *argv[]) {
       } else {
         LOG_ERROR << "Robust corner detection test FAILED (one or more corners "
                      "did not pass full verification).";
-      }      
+      }
       cv::Mat display_robust = raw_image.clone();
 
       // Copied drawing logic from detectFourCornersGoBoard's debug
