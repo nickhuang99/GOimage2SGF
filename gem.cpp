@@ -161,6 +161,9 @@ void displayHelpMessage() {
   CONSOLE_OUT << "  --exp-detect-tl                   : Experimental TL "
                  "quadrant stone detection (older version)."
               << endl;
+  CONSOLE_OUT << "  --minmax-corners                   : Experimental "
+                 "corners finding with minmax."
+              << endl;
   CONSOLE_OUT << "  --exp-find-blob                   : Experimental "
                  "blob finding with L-tolerance iteration."
               << endl;
@@ -2369,6 +2372,83 @@ void experimentalRawPass1Workflow() {
   LOG_INFO << "--- Experimental Raw Pass 1 Workflow Finished ---";
 }
 
+/**
+ * @brief Orchestrates a test of the positional "minmax" corner finding
+ * strategy.
+ *
+ * This workflow is triggered by the `--minmax-corners` flag. It captures an
+ * image either from the webcam or a specified file, runs the positional
+ * detection algorithm, and then displays the result by drawing the four found
+ * candidate points on the image.
+ *
+ * @param imagePath The path to an image file. If empty, the function captures
+ * from the webcam.
+ */
+void runMinMaxCornersWorkflow(const std::string &imagePath) {
+  LOG_INFO << "--- Starting MinMax Corner Detection Test Workflow ---";
+  cv::Mat frame;
+
+  // 1. Get the source image from file or webcam
+  if (imagePath.empty()) {
+    LOG_INFO << "No --image specified. Capturing frame from webcam: "
+             << g_device_path;
+    if (!captureFrame(g_device_path, frame)) {
+      THROWGEMERROR("MinMax Test FAILED: Could not capture frame from webcam.");
+    }
+  } else {
+    LOG_INFO << "Loading image from file: " << imagePath;
+    frame = cv::imread(imagePath);
+    if (frame.empty())
+      THROWGEMERROR("MinMax Test FAILED: Failed to load image: " + imagePath);
+  }
+
+  LOG_INFO << "Image loaded/captured successfully. Size: " << frame.cols << "x"
+           << frame.rows;
+
+  // 2. Run the positional detection algorithm
+  std::vector<cv::Point2f> candidates;
+  if (find_corner_candidates_by_position(frame, candidates)) {
+    LOG_INFO << "Positional detection successful. Found 4 candidates.";
+
+    // 3. Draw the results for visual verification
+    cv::Mat display_image = frame.clone();
+    cv::Scalar color_tl(0, 255, 0);   // Green
+    cv::Scalar color_tr(255, 255, 0); // Cyan
+    cv::Scalar color_br(0, 165, 255); // Orange
+    cv::Scalar color_bl(255, 0, 255); // Magenta
+
+    // Draw markers on the found locations
+    cv::drawMarker(display_image, candidates[0], color_tl, cv::MARKER_CROSS, 20,
+                   2);
+    cv::drawMarker(display_image, candidates[1], color_tr, cv::MARKER_CROSS, 20,
+                   2);
+    cv::drawMarker(display_image, candidates[2], color_br, cv::MARKER_CROSS, 20,
+                   2);
+    cv::drawMarker(display_image, candidates[3], color_bl, cv::MARKER_CROSS, 20,
+                   2);
+
+    cv::putText(display_image, "TL", candidates[0] + cv::Point2f(15, 0),
+                cv::FONT_HERSHEY_SIMPLEX, 0.6, color_tl, 2);
+    cv::putText(display_image, "TR", candidates[1] + cv::Point2f(15, 0),
+                cv::FONT_HERSHEY_SIMPLEX, 0.6, color_tr, 2);
+    cv::putText(display_image, "BR", candidates[2] + cv::Point2f(15, 0),
+                cv::FONT_HERSHEY_SIMPLEX, 0.6, color_br, 2);
+    cv::putText(display_image, "BL", candidates[3] + cv::Point2f(15, 0),
+                cv::FONT_HERSHEY_SIMPLEX, 0.6, color_bl, 2);
+
+    cv::imshow("MinMax Corner Detection Test Result", display_image);
+    LOG_INFO << "Displaying results. Press any key to exit.";
+    cv::waitKey(0);
+    cv::destroyAllWindows();
+
+  } else {
+    LOG_ERROR
+        << "Positional detection FAILED. Could not find all four candidates.";
+    // No image to show if the function fails, just the log message.
+  }
+  LOG_INFO << "--- MinMax Corner Detection Test Workflow Finished ---";
+}
+
 int main(int argc, char *argv[]) {
   // Initialize logger with default path and level.
   // This allows logging from the very start, even during option parsing if
@@ -2406,6 +2486,7 @@ int main(int argc, char *argv[]) {
     bool run_exp_find_blob_workflow = false;          // New flag
     bool run_test_robust_detection_workflow = false;
     bool runAutoCalibration = false;
+    bool run_minmax_corners_workflow = false;
 
     int detect_stone_col = -1, detect_stone_row = -1; // NEW Args for -P
 
@@ -2460,6 +2541,7 @@ int main(int argc, char *argv[]) {
         {"p1-l-sep", required_argument, nullptr, 0},    // New optional override
         {"p1-circ-min", required_argument, nullptr, 0}, // New optional override
         {"p1-area-min", required_argument, nullptr, 0}, // New optional override
+        {"minmax-corners", no_argument, nullptr, 0},
         {nullptr, 0, nullptr, 0}};
 
     int c;
@@ -2714,6 +2796,9 @@ int main(int argc, char *argv[]) {
           run_test_robust_detection_workflow = true;
           LOG_INFO << "Robust corner detection mode ENABLED for subsequent "
                       "operations.";
+        } else if (long_options[option_index].name ==
+                   std::string("minmax-corners")) { // <<< NEW HANDLER
+          run_minmax_corners_workflow = true;
         }
         break;
       case 1: // --exp-find-blob
@@ -2788,6 +2873,9 @@ int main(int argc, char *argv[]) {
       } else {
         LOG_ERROR << "Robust corner detection test FAILED (one or more corners "
                      "did not pass full verification).";
+      }
+      else if (run_minmax_corners_workflow) { // <<< NEW WORKFLOW CALL
+        runMinMaxCornersWorkflow(detect_stone_image_path_arg);
       }
       cv::Mat display_robust = raw_image.clone();
 

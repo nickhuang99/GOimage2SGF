@@ -4655,3 +4655,187 @@ bool find_blob_candidates_in_raw_quadrant(
 // =================================================================================
 // END: CODE FOR HARDENED PASS 1 EXPERIMENTAL WORKFLOW
 // =================================================================================
+
+// --- STEP 1: The Core Workhorse Utility ---
+
+/**
+ * @brief Finds all contours within a given lightness range.
+ *
+ * This utility function performs a simple thresholding to create a binary mask
+ * for either dark or bright regions and finds all contours within that mask.
+ * It performs NO geometric or positional filtering. Its only job is to generate
+ * a list of all possible candidate blobs.
+ *
+ * @param l_channel_roi The input single-channel L* (lightness) image region.
+ * @param find_dark_blobs If true, thresholds for dark objects; otherwise, for
+ * bright objects.
+ * @return A vector of all contours found.
+ */
+static std::vector<std::vector<cv::Point>>
+find_blobs_by_lightness(const cv::Mat &l_channel_roi, bool find_dark_blobs) {
+  cv::Mat mask;
+  // Use a simple, broad threshold. The goal is just to separate dark from
+  // light.
+  if (find_dark_blobs) {
+    // Find all objects darker than a generous lightness value of 90.
+    cv::threshold(l_channel_roi, mask, 90, 255, cv::THRESH_BINARY_INV);
+  } else {
+    // Find all objects brighter than a generous lightness value of 180.
+    cv::threshold(l_channel_roi, mask, 180, 255, cv::THRESH_BINARY);
+  }
+
+  // Use a small amount of morphology to clean up minor noise.
+  cv::Mat kernel = cv::getStructuringElement(cv::MORPH_ELLIPSE, cv::Size(3, 3));
+  cv::morphologyEx(mask, mask, cv::MORPH_OPEN, kernel);
+
+  std::vector<std::vector<cv::Point>> contours;
+  cv::findContours(mask, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+  return contours;
+}
+
+// --- STEP 2: The Quadrant-Level Orchestrator (Workhorse) ---
+
+/**
+ * @brief Finds the best candidate blob in a quadrant based on its position.
+ *
+ * This function orchestrates the search for a single corner. It finds all
+ * relevant (dark or bright) blobs in the quadrant and then selects the single
+ * best one by finding the contour whose center is closest to an ideal target
+ * point within the quadrant.
+ *
+ * @param l_channel_roi The single-channel L* image region for the quadrant.
+ * @param find_dark_blobs Specifies whether to search for dark or bright blobs.
+ * @param out_best_loc The location of the center of the best-positioned blob.
+ * @return true if at least one valid candidate was found, false otherwise.
+ */
+static bool find_best_candidate_in_quadrant(const cv::Mat &l_channel_roi,
+                                            bool find_dark_blobs,
+                                            cv::Point &out_best_loc) {
+  std::vector<std::vector<cv::Point>> candidates =
+      find_blobs_by_lightness(l_channel_roi, find_dark_blobs);
+
+  if (candidates.empty()) {
+    LOG_WARN << "No " << (find_dark_blobs ? "dark" : "bright")
+             << " blobs found in quadrant.";
+    return false;
+  }
+
+  double best_distance = std::numeric_limits<double>::max();
+
+  // The "ideal" target is not in the center, but offset towards the middle of
+  // the board. This helps avoid selecting blobs at the extreme edges of the
+  // image.
+  cv::Point ideal_target_point(l_channel_roi.cols * 0.5,
+                               l_channel_roi.rows * 0.5);
+  if (find_dark_blobs) { // For TL and BL stones on the left
+    ideal_target_point.x = l_channel_roi.cols * 0.6;
+  } else { // For TR and BR stones on the right
+    ideal_target_point.x = l_channel_roi.cols * 0.4;
+  }
+
+  bool found_one = false;
+  for (const auto &contour : candidates) {
+    // We must apply a minimal area check to discard obvious noise.
+    if (cv::contourArea(contour) < 50) {
+      continue;
+    }
+
+    cv::Moments M = cv::moments(contour);
+    if (M.m00 > 0) {
+      cv::Point center(static_cast<int>(M.m10 / M.m00),
+                       static_cast<int>(M.m01 / M.m00));
+      double dist = cv::norm(center - ideal_target_point);
+
+      if (dist < best_distance) {
+        best_distance = dist;
+        out_best_loc = center;
+        found_one = true;
+      }
+    }
+  }
+
+  if (!found_one) {
+    LOG_WARN
+        << "Found blobs, but all were smaller than the minimum area threshold.";
+  }
+
+  return found_one;
+}
+
+// --- STEP 3: The Top-Level Orchestrator ---
+
+/**
+ * @brief Finds the four corner stone candidates using a "Divide and Conquer"
+ * strategy.
+ *
+ * This top-level function divides the image into four quadrants and calls the
+ * positional search utility on each one to get the four most plausible
+ * candidates.
+ *
+ * @param raw_bgr_image The full, raw BGR image from the camera.
+ * @param out_corner_candidates A vector to be populated with the four found
+ * corner points (TL, TR, BR, BL).
+ * @return true if four valid candidates were found, false otherwise.
+ */
+bool find_corner_candidates_by_position(
+    const cv::Mat &raw_bgr_image,
+    std::vector<cv::Point2f> &out_corner_candidates) {
+  LOG_INFO << "Starting Pass 1 detection using 'Divide and Conquer' Positional "
+              "strategy.";
+  if (raw_bgr_image.empty()) {
+    LOG_ERROR << "find_corner_candidates_by_position: Input image is empty.";
+    return false;
+  }
+
+  // 1. Prepare the L* channel.
+  cv::Mat lab_image, l_channel;
+  cv::cvtColor(raw_bgr_image, lab_image, cv::COLOR_BGR2Lab);
+  cv::extractChannel(lab_image, l_channel, 0);
+
+  // 2. Define the four quadrants.
+  int width = l_channel.cols;
+  int height = l_channel.rows;
+  cv::Rect tl_quad_rect(0, 0, width / 2, height / 2);
+  cv::Rect tr_quad_rect(width / 2, 0, width - (width / 2), height / 2);
+  cv::Rect bl_quad_rect(0, height / 2, width / 2, height - (height / 2));
+  cv::Rect br_quad_rect(width / 2, height / 2, width - (width / 2),
+                        height - (height / 2));
+
+  // 3. Perform four independent searches for the best-positioned blob in each
+  // quadrant.
+  cv::Point tl_loc, tr_loc, bl_loc, br_loc;
+  bool tl_found = find_best_candidate_in_quadrant(l_channel(tl_quad_rect), true,
+                                                  tl_loc); // Find dark
+  bool tr_found = find_best_candidate_in_quadrant(l_channel(tr_quad_rect),
+                                                  false, tr_loc); // Find bright
+  bool bl_found = find_best_candidate_in_quadrant(l_channel(bl_quad_rect), true,
+                                                  bl_loc); // Find dark
+  bool br_found = find_best_candidate_in_quadrant(l_channel(br_quad_rect),
+                                                  false, br_loc); // Find bright
+
+  if (!(tl_found && tr_found && bl_found && br_found)) {
+    LOG_ERROR << "Could not find a plausible candidate in all four quadrants. "
+              << "TL:" << tl_found << ", TR:" << tr_found << ", BL:" << bl_found
+              << ", BR:" << br_found;
+    return false;
+  }
+
+  // 4. Assemble the final candidate list, adjusting for ROI offsets.
+  out_corner_candidates.clear();
+  out_corner_candidates.push_back(cv::Point2f(tl_loc) +
+                                  cv::Point2f(tl_quad_rect.tl()));
+  out_corner_candidates.push_back(cv::Point2f(tr_loc) +
+                                  cv::Point2f(tr_quad_rect.tl()));
+  out_corner_candidates.push_back(cv::Point2f(br_loc) +
+                                  cv::Point2f(br_quad_rect.tl()));
+  out_corner_candidates.push_back(cv::Point2f(bl_loc) +
+                                  cv::Point2f(bl_quad_rect.tl()));
+
+  LOG_INFO << "Successfully found 4 raw candidates: " << "TL at "
+           << out_corner_candidates[0] << ", " << "TR at "
+           << out_corner_candidates[1] << ", " << "BR at "
+           << out_corner_candidates[2] << ", " << "BL at "
+           << out_corner_candidates[3];
+
+  return true;
+}
