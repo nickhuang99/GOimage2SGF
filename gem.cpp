@@ -161,9 +161,10 @@ void displayHelpMessage() {
   CONSOLE_OUT << "  --exp-detect-tl                   : Experimental TL "
                  "quadrant stone detection (older version)."
               << endl;
-  CONSOLE_OUT << "  --minmax-corners                   : Experimental "
-                 "corners finding with minmax."
-              << endl;
+  CONSOLE_OUT
+      << "  --minmax-corners                   : Experimental "
+         "Test corner detection using the 'divide and conquer' MinMax strategy."
+      << endl;
   CONSOLE_OUT << "  --exp-find-blob                   : Experimental "
                  "blob finding with L-tolerance iteration."
               << endl;
@@ -2873,10 +2874,7 @@ int main(int argc, char *argv[]) {
       } else {
         LOG_ERROR << "Robust corner detection test FAILED (one or more corners "
                      "did not pass full verification).";
-      }
-      else if (run_minmax_corners_workflow) { // <<< NEW WORKFLOW CALL
-        runMinMaxCornersWorkflow(detect_stone_image_path_arg);
-      }
+      }      
       cv::Mat display_robust = raw_image.clone();
 
       // Copied drawing logic from detectFourCornersGoBoard's debug
@@ -2908,6 +2906,8 @@ int main(int argc, char *argv[]) {
       LOG_INFO << "--- Test Robust Corner Detection Workflow Finished ---";
     } else if (runAutoCalibration) {
       runAutoCalibrationWorkflow(detect_stone_image_path_arg);
+    } else if (run_minmax_corners_workflow) { // <<< NEW WORKFLOW CALL
+      runMinMaxCornersWorkflow(detect_stone_image_path_arg);
     } else if (g_run_exp_raw_pass1_workflow) {
       experimentalRawPass1Workflow();
     } else if (run_exp_find_blob_workflow) {
