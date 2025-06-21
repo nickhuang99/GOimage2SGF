@@ -4961,21 +4961,28 @@ bool find_board_quadrilateral_rough(const cv::Mat &bgr_image,
       continue;
     }
 
-    double peri = cv::arcLength(contour, true);
+    // --- NEW: Use Convex Hull to simplify the noisy contour first ---
+    std::vector<cv::Point> hull;
+    cv::convexHull(contour, hull);
 
-    // --- NEW: Iterative Approximation ---
-    // Try a range of epsilon factors to find the best 4-sided approximation,
-    // making the detection more robust to lighting changes.
-    for (double epsilon_factor = 0.02; epsilon_factor <= 0.06;
+    double peri = cv::arcLength(hull, true);
+
+    // Try a range of epsilon factors to find the best 4-sided approximation of
+    // the HULL.
+    for (double epsilon_factor = 0.01; epsilon_factor <= 0.08;
          epsilon_factor += 0.01) {
       std::vector<cv::Point> approx;
-      cv::approxPolyDP(contour, approx, peri * epsilon_factor, true);
+      cv::approxPolyDP(hull, approx, peri * epsilon_factor, true);
 
-      // As per user request, save a debug image for every large contour found
       if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
         cv::Mat debug_img = bgr_image.clone();
+        // Draw original contour in blue
         cv::polylines(debug_img, std::vector<std::vector<cv::Point>>{contour},
                       true, cv::Scalar(255, 0, 0), 2);
+        // Draw the convex hull in green
+        cv::polylines(debug_img, std::vector<std::vector<cv::Point>>{hull},
+                      true, cv::Scalar(0, 255, 0), 2);
+        // Draw the final approximation in yellow
         cv::polylines(debug_img, std::vector<std::vector<cv::Point>>{approx},
                       true, cv::Scalar(0, 255, 255), 2);
 
@@ -4988,22 +4995,21 @@ bool find_board_quadrilateral_rough(const cv::Mat &bgr_image,
         cv::putText(debug_img, text, cv::Point(15, 25),
                     cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 0, 255), 2);
 
-        std::string filename =
-            "share/Debug/QuadCand_Idx" + std::to_string(contour_idx) + "_E" +
-            std::to_string(epsilon_factor).substr(2, 2) + // e.g. E02, E03
-            "_V" + std::to_string(approx.size()) + ".jpg";
+        std::string filename = "share/Debug/QuadCand_Idx" +
+                               std::to_string(contour_idx) + "_E" +
+                               std::to_string(epsilon_factor).substr(2, 2) +
+                               "_V" + std::to_string(approx.size()) + ".jpg";
         cv::imwrite(filename, debug_img);
       }
 
-      // We only want to SELECT a quadrilateral as the best candidate.
       if (approx.size() == 4) {
         if (area > max_candidate_area) {
           max_candidate_area = area;
           best_quad_candidate = approx;
           found_candidate = true;
         }
-        // Once we find a 4-sided approximation for this contour, we can stop
-        // trying other epsilons for it.
+        // Once we find a 4-sided approximation, we can stop trying other
+        // epsilons for this contour.
         break;
       }
     }
