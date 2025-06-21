@@ -4900,6 +4900,34 @@ static double angle(const cv::Point &pt1, const cv::Point &pt2,
 }
 
 /**
+ * @brief Performs a quick check to see if a given polygon likely contains a grid.
+ * This is a verification step to confirm a candidate shape is the Go board.
+ * @param edges The Canny edge map of the entire image.
+ * @param polygon The candidate polygon (quadrilateral) to check inside of.
+ * @return true if a significant number of lines are found within the polygon.
+ */
+static bool verify_grid_presence(const cv::Mat &edges,
+                                 const std::vector<cv::Point> &polygon) {
+  // Create a mask for the polygon area.
+  cv::Mat mask = cv::Mat::zeros(edges.size(), CV_8UC1);
+  cv::fillConvexPoly(mask, polygon, cv::Scalar(255));
+
+  // Isolate the edges that are only inside the polygon.
+  cv::Mat masked_edges;
+  cv::bitwise_and(edges, edges, masked_edges, mask);
+
+  // Use Hough Line Transform to detect lines within the masked region.
+  std::vector<cv::Vec4i> lines;
+  // We use relaxed parameters here. We don't need a perfect grid, just evidence
+  // of many lines.
+  cv::HoughLinesP(masked_edges, lines, 1, CV_PI / 180, 30, 30, 10);
+
+  // A simple heuristic: if we find more than 10 lines, it's very likely a grid.
+  const int MIN_LINES_FOR_GRID_CONFIDENCE = 10;
+  return lines.size() > MIN_LINES_FOR_GRID_CONFIDENCE;
+}
+
+/**
  * @brief Finds the most likely Go board in an image by searching for the
  * largest, most regular quadrilateral contour.
  *
@@ -4974,6 +5002,8 @@ bool find_board_quadrilateral_rough(const cv::Mat &bgr_image,
       std::vector<cv::Point> approx;
       cv::approxPolyDP(hull, approx, peri * epsilon_factor, true);
 
+      // Save a debug image for every large contour found, showing the new hull
+      // step.
       if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
         cv::Mat debug_img = bgr_image.clone();
         // Draw original contour in blue
@@ -5002,11 +5032,14 @@ bool find_board_quadrilateral_rough(const cv::Mat &bgr_image,
         cv::imwrite(filename, debug_img);
       }
 
+      // We only want to SELECT a quadrilateral that also contains a grid.
       if (approx.size() == 4) {
-        if (area > max_candidate_area) {
-          max_candidate_area = area;
-          best_quad_candidate = approx;
-          found_candidate = true;
+        if (verify_grid_presence(edges, approx)) {
+          if (area > max_candidate_area) {
+            max_candidate_area = area;
+            best_quad_candidate = approx;
+            found_candidate = true;
+          }
         }
         // Once we find a 4-sided approximation, we can stop trying other
         // epsilons for this contour.
