@@ -4886,3 +4886,150 @@ bool find_corner_candidates_by_minmax(
   }
   return final_result;
 }
+
+// --- Helper Function to calculate the angle between three points (for corner
+// angle) ---
+static double angle(const cv::Point &pt1, const cv::Point &pt2,
+                    const cv::Point &pt0) {
+  double dx1 = pt1.x - pt0.x;
+  double dy1 = pt1.y - pt0.y;
+  double dx2 = pt2.x - pt0.x;
+  double dy2 = pt2.y - pt0.y;
+  return (dx1 * dx2 + dy1 * dy2) /
+         sqrt((dx1 * dx1 + dy1 * dy1) * (dx2 * dx2 + dy2 * dy2) + 1e-10);
+}
+
+/**
+ * @brief Finds the most likely Go board in an image by searching for the
+ * largest, most regular quadrilateral contour.
+ *
+ * This function implements the user's "detect board directly" strategy. It
+ * preprocesses the image to find edges, finds all external contours, and then
+ * filters them to find the most plausible four-sided polygon that could
+ * represent the Go board. It now includes verification for regularity (angles)
+ * and saves debug images for each candidate.
+ *
+ * @param bgr_image The input BGR image.
+ * @param out_board_corners A vector that will be populated with the 4 corner
+ * points of the found quadrilateral.
+ * @return true if a plausible quadrilateral candidate is found, false
+ * otherwise.
+ */
+bool find_board_quadrilateral_rough(const cv::Mat &bgr_image,
+                                    std::vector<cv::Point> &out_board_corners) {
+  LOG_INFO << "Starting rough board detection via quadrilateral search.";
+  if (bgr_image.empty()) {
+    LOG_ERROR << "find_board_quadrilateral_rough: Input image is empty.";
+    return false;
+  }
+
+  // 1. Preprocessing for Shape Detection
+  cv::Mat gray, blurred, edges;
+  cv::cvtColor(bgr_image, gray, cv::COLOR_BGR2GRAY);
+  cv::GaussianBlur(gray, blurred, cv::Size(5, 5), 0);
+  cv::Canny(blurred, edges, 50, 150, 3);
+
+  cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(7, 7));
+  cv::morphologyEx(edges, edges, cv::MORPH_CLOSE, kernel);
+
+  // 2. Find All External Contours
+  std::vector<std::vector<cv::Point>> contours;
+  cv::findContours(edges, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+
+  if (contours.empty()) {
+    LOG_WARN << "No contours found in the image.";
+    return false;
+  }
+
+  // 3. Filter Contours to Find the Best Quadrilateral Candidate
+  double best_score =
+      -1.0; // Use a score instead of just area. Lower is better for this score.
+  std::vector<cv::Point> best_quad_candidate;
+  bool found_candidate = false;
+  int contour_idx = 0;
+
+  for (const auto &contour : contours) {
+    contour_idx++;
+    double area = cv::contourArea(contour);
+    if (area < (bgr_image.cols * bgr_image.rows *
+                0.05)) { // Must be at least 5% of the total image area.
+      continue;
+    }
+
+    std::vector<cv::Point> approx;
+    double peri = cv::arcLength(contour, true);
+    cv::approxPolyDP(contour, approx, peri * 0.04, true);
+
+    // --- MODIFIED DEBUG LOGIC ---
+    // As per user request, save a debug image for *every* large contour found,
+    // so we can analyze the output of approxPolyDP.
+    if (Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
+      cv::Mat debug_img = bgr_image.clone();
+      // Draw original contour in blue
+      cv::polylines(debug_img, std::vector<std::vector<cv::Point>>{contour},
+                    true, cv::Scalar(255, 0, 0), 2);
+      // Draw approximated polygon in yellow
+      cv::polylines(debug_img, std::vector<std::vector<cv::Point>>{approx},
+                    true, cv::Scalar(0, 255, 255), 2);
+
+      std::string text = "Idx: " + std::to_string(contour_idx) +
+                         " Area: " + std::to_string(static_cast<int>(area)) +
+                         " Vertices: " + std::to_string(approx.size());
+
+      // Only calculate and display a score if it's a valid quadrilateral.
+      if (approx.size() == 4 && cv::isContourConvex(approx)) {
+        double max_cosine = 0;
+        for (int j = 2; j < 5; ++j) {
+          double cosine =
+              std::abs(angle(approx[j % 4], approx[j - 2], approx[j - 1]));
+          max_cosine = std::max(max_cosine, cosine);
+        }
+        text += " Score: " + std::to_string(max_cosine).substr(0, 4);
+      }
+
+      cv::putText(debug_img, text, cv::Point(15, 25), cv::FONT_HERSHEY_SIMPLEX,
+                  0.7, cv::Scalar(0, 0, 255), 2);
+
+      // Make the filename more descriptive for analysis.
+      std::string filename = "share/Debug/QuadCand_Idx" +
+                             std::to_string(contour_idx) + "_V" +
+                             std::to_string(approx.size()) + ".jpg";
+      cv::imwrite(filename, debug_img);
+    }
+    // --- END MODIFIED DEBUG ---
+
+    // We still only want to SELECT a quadrilateral as the best candidate for
+    // the final output.
+    if (approx.size() == 4 && cv::isContourConvex(approx)) {
+      double max_cosine = 0;
+      for (int j = 2; j < 5; ++j) {
+        // Find cosine of angle between edges
+        double cosine =
+            std::abs(angle(approx[j % 4], approx[j - 2], approx[j - 1]));
+        max_cosine = std::max(max_cosine, cosine);
+      }
+      double score = max_cosine;
+
+      if (!found_candidate || score < best_score) {
+        // A simple threshold to reject extremely non-square shapes
+        if (score <
+            0.3) { // Cosine of ~72.5 degrees. Rejects very sharp angles.
+          best_score = score;
+          best_quad_candidate = approx;
+          found_candidate = true;
+        }
+      }
+    }
+  }
+
+  if (found_candidate) {
+    out_board_corners = best_quad_candidate;
+    LOG_INFO << "Found a plausible board quadrilateral with best score: "
+             << best_score;
+    return true;
+  }
+
+  LOG_WARN << "Could not find a suitable quadrilateral contour after checking "
+              "all candidates.";
+  return false;
+}

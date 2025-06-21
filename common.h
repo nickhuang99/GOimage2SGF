@@ -407,4 +407,8 @@ bool find_corner_candidates_by_minmax(
     const cv::Mat &raw_bgr_image,
     std::vector<cv::Point2f> &out_corner_candidates);
 
+// --- NEW Declaration for the Quadrilateral Board Detection Strategy ---
+bool find_board_quadrilateral_rough(const cv::Mat &bgr_image,
+                                    std::vector<cv::Point> &out_board_corners);
+
 #endif // UTILITY_H

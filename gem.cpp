@@ -161,10 +161,12 @@ void displayHelpMessage() {
   CONSOLE_OUT << "  --exp-detect-tl                   : Experimental TL "
                  "quadrant stone detection (older version)."
               << endl;
-  CONSOLE_OUT
-      << "  --minmax-corners                   : Experimental "
-         "Test corner detection using the 'divide and conquer' MinMax strategy."
-      << endl;
+  CONSOLE_OUT << "      --detect-board                : Test board detection "
+                 "using the quadrilateral contour strategy."
+              << endl; // <<< NEW
+  CONSOLE_OUT << "      --minmax-corners              : Test corner detection "
+                 "using the 'divide and conquer' MinMax strategy."
+              << endl;
   CONSOLE_OUT << "  --exp-find-blob                   : Experimental "
                  "blob finding with L-tolerance iteration."
               << endl;
@@ -2439,6 +2441,61 @@ void runMinMaxCornersWorkflow(const std::string &imagePath) {
   LOG_INFO << "--- MinMax Corner Detection Test Workflow Finished ---";
 }
 
+void runDetectBoardWorkflow(const std::string &imagePath) {
+  LOG_INFO << "--- Starting Rough Board Detection Test Workflow ---";
+  cv::Mat frame;
+
+  // 1. Get the source image
+  if (imagePath.empty()) {
+    LOG_INFO << "No --image specified. Capturing frame from webcam: "
+             << g_device_path;
+    if (!captureFrame(g_device_path, frame)) {
+      THROWGEMERROR("Board Detect Test FAILED: Could not capture frame.");
+    }
+  } else {
+    LOG_INFO << "Loading image from file: " << imagePath;
+    frame = cv::imread(imagePath);
+    if (frame.empty()) {
+      THROWGEMERROR("Board Detect Test FAILED: Failed to load image: " +
+                    imagePath);
+    }
+  }
+
+  // 2. Run the detection algorithm
+  std::vector<cv::Point> board_corners;
+  if (find_board_quadrilateral_rough(frame, board_corners)) {
+    LOG_INFO << "Board detection successful. Found 4 corners.";
+
+    // 3. Draw the results for visual verification
+    cv::Mat display_image = frame.clone();
+
+    // Draw the polygon
+    if (board_corners.size() == 4) {
+      for (size_t i = 0; i < board_corners.size(); ++i) {
+        cv::line(display_image, board_corners[i], board_corners[(i + 1) % 4],
+                 cv::Scalar(0, 255, 0), 3, cv::LINE_AA);
+      }
+    }
+    // Draw the corner points
+    for (const auto &corner : board_corners) {
+      cv::circle(display_image, corner, 8, cv::Scalar(0, 0, 255), -1);
+    }
+
+    cv::imshow("Rough Board Detection Result", display_image);
+    LOG_INFO << "Displaying results. Press any key to exit.";
+    cv::waitKey(0);
+    cv::destroyAllWindows();
+
+  } else {
+    LOG_ERROR
+        << "Board detection FAILED. Could not find a suitable quadrilateral.";
+    cv::imshow("Board Detection FAILED (No Quad Found)", frame);
+    cv::waitKey(0);
+    cv::destroyAllWindows();
+  }
+  LOG_INFO << "--- Rough Board Detection Test Workflow Finished ---";
+}
+
 int main(int argc, char *argv[]) {
   // Initialize logger with default path and level.
   // This allows logging from the very start, even during option parsing if
@@ -2477,12 +2534,13 @@ int main(int argc, char *argv[]) {
     bool run_test_robust_detection_workflow = false;
     bool runAutoCalibration = false;
     bool run_minmax_corners_workflow = false;
+    bool run_detect_board_workflow = false;
 
     int detect_stone_col = -1, detect_stone_row = -1; // NEW Args for -P
 
     auto isWorkflowSelected = [&]() -> bool {
-      return run_probe_devices || run_calibration ||
-             run_test_robust_detection_workflow ||
+      return run_probe_devices || run_calibration || runMinMaxCornersWorkflow ||
+             run_test_robust_detection_workflow || runDetectBoardWorkflow ||
              run_detect_stone_position_workflow || run_test_calibration ||
              run_study_mode || run_tournament_mode || runAutoCalibration ||
              run_experimental_detect_tl_workflow || !snapshot_output.empty() ||
@@ -2532,6 +2590,7 @@ int main(int argc, char *argv[]) {
         {"p1-circ-min", required_argument, nullptr, 0}, // New optional override
         {"p1-area-min", required_argument, nullptr, 0}, // New optional override
         {"minmax-corners", no_argument, nullptr, 0},
+        {"detect-board", no_argument, nullptr, 0},
         {nullptr, 0, nullptr, 0}};
 
     int c;
@@ -2787,8 +2846,11 @@ int main(int argc, char *argv[]) {
           LOG_INFO << "Robust corner detection mode ENABLED for subsequent "
                       "operations.";
         } else if (long_options[option_index].name ==
-                   std::string("minmax-corners")) { // <<< NEW HANDLER
+                   std::string("minmax-corners")) {
           run_minmax_corners_workflow = true;
+        } else if (strcmp(long_options[option_index].name, "detect-board") ==
+                   0) {
+          run_detect_board_workflow = true;
         }
         break;
       case 1: // --exp-find-blob
@@ -2897,6 +2959,8 @@ int main(int argc, char *argv[]) {
       runAutoCalibrationWorkflow(detect_stone_image_path_arg);
     } else if (run_minmax_corners_workflow) { // <<< NEW WORKFLOW CALL
       runMinMaxCornersWorkflow(detect_stone_image_path_arg);
+    } else if (run_detect_board_workflow) { // <<< NEW WORKFLOW CALL
+      runDetectBoardWorkflow(detect_stone_image_path_arg);
     } else if (g_run_exp_raw_pass1_workflow) {
       experimentalRawPass1Workflow();
     } else if (run_exp_find_blob_workflow) {
