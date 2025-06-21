@@ -4924,7 +4924,6 @@ bool find_board_quadrilateral_rough(const cv::Mat &bgr_image,
   }
 
   // --- Constants for clarity ---
-  const double APPROX_POLY_EPSILON_FACTOR = 0.04;
   const double MIN_CONTOUR_AREA_PERCENTAGE = 0.05;
 
   // External flag defined in gem.cpp to enable debug mode globally
@@ -4962,40 +4961,50 @@ bool find_board_quadrilateral_rough(const cv::Mat &bgr_image,
       continue;
     }
 
-    std::vector<cv::Point> approx;
     double peri = cv::arcLength(contour, true);
-    cv::approxPolyDP(contour, approx, peri * APPROX_POLY_EPSILON_FACTOR, true);
 
-    // As per user request, save a debug image for *every* large contour found,
-    // so we can analyze the output of approxPolyDP.
-    if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
-      cv::Mat debug_img = bgr_image.clone();
-      cv::polylines(debug_img, std::vector<std::vector<cv::Point>>{contour},
-                    true, cv::Scalar(255, 0, 0), 2);
-      cv::polylines(debug_img, std::vector<std::vector<cv::Point>>{approx},
-                    true, cv::Scalar(0, 255, 255), 2);
+    // --- NEW: Iterative Approximation ---
+    // Try a range of epsilon factors to find the best 4-sided approximation,
+    // making the detection more robust to lighting changes.
+    for (double epsilon_factor = 0.02; epsilon_factor <= 0.06;
+         epsilon_factor += 0.01) {
+      std::vector<cv::Point> approx;
+      cv::approxPolyDP(contour, approx, peri * epsilon_factor, true);
 
-      std::string text = "Idx: " + std::to_string(contour_idx) +
-                         " Area: " + std::to_string(static_cast<int>(area)) +
-                         " Vertices: " + std::to_string(approx.size());
+      // As per user request, save a debug image for every large contour found
+      if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
+        cv::Mat debug_img = bgr_image.clone();
+        cv::polylines(debug_img, std::vector<std::vector<cv::Point>>{contour},
+                      true, cv::Scalar(255, 0, 0), 2);
+        cv::polylines(debug_img, std::vector<std::vector<cv::Point>>{approx},
+                      true, cv::Scalar(0, 255, 255), 2);
 
-      cv::putText(debug_img, text, cv::Point(15, 25), cv::FONT_HERSHEY_SIMPLEX,
-                  0.7, cv::Scalar(0, 0, 255), 2);
+        std::string text =
+            "Idx: " + std::to_string(contour_idx) +
+            " Area: " + std::to_string(static_cast<int>(area)) +
+            " Vertices: " + std::to_string(approx.size()) +
+            " Epsilon: " + std::to_string(epsilon_factor).substr(0, 4);
 
-      std::string filename = "share/Debug/QuadCand_Idx" +
-                             std::to_string(contour_idx) + "_V" +
-                             std::to_string(approx.size()) + ".jpg";
-      cv::imwrite(filename, debug_img);
-    }
+        cv::putText(debug_img, text, cv::Point(15, 25),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 0, 255), 2);
 
-    // We only want to SELECT a quadrilateral as the best candidate.
-    // The best candidate is the one with the largest area that is also a
-    // 4-sided shape.
-    if (approx.size() == 4) {
-      if (area > max_candidate_area) {
-        max_candidate_area = area;
-        best_quad_candidate = approx;
-        found_candidate = true;
+        std::string filename =
+            "share/Debug/QuadCand_Idx" + std::to_string(contour_idx) + "_E" +
+            std::to_string(epsilon_factor).substr(2, 2) + // e.g. E02, E03
+            "_V" + std::to_string(approx.size()) + ".jpg";
+        cv::imwrite(filename, debug_img);
+      }
+
+      // We only want to SELECT a quadrilateral as the best candidate.
+      if (approx.size() == 4) {
+        if (area > max_candidate_area) {
+          max_candidate_area = area;
+          best_quad_candidate = approx;
+          found_candidate = true;
+        }
+        // Once we find a 4-sided approximation for this contour, we can stop
+        // trying other epsilons for it.
+        break;
       }
     }
   }
