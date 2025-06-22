@@ -5055,11 +5055,25 @@ bool find_board_quadrilateral_rough(const cv::Mat &bgr_image,
   for (const auto &candidate : candidate_quads) {
     double current_score =
         calculate_total_alignment_score(candidate, main_contour);
-
     if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
-      // Debug output for each candidate
+      cv::Mat debug_img = bgr_image.clone();
+      cv::polylines(debug_img,               // 目标图像
+                    main_contour,            // 多边形顶点集合
+                    true,                    // 是否闭合多边形
+                    cv::Scalar(0, 255, 0),   // 线条颜色（绿色）
+                    2,                       // 线条粗细
+                    cv::LINE_AA);            // 抗锯齿
+      cv::polylines(debug_img,               // 目标图像
+                    candidate,               // 多边形顶点集合
+                    true,                    // 是否闭合多边形
+                    cv::Scalar(255, 255, 0), // 线条颜色（绿色）
+                    2,                       // 线条粗细
+                    cv::LINE_AA);            // 抗锯齿
+      std::string name = "share/Debug/" +
+                         std::to_string(current_score).substr(0, 4) + "_" +
+                         std::to_string(best_score).substr(0, 4) + ".jpg";
+      cv::imwrite(name, debug_img);
     }
-
     if (current_score > best_score) {
       best_score = current_score;
       best_quad = candidate;

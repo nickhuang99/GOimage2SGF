@@ -2452,16 +2452,16 @@ void runDetectBoardWorkflow(const std::string &imagePath) {
     if (!captureFrame(g_device_path, frame)) {
       THROWGEMERROR("Board Detect Test FAILED: Could not capture frame.");
     }
+    if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
+      cv::imwrite("share/Debug/captured_image.jpg", frame);
+    }
   } else {
     LOG_INFO << "Loading image from file: " << imagePath;
     frame = cv::imread(imagePath);
     if (frame.empty()) {
       THROWGEMERROR("Board Detect Test FAILED: Failed to load image: " +
                     imagePath);
-    }
-    if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
-      cv::imwrite("share/Debug/captured_image.jpg", frame);
-    }
+    }    
   }
 
   // 2. Run the detection algorithm
