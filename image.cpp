@@ -4981,14 +4981,35 @@ static double calculate_total_alignment_score(
   }
   return total_aligned_length;
 }
+// Helper function to find the intersection of two lines defined by two points
+// each. Returns false if lines are parallel.
+static bool get_line_intersection(cv::Point p1, cv::Point p2, cv::Point p3,
+                                  cv::Point p4, cv::Point2f &intersection) {
+  float det = (float)(p1.x - p2.x) * (p3.y - p4.y) -
+              (float)(p1.y - p2.y) * (p3.x - p4.x);
+  if (std::abs(det) < 1e-6) {
+    return false;
+  }
+  float t =
+      (float)((p1.x - p3.x) * (p3.y - p4.y) - (p1.y - p3.y) * (p3.x - p4.x)) /
+      det;
+  float u =
+      -(float)((p1.x - p2.x) * (p1.y - p3.y) - (p1.y - p2.y) * (p1.x - p3.x)) /
+      det;
+
+  intersection.x = p1.x + t * (p2.x - p1.x);
+  intersection.y = p1.y + t * (p2.y - p1.y);
+  return true;
+}
 
 /**
- * @brief Finds the most likely Go board using a robust "Edge Alignment" scoring
- * method.
+ * @brief Finds the most likely Go board by identifying the four longest
+ * straight segments of its contour.
  *
- * This version implements the user's superior logic. It collects all possible
- * 4-sided approximations of a contour's hull, and then selects the one whose
- * edges are best "supported" by the original noisy contour.
+ * This function implements the user's superior strategy of abandoning the
+ * convex hull for noisy images. It finds the main board contour, simplifies it
+ * to find its dominant straight edges, selects the four longest of those edges,
+ * and calculates their intersections to find the corners.
  *
  * @param bgr_image The input BGR image.
  * @param out_board_corners A vector to be populated with the 4 corner points of
@@ -4997,8 +5018,7 @@ static double calculate_total_alignment_score(
  */
 bool find_board_quadrilateral_rough(const cv::Mat &bgr_image,
                                     std::vector<cv::Point> &out_board_corners) {
-  LOG_INFO
-      << "Starting rough board detection with True Edge Alignment scoring.";
+  LOG_INFO << "Starting board detection by finding longest contour segments.";
   extern bool bDebug;
 
   // 1. Preprocessing
@@ -5009,15 +5029,13 @@ bool find_board_quadrilateral_rough(const cv::Mat &bgr_image,
   cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(7, 7));
   cv::morphologyEx(edges, edges, cv::MORPH_CLOSE, kernel);
 
-  // 2. Find Contours
+  // 2. Find the largest contour
   std::vector<std::vector<cv::Point>> contours;
   cv::findContours(edges, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
   if (contours.empty()) {
     LOG_WARN << "No contours found.";
     return false;
   }
-
-  // 3. Find the largest contour in the image, which is our primary subject.
   double max_area = 0;
   std::vector<cv::Point> main_contour;
   for (const auto &contour : contours) {
@@ -5027,89 +5045,99 @@ bool find_board_quadrilateral_rough(const cv::Mat &bgr_image,
       main_contour = contour;
     }
   }
-
   if (main_contour.empty()) {
     LOG_WARN << "Could not identify a main contour.";
     return false;
   }
 
-  // 4. Generate all possible 4-sided candidate shapes from this contour
-  std::vector<std::vector<cv::Point>> candidate_quads;
+  // 3. Find the dominant straight segments of the main contour
+  std::vector<cv::Point> approx;
+  cv::approxPolyDP(main_contour, approx,
+                   cv::arcLength(main_contour, true) * 0.02, true);
+
+  if (approx.size() < 4) {
+    LOG_WARN << "Contour approximation has fewer than 4 vertices ("
+             << approx.size() << "). Cannot form a board.";
+    return false;
+  }
+
+  // 4. Create a list of all segments and sort them by length
+  struct Edge {
+    cv::Point p1, p2;
+    double length;
+  };
+  std::vector<Edge> edges_vec;
+  for (size_t i = 0; i < approx.size(); ++i) {
+    cv::Point p1 = approx[i];
+    cv::Point p2 = approx[(i + 1) % approx.size()];
+    edges_vec.push_back({p1, p2, cv::norm(p1 - p2)});
+  }
+  std::sort(edges_vec.begin(), edges_vec.end(),
+            [](const Edge &a, const Edge &b) { return a.length > b.length; });
+
+  // 5. Take the top 4 longest edges as our boundary candidates
+  std::vector<Edge> top_four_edges(edges_vec.begin(), edges_vec.begin() + 4);
+
+  // 6. Find the intersection points of these four lines to get the corners
+  std::vector<cv::Point2f> corners;
+  for (size_t i = 0; i < top_four_edges.size(); ++i) {
+    for (size_t j = i + 1; j < top_four_edges.size(); ++j) {
+      cv::Point2f intersection;
+      if (get_line_intersection(top_four_edges[i].p1, top_four_edges[i].p2,
+                                top_four_edges[j].p1, top_four_edges[j].p2,
+                                intersection)) {
+        corners.push_back(intersection);
+      }
+    }
+  }
+
+  if (corners.size() < 4) {
+    LOG_WARN
+        << "Could not form a quadrilateral from the 4 longest edges (found "
+        << corners.size() << " intersections). Lines might be parallel.";
+    return false;
+  }
+
+  // Find the convex hull of these intersection points to get a well-ordered
+  // 4-point polygon
+  std::vector<cv::Point> final_quad_int;
+  // We must convert Point2f to Point for convexHull
+  for (const auto &pt : corners) {
+    final_quad_int.push_back(pt);
+  }
   std::vector<cv::Point> hull;
-  cv::convexHull(main_contour, hull);
-  double peri = cv::arcLength(hull, true);
+  cv::convexHull(final_quad_int, hull);
 
-  for (double epsilon_factor = 0.01; epsilon_factor <= 0.1;
-       epsilon_factor += 0.01) {
-    std::vector<cv::Point> approx;
-    cv::approxPolyDP(hull, approx, peri * epsilon_factor, true);
-    if (approx.size() == 4) {
-      candidate_quads.push_back(approx);
-    }
-  }
-
-  if (candidate_quads.empty()) {
-    LOG_WARN << "No 4-sided approximations found for the largest contour.";
+  if (hull.size() != 4) {
+    LOG_WARN << "The intersection points of the longest edges did not form a "
+                "convex quadrilateral. Found "
+             << hull.size() << " hull vertices.";
     return false;
   }
 
-  // 5. Select the best candidate using the intelligent Edge Alignment Score
-  double best_score = -1.0;
-  std::vector<cv::Point> best_quad;
-
-  for (const auto &candidate : candidate_quads) {
-    double current_score =
-        calculate_total_alignment_score(candidate, main_contour);
-    if (current_score > best_score) {
-      best_score = current_score;
-      best_quad = candidate;
+  if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
+    cv::Mat debug_img = bgr_image.clone();
+    cv::polylines(debug_img, {main_contour}, true, {255, 0, 0},
+                  1); // Original contour in blue
+    // Draw the top 4 edges
+    for (const auto &edge : top_four_edges) {
+      cv::line(debug_img, edge.p1, edge.p2, {0, 255, 0}, 3,
+               cv::LINE_AA); // Longest edges in green
     }
-    if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
-      cv::Mat debug_img = bgr_image.clone();
-      cv::polylines(debug_img,               // 目标图像
-                    main_contour,            // 多边形顶点集合
-                    true,                    // 是否闭合多边形
-                    cv::Scalar(0, 255, 0),   // 线条颜色（绿色）
-                    2,                       // 线条粗细
-                    cv::LINE_AA);            // 抗锯齿
-      cv::polylines(debug_img,               // 目标图像
-                    candidate,               // 多边形顶点集合
-                    true,                    // 是否闭合多边形
-                    cv::Scalar(0, 255, 255), // 线条颜色（yellow）
-                    2,                       // 线条粗细
-                    cv::LINE_AA);            // 抗锯齿
-      std::string name = "share/Debug/" +
-                         std::to_string(current_score).substr(0, 4) + "_" +
-                         std::to_string(best_score).substr(0, 4) + ".jpg";
-      cv::imwrite(name, debug_img);
-    }
+    // Draw the final selected quad
+    cv::polylines(debug_img, {hull}, true, {0, 255, 255}, 3,
+                  cv::LINE_AA); // Final quad in yellow
+    cv::imwrite("share/Debug/LongestSegments_Result.jpg", debug_img);
   }
 
-  if (best_quad.empty()) {
-    LOG_WARN << "No best candidate could be selected.";
-    return false;
-  }
-
-  // 6. Final verification with grid presence
-  if (verify_grid_presence(edges, best_quad)) {
-    out_board_corners = best_quad;
-    LOG_INFO
-        << "Found and verified board quadrilateral with best alignment score: "
-        << best_score;
-
-    if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
-      cv::Mat debug_img = bgr_image.clone();
-      cv::polylines(debug_img, {main_contour}, true, {255, 0, 0}, 2); // Blue
-      cv::polylines(debug_img, {best_quad}, true, {0, 255, 255}, 3);  // Yellow
-      cv::putText(debug_img, "Final Selected Board", {15, 25},
-                  cv::FONT_HERSHEY_SIMPLEX, 0.7, {0, 255, 0}, 2);
-      cv::imwrite("share/Debug/FINAL_Board_Selection.jpg", debug_img);
-    }
-
+  // 7. Final Sanity Check
+  if (verify_grid_presence(edges, hull)) {
+    out_board_corners = hull;
+    LOG_INFO << "Successfully found board by longest segments and verified "
+                "grid presence.";
     return true;
   }
 
-  LOG_WARN
-      << "The best quadrilateral candidate failed the final grid verification.";
+  LOG_WARN << "Longest segments candidate failed the final grid verification.";
   return false;
 }
