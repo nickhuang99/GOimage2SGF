@@ -4,6 +4,7 @@
 #include <cassert>
 #include <cmath>
 #include <cstddef>
+#include <endian.h>
 #include <fstream>
 #include <iomanip>
 // #include <iostream> // Replaced by logger
@@ -5052,8 +5053,10 @@ bool find_board_quadrilateral_rough(const cv::Mat &bgr_image,
 
   // 3. Find the dominant straight segments of the main contour
   std::vector<cv::Point> approx;
+  // A slightly smaller epsilon can give more segments to choose from, which can
+  // be more robust.
   cv::approxPolyDP(main_contour, approx,
-                   cv::arcLength(main_contour, true) * 0.02, true);
+                   cv::arcLength(main_contour, true) * 0.015, true);
 
   if (approx.size() < 4) {
     LOG_WARN << "Contour approximation has fewer than 4 vertices ("
@@ -5077,11 +5080,20 @@ bool find_board_quadrilateral_rough(const cv::Mat &bgr_image,
 
   // 5. Take the top 4 longest edges as our boundary candidates
   std::vector<Edge> top_four_edges(edges_vec.begin(), edges_vec.begin() + 4);
-
+  if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
+    cv::Mat debug_img = bgr_image.clone();
+    std::vector<cv::Point> pts;
+    for (const auto &e : top_four_edges) {
+      pts.push_back(e.p1);
+      pts.push_back(e.p2);
+    }
+    cv::polylines(debug_img, pts, true, {0, 255, 255}, 2, cv::LINE_AA);
+    cv::imwrite("share/Debug/top_four_edge.jpg", debug_img);
+  }
   // 6. Find the intersection points of these four lines to get the corners
   std::vector<cv::Point2f> corners;
   for (size_t i = 0; i < top_four_edges.size(); ++i) {
-    for (size_t j = i + 1; j < top_four_edges.size(); ++j) {
+    for (size_t j = i + 1; j < top_four_edges.size(); ++j) {      
       cv::Point2f intersection;
       if (get_line_intersection(top_four_edges[i].p1, top_four_edges[i].p2,
                                 top_four_edges[j].p1, top_four_edges[j].p2,
@@ -5103,8 +5115,19 @@ bool find_board_quadrilateral_rough(const cv::Mat &bgr_image,
   std::vector<cv::Point> final_quad_int;
   // We must convert Point2f to Point for convexHull
   for (const auto &pt : corners) {
-    final_quad_int.push_back(pt);
+    // Clamp the intersection points to be within the image bounds before adding
+    if (pt.x >= 0 && pt.x < bgr_image.cols && pt.y >= 0 &&
+        pt.y < bgr_image.rows) {
+      final_quad_int.push_back(pt);
+    }
   }
+
+  if (final_quad_int.size() < 4) {
+    LOG_WARN << "Fewer than 4 valid intersection points remain after clamping "
+                "to image bounds.";
+    return false;
+  }
+
   std::vector<cv::Point> hull;
   cv::convexHull(final_quad_int, hull);
 
