@@ -4898,10 +4898,17 @@ static double angle(const cv::Point &pt1, const cv::Point &pt2,
   return (dx1 * dx2 + dy1 * dy2) /
          sqrt((dx1 * dx1 + dy1 * dy1) * (dx2 * dx2 + dy2 * dy2) + 1e-10);
 }
-
+// Calculates the angle of a line defined by two points in degrees [0, 180).
+static double get_line_angle_degrees(const cv::Point &p1, const cv::Point &p2) {
+  double angle = std::atan2(p2.y - p1.y, p2.x - p1.x) * 180.0 / CV_PI;
+  if (angle < 0)
+    angle += 180.0;
+  return angle;
+}
 /**
- * @brief Performs a quick check to see if a given polygon likely contains a grid.
- * This is a verification step to confirm a candidate shape is the Go board.
+ * @brief Performs a quick check to see if a given polygon likely contains a
+ * grid. This is a verification step to confirm a candidate shape is the Go
+ * board.
  * @param edges The Canny edge map of the entire image.
  * @param polygon The candidate polygon (quadrilateral) to check inside of.
  * @return true if a significant number of lines are found within the polygon.
@@ -4926,136 +4933,164 @@ static bool verify_grid_presence(const cv::Mat &edges,
   const int MIN_LINES_FOR_GRID_CONFIDENCE = 10;
   return lines.size() > MIN_LINES_FOR_GRID_CONFIDENCE;
 }
+static double calculate_total_alignment_score(
+    const std::vector<cv::Point> &candidate_quad,
+    const std::vector<cv::Point> &original_contour) {
+  double total_aligned_length = 0.0;
+  const double ANGLE_TOLERANCE_DEGREES = 10.0;
+  // Max distance a contour point can be from a candidate edge to be considered
+  // "aligned".
+  const double PROXIMITY_THRESHOLD = 5.0;
+
+  // For each edge of the candidate quadrilateral...
+  for (size_t i = 0; i < candidate_quad.size(); ++i) {
+    const cv::Point &p1 = candidate_quad[i];
+    const cv::Point &p2 = candidate_quad[(i + 1) % candidate_quad.size()];
+    double candidate_edge_angle = get_line_angle_degrees(p1, p2);
+
+    // ...find all segments of the *original* contour that are aligned with it.
+    for (size_t j = 0; j < original_contour.size(); ++j) {
+      const cv::Point &c1 = original_contour[j];
+      const cv::Point &c2 = original_contour[(j + 1) % original_contour.size()];
+
+      // --- CORRECTED LOGIC: Check both proximity and parallelism ---
+      // 1. Proximity Check: Is the midpoint of the contour segment close to the
+      // candidate edge?
+      cv::Point mid_point = (c1 + c2) / 2;
+      // Use pointPolygonTest to find the distance from the midpoint to the
+      // nearest edge of the quad. A negative value means the point is outside
+      // the polygon.
+      if (std::abs(cv::pointPolygonTest(candidate_quad, mid_point, true)) <
+          PROXIMITY_THRESHOLD) {
+
+        // 2. Parallelism Check: Do the edges have a similar angle?
+        double contour_segment_angle = get_line_angle_degrees(c1, c2);
+        double angle_diff =
+            std::abs(candidate_edge_angle - contour_segment_angle);
+        if (std::min(angle_diff, 180.0 - angle_diff) <
+            ANGLE_TOLERANCE_DEGREES) {
+          total_aligned_length += cv::norm(c1 - c2);
+        }
+      }
+    }
+  }
+  return total_aligned_length;
+}
 
 /**
- * @brief Finds the most likely Go board in an image by searching for the
- * largest, most regular quadrilateral contour.
+ * @brief Finds the most likely Go board using a robust "Edge Alignment" scoring
+ * method.
  *
- * This function implements the user's "detect board directly" strategy. It
- * preprocesses the image to find edges, finds all external contours, and then
- * filters them to find the most plausible four-sided polygon that could
- * represent the Go board. It now includes verification for regularity (angles)
- * and saves debug images for each candidate.
+ * This version implements the user's superior logic. It collects all possible
+ * 4-sided approximations of a contour's hull, and then selects the one whose
+ * edges are best "supported" by the original noisy contour.
  *
  * @param bgr_image The input BGR image.
- * @param out_board_corners A vector that will be populated with the 4 corner
- * points of the found quadrilateral.
- * @return true if a plausible quadrilateral candidate is found, false
- * otherwise.
+ * @param out_board_corners A vector to be populated with the 4 corner points of
+ * the found board.
+ * @return true if a plausible and verified board is found.
  */
 bool find_board_quadrilateral_rough(const cv::Mat &bgr_image,
                                     std::vector<cv::Point> &out_board_corners) {
-  LOG_INFO << "Starting rough board detection via quadrilateral search.";
-  if (bgr_image.empty()) {
-    LOG_ERROR << "find_board_quadrilateral_rough: Input image is empty.";
-    return false;
-  }
-
-  // --- Constants for clarity ---
-  const double MIN_CONTOUR_AREA_PERCENTAGE = 0.05;
-
-  // External flag defined in gem.cpp to enable debug mode globally
+  LOG_INFO
+      << "Starting rough board detection with True Edge Alignment scoring.";
   extern bool bDebug;
 
-  // 1. Preprocessing for Shape Detection
+  // 1. Preprocessing
   cv::Mat gray, blurred, edges;
   cv::cvtColor(bgr_image, gray, cv::COLOR_BGR2GRAY);
   cv::GaussianBlur(gray, blurred, cv::Size(5, 5), 0);
   cv::Canny(blurred, edges, 50, 150, 3);
-
   cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(7, 7));
   cv::morphologyEx(edges, edges, cv::MORPH_CLOSE, kernel);
 
-  // 2. Find All External Contours
+  // 2. Find Contours
   std::vector<std::vector<cv::Point>> contours;
   cv::findContours(edges, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
-
   if (contours.empty()) {
-    LOG_WARN << "No contours found in the image.";
+    LOG_WARN << "No contours found.";
     return false;
   }
 
-  // 3. Filter Contours to Find the Best Quadrilateral Candidate
-  double max_candidate_area = 0.0;
-  std::vector<cv::Point> best_quad_candidate;
-  bool found_candidate = false;
-  int contour_idx = 0;
-
+  // 3. Find the largest contour in the image, which is our primary subject.
+  double max_area = 0;
+  std::vector<cv::Point> main_contour;
   for (const auto &contour : contours) {
-    contour_idx++;
     double area = cv::contourArea(contour);
-    if (area <
-        (bgr_image.cols * bgr_image.rows * MIN_CONTOUR_AREA_PERCENTAGE)) {
-      continue;
-    }
-
-    // --- NEW: Use Convex Hull to simplify the noisy contour first ---
-    std::vector<cv::Point> hull;
-    cv::convexHull(contour, hull);
-
-    double peri = cv::arcLength(hull, true);
-
-    // Try a range of epsilon factors to find the best 4-sided approximation of
-    // the HULL.
-    for (double epsilon_factor = 0.01; epsilon_factor <= 0.08;
-         epsilon_factor += 0.01) {
-      std::vector<cv::Point> approx;
-      cv::approxPolyDP(hull, approx, peri * epsilon_factor, true);
-
-      // Save a debug image for every large contour found, showing the new hull
-      // step.
-      if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
-        cv::Mat debug_img = bgr_image.clone();
-        // Draw original contour in blue
-        cv::polylines(debug_img, std::vector<std::vector<cv::Point>>{contour},
-                      true, cv::Scalar(255, 0, 0), 2);
-        // Draw the convex hull in green
-        cv::polylines(debug_img, std::vector<std::vector<cv::Point>>{hull},
-                      true, cv::Scalar(0, 255, 0), 2);
-        // Draw the final approximation in yellow
-        cv::polylines(debug_img, std::vector<std::vector<cv::Point>>{approx},
-                      true, cv::Scalar(0, 255, 255), 2);
-
-        std::string text =
-            "Idx: " + std::to_string(contour_idx) +
-            " Area: " + std::to_string(static_cast<int>(area)) +
-            " Vertices: " + std::to_string(approx.size()) +
-            " Epsilon: " + std::to_string(epsilon_factor).substr(0, 4);
-
-        cv::putText(debug_img, text, cv::Point(15, 25),
-                    cv::FONT_HERSHEY_SIMPLEX, 0.7, cv::Scalar(0, 0, 255), 2);
-
-        std::string filename = "share/Debug/QuadCand_Idx" +
-                               std::to_string(contour_idx) + "_E" +
-                               std::to_string(epsilon_factor).substr(2, 2) +
-                               "_V" + std::to_string(approx.size()) + ".jpg";
-        cv::imwrite(filename, debug_img);
-      }
-
-      // We only want to SELECT a quadrilateral that also contains a grid.
-      if (approx.size() == 4) {
-        if (verify_grid_presence(edges, approx)) {
-          if (area > max_candidate_area) {
-            max_candidate_area = area;
-            best_quad_candidate = approx;
-            found_candidate = true;
-          }
-        }
-        // Once we find a 4-sided approximation, we can stop trying other
-        // epsilons for this contour.
-        break;
-      }
+    if (area > max_area) {
+      max_area = area;
+      main_contour = contour;
     }
   }
 
-  if (found_candidate) {
-    out_board_corners = best_quad_candidate;
-    LOG_INFO << "Found a plausible board quadrilateral with area: "
-             << max_candidate_area;
+  if (main_contour.empty()) {
+    LOG_WARN << "Could not identify a main contour.";
+    return false;
+  }
+
+  // 4. Generate all possible 4-sided candidate shapes from this contour
+  std::vector<std::vector<cv::Point>> candidate_quads;
+  std::vector<cv::Point> hull;
+  cv::convexHull(main_contour, hull);
+  double peri = cv::arcLength(hull, true);
+
+  for (double epsilon_factor = 0.01; epsilon_factor <= 0.1;
+       epsilon_factor += 0.01) {
+    std::vector<cv::Point> approx;
+    cv::approxPolyDP(hull, approx, peri * epsilon_factor, true);
+    if (approx.size() == 4) {
+      candidate_quads.push_back(approx);
+    }
+  }
+
+  if (candidate_quads.empty()) {
+    LOG_WARN << "No 4-sided approximations found for the largest contour.";
+    return false;
+  }
+
+  // 5. Select the best candidate using the intelligent Edge Alignment Score
+  double best_score = -1.0;
+  std::vector<cv::Point> best_quad;
+
+  for (const auto &candidate : candidate_quads) {
+    double current_score =
+        calculate_total_alignment_score(candidate, main_contour);
+
+    if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
+      // Debug output for each candidate
+    }
+
+    if (current_score > best_score) {
+      best_score = current_score;
+      best_quad = candidate;
+    }
+  }
+
+  if (best_quad.empty()) {
+    LOG_WARN << "No best candidate could be selected.";
+    return false;
+  }
+
+  // 6. Final verification with grid presence
+  if (verify_grid_presence(edges, best_quad)) {
+    out_board_corners = best_quad;
+    LOG_INFO
+        << "Found and verified board quadrilateral with best alignment score: "
+        << best_score;
+
+    if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
+      cv::Mat debug_img = bgr_image.clone();
+      cv::polylines(debug_img, {main_contour}, true, {255, 0, 0}, 2); // Blue
+      cv::polylines(debug_img, {best_quad}, true, {0, 255, 255}, 3);  // Yellow
+      cv::putText(debug_img, "Final Selected Board", {15, 25},
+                  cv::FONT_HERSHEY_SIMPLEX, 0.7, {0, 255, 0}, 2);
+      cv::imwrite("share/Debug/FINAL_Board_Selection.jpg", debug_img);
+    }
+
     return true;
   }
 
-  LOG_WARN << "Could not find a suitable quadrilateral contour after checking "
-              "all candidates.";
+  LOG_WARN
+      << "The best quadrilateral candidate failed the final grid verification.";
   return false;
 }
