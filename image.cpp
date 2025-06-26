@@ -5133,60 +5133,75 @@ bool find_board_quadrilateral_rough(
 
     cv::imwrite("share/Debug/02_All_Contours_Found.jpg", debug_img);
   }
+  const double MINIMUM_CONTOUR_AREA_FACTOR = 0.30;
+  const double minimum_contour_area =
+      bgr_image.cols * bgr_image.rows * MINIMUM_CONTOUR_AREA_FACTOR;
+  
+  for (auto const &contour : contours) {
+    double contour_area = cv::contourArea(contour);
+    if (contour_area < minimum_contour_area){
+      LOG_TRACE << "contour_area: " << contour_area << " < " << minimum_contour_area;
+      continue;
+    }      
 
-  // 3. Find the single largest contour.
-  std::vector<cv::Point> largest_contour = *std::max_element(
-      contours.begin(), contours.end(), [](const auto &a, const auto &b) {
-        return cv::contourArea(a) < cv::contourArea(b);
-      });
+    // 4. Use convexHull to smooth the noisy contour.
+    // const std::vector<cv::Point> &hull = largest_contour;
+    std::vector<cv::Point> hull;
+    cv::convexHull(contour, hull);
 
-  if (cv::contourArea(largest_contour) <
-      (bgr_image.cols * bgr_image.rows * 0.05)) {
-    LOG_WARN << "Largest contour found is too small. Likely not the board.";
-    return false;
-  }
+    
+    // 5. Iterate epsilon to find ALL 4-sided approximations.
+    for (double epsilon_factor = 0.01; epsilon_factor <= 0.08;
+         epsilon_factor += 0.005) {
+      std::vector<cv::Point> approx;
+      cv::approxPolyDP(hull, approx, cv::arcLength(hull, true) * epsilon_factor,
+                       true);
 
-  // 4. Use convexHull to smooth the noisy contour.
-  const std::vector<cv::Point> &hull = largest_contour;
-  // std::vector<cv::Point> hull;
-  // cv::convexHull(largest_contour, hull);
+      if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
+        cv::Mat debug_img = bgr_image.clone();
 
-  // 5. Iterate epsilon to find ALL 4-sided approximations.
-  for (double epsilon_factor = 0.01; epsilon_factor <= 0.08;
-       epsilon_factor += 0.005) {
-    std::vector<cv::Point> approx;
-    cv::approxPolyDP(hull, approx, cv::arcLength(hull, true) * epsilon_factor,
-                     true);
+        // Use a color cycle for different candidates
+        cv::Scalar color((static_cast<int>(contour_area) * 60) % 255, 255,
+                         (static_cast<int>(contour_area) * 100 + 50) % 255);
+        cv::polylines(debug_img, {contour}, true, color, 2);
+        cv::polylines(debug_img, {hull}, true, color, 2);
+        cv::putText(debug_img, std::to_string(contour_area).substr(0, 4),
+                    contour[0], cv::FONT_HERSHEY_SIMPLEX, 0.7, color, 2);
 
-    if (approx.size() == 4) {
-      // Check if this candidate is already in our list to avoid duplicates
-      bool is_duplicate = false;
-      for (const auto &existing_candidate : out_board_candidates) {
-        // *** FIX: Correct use of cv::norm to find distance between points ***
-        if (cv::norm(existing_candidate[0] - approx[0]) < 2 &&
-            cv::norm(existing_candidate[1] - approx[1]) < 2) {
-          is_duplicate = true;
-          break;
+        cv::imwrite("share/Debug/area_" +
+                        std::to_string(contour_area).substr(0, 4) + "_" +
+                        std::to_string(epsilon_factor) + ".jpg",
+                    debug_img);
+      }
+      if (approx.size() == 4) {
+        // Check if this candidate is already in our list to avoid duplicates
+        bool is_duplicate = false;
+        for (const auto &existing_candidate : out_board_candidates) {
+          // *** FIX: Correct use of cv::norm to find distance between points
+          // ***
+          if (cv::norm(existing_candidate[0] - approx[0]) < 2 &&
+              cv::norm(existing_candidate[1] - approx[1]) < 2) {
+            is_duplicate = true;
+            break;
+          }
+        }
+
+        if (!is_duplicate) {
+          out_board_candidates.push_back(approx);
+          LOG_DEBUG << "Found a unique 4-sided candidate with epsilon factor: "
+                    << epsilon_factor;
         }
       }
-
-      if (!is_duplicate) {
-        out_board_candidates.push_back(approx);
-        LOG_DEBUG << "Found a unique 4-sided candidate with epsilon factor: "
-                  << epsilon_factor;
-      }
-    }
+    }  
   }
 
   // 6. Final logging and debug image generation
   if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
-    cv::Mat debug_img = bgr_image.clone();
-    cv::polylines(debug_img, {largest_contour}, true, {255, 0, 0},
-                  1);                                       // Blue: Original
-    cv::polylines(debug_img, {hull}, true, {0, 255, 0}, 1); // Green: Hull
+    cv::Mat debug_img = bgr_image.clone();    
 
     int cand_idx = 0;
-    for (const auto &cand : out_board_candidates) {
+    for (const auto &cand : out_board_candidates) {  
+
       // Use a color cycle for different candidates
       cv::Scalar color((cand_idx * 60) % 255, 255, (cand_idx * 100 + 50) % 255);
       cv::polylines(debug_img, {cand}, true, color, 2);
@@ -5194,7 +5209,6 @@ bool find_board_quadrilateral_rough(
                   cv::FONT_HERSHEY_SIMPLEX, 0.7, color, 2);
       cand_idx++;
     }
-
     cv::imwrite("share/Debug/03_All_Candidates_Found.jpg", debug_img);
   }
 
