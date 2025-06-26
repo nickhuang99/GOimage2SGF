@@ -5133,23 +5133,23 @@ bool find_board_quadrilateral_rough(
 
     cv::imwrite("share/Debug/02_All_Contours_Found.jpg", debug_img);
   }
-  const double MINIMUM_CONTOUR_AREA_FACTOR = 0.30;
+  const double MINIMUM_CONTOUR_AREA_FACTOR = 0.10;
   const double minimum_contour_area =
       bgr_image.cols * bgr_image.rows * MINIMUM_CONTOUR_AREA_FACTOR;
-  
+
   for (auto const &contour : contours) {
     double contour_area = cv::contourArea(contour);
-    if (contour_area < minimum_contour_area){
-      LOG_TRACE << "contour_area: " << contour_area << " < " << minimum_contour_area;
+    if (contour_area < minimum_contour_area) {
+      LOG_TRACE << "contour_area: " << contour_area << " < "
+                << minimum_contour_area;
       continue;
-    }      
+    }
 
     // 4. Use convexHull to smooth the noisy contour.
     // const std::vector<cv::Point> &hull = largest_contour;
     std::vector<cv::Point> hull;
     cv::convexHull(contour, hull);
 
-    
     // 5. Iterate epsilon to find ALL 4-sided approximations.
     for (double epsilon_factor = 0.01; epsilon_factor <= 0.08;
          epsilon_factor += 0.005) {
@@ -5192,15 +5192,15 @@ bool find_board_quadrilateral_rough(
                     << epsilon_factor;
         }
       }
-    }  
+    }
   }
 
   // 6. Final logging and debug image generation
   if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
-    cv::Mat debug_img = bgr_image.clone();    
+    cv::Mat debug_img = bgr_image.clone();
 
     int cand_idx = 0;
-    for (const auto &cand : out_board_candidates) {  
+    for (const auto &cand : out_board_candidates) {
 
       // Use a color cycle for different candidates
       cv::Scalar color((cand_idx * 60) % 255, 255, (cand_idx * 100 + 50) % 255);
