@@ -4724,13 +4724,6 @@ static bool verify_pixel_is_in_cluster(const cv::Mat &l_channel_roi,
   return match_percentage >= required_match_percentage;
 }
 
-// Helper struct for the new angle-based clustering logic
-struct Edge {
-    cv::Point p1, p2;
-    double length;
-    double angle; // Angle in degrees [0, 180)
-};
-
 /**
  * @brief Utility 2: Verifies if a pixel is part of a coherent color cluster.
  * Implements the user's "neighbor counting" algorithm. It checks a circular
@@ -4895,6 +4888,75 @@ bool find_corner_candidates_by_minmax(
   return final_result;
 }
 
+bool findChessBoardCornersTest(const cv::Mat &bgr_image,
+                               std::vector<cv::Point> &out_board_corners) {
+  LOG_INFO << "Starting board detection using cv::findChessboardCorners.";
+  extern bool bDebug;
+
+  if (bgr_image.empty()) {
+    LOG_ERROR << "Input image is empty.";
+    return false;
+  }
+
+  // 1. Preprocessing - Create a clean, high-contrast binary image.
+  cv::Mat gray, blurred, thresh;
+  cv::cvtColor(bgr_image, gray, cv::COLOR_BGR2GRAY);
+  cv::GaussianBlur(gray, blurred, cv::Size(3, 3), 0);
+  // Adaptive thresholding is excellent for finding grids under uneven lighting.
+  cv::adaptiveThreshold(blurred, thresh, 255, cv::ADAPTIVE_THRESH_GAUSSIAN_C,
+                        cv::THRESH_BINARY_INV, 11, 2);
+
+  if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
+    cv::imwrite("share/Debug/Chessboard_Preprocessed.jpg", thresh);
+  }
+
+  // 2. Detect the grid of inner corners.
+  // A 19x19 Go board has an 18x18 grid of internal corners.
+  cv::Size patternSize(18, 18);
+  std::vector<cv::Point2f> found_corners;
+
+  bool found = cv::findChessboardCorners(thresh, patternSize, found_corners,
+                                         cv::CALIB_CB_ADAPTIVE_THRESH |
+                                             cv::CALIB_CB_NORMALIZE_IMAGE);
+
+  if (!found) {
+    LOG_WARN
+        << "cv::findChessboardCorners could not find the 18x18 grid pattern.";
+    return false;
+  }
+
+  LOG_INFO << "Successfully found the 18x18 inner grid pattern.";
+
+  // 3. Get the four outermost corners from the detected grid.
+  cv::Point2f tl = found_corners[0];
+  cv::Point2f tr = found_corners[18 - 1];
+  cv::Point2f bl = found_corners[18 * (18 - 1)];
+  cv::Point2f br = found_corners[18 * 18 - 1];
+
+  // 4. Extrapolate to find the physical corners of the board.
+  // We estimate the average grid spacing and extend one unit outwards.
+  cv::Point2f vec_h =
+      (tr - tl) / (18.0 - 1.0); // Vector for one horizontal grid space
+  cv::Point2f vec_v =
+      (bl - tl) / (18.0 - 1.0); // Vector for one vertical grid space
+
+  cv::Point final_tl = tl - vec_h - vec_v;
+  cv::Point final_tr = tr + vec_h - vec_v;
+  cv::Point final_bl = bl - vec_h + vec_v;
+  cv::Point final_br = br + vec_h + vec_v;
+
+  out_board_corners = {final_tl, final_tr, final_br, final_bl};
+
+  if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
+    cv::Mat debug_img = bgr_image.clone();
+    cv::drawChessboardCorners(debug_img, patternSize, found_corners, found);
+    cv::polylines(debug_img, {out_board_corners}, true, {0, 255, 0}, 2,
+                  cv::LINE_AA);
+    cv::imwrite("share/Debug/ChessboardCorners_Result.jpg", debug_img);
+  }
+
+  return true;
+}
 // --- Helper Function to calculate the angle between three points (for corner
 // angle) ---
 static double angle(const cv::Point &pt1, const cv::Point &pt2,
@@ -4989,8 +5051,15 @@ static double calculate_total_alignment_score(
   }
   return total_aligned_length;
 }
+
+// Helper struct for a line segment
+struct LineSegment {
+  cv::Point p1, p2;
+  double length;
+};
+
 // Helper function to find the intersection of two lines defined by two points
-// each. Returns false if lines are parallel.
+// each.
 static bool get_line_intersection(cv::Point p1, cv::Point p2, cv::Point p3,
                                   cv::Point p4, cv::Point2f &intersection) {
   float det = (float)(p1.x - p2.x) * (p3.y - p4.y) -
@@ -5001,211 +5070,141 @@ static bool get_line_intersection(cv::Point p1, cv::Point p2, cv::Point p3,
   float t =
       (float)((p1.x - p3.x) * (p3.y - p4.y) - (p1.y - p3.y) * (p3.x - p4.x)) /
       det;
-  float u =
-      -(float)((p1.x - p2.x) * (p1.y - p3.y) - (p1.y - p2.y) * (p1.x - p3.x)) /
-      det;
-
   intersection.x = p1.x + t * (p2.x - p1.x);
   intersection.y = p1.y + t * (p2.y - p1.y);
   return true;
 }
 
 /**
- * @brief Finds the most likely Go board by clustering contour segments by
- * angle.
+ * @brief Finds the most likely Go board by finding the largest quadrilateral
+ * that contains a grid.
  *
- * This function implements the user's superior strategy of abandoning simple
- * length-based sorting. It simplifies the main contour, clusters the resulting
- * segments by angle to find the two dominant grid orientations, and then finds
- * the outermost edges from each cluster to define the board's boundaries. This
- * is highly robust against noise and fragmented edges.
+ * This function implements the user's robust two-pass strategy.
+ * Pass 1: Find candidate quadrilateral shapes using contour analysis.
+ * Pass 2: Verify each candidate by checking for a grid pattern inside it.
  *
  * @param bgr_image The input BGR image.
  * @param out_board_corners A vector to be populated with the 4 corner points of
  * the found board.
  * @return true if a plausible and verified board is found.
  */
-bool find_board_quadrilateral_rough(const cv::Mat &bgr_image,
-                                    std::vector<cv::Point> &out_board_corners) {
-  LOG_INFO << "Starting board detection using Angle Clustering strategy.";
+bool find_board_quadrilateral_rough(
+    const cv::Mat &bgr_image,
+    std::vector<std::vector<cv::Point>> &out_board_candidates) {
+  LOG_INFO << "Starting board detection: Collecting ALL 4-sided candidates.";
   extern bool bDebug;
 
-  // 1. Preprocessing
-  cv::Mat gray, blurred, edges;
-  cv::cvtColor(bgr_image, gray, cv::COLOR_BGR2GRAY);
-  cv::GaussianBlur(gray, blurred, cv::Size(5, 5), 0);
-  cv::Canny(blurred, edges, 50, 150, 3);
-  cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(7, 7));
-  cv::morphologyEx(edges, edges, cv::MORPH_CLOSE, kernel);
-
-  // 2. Find the largest contour
-  std::vector<std::vector<cv::Point>> contours;
-  cv::findContours(edges, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
-  if (contours.empty()) {
-    LOG_WARN << "No contours found.";
+  out_board_candidates.clear();
+  if (bgr_image.empty()) {
+    LOG_ERROR << "Input image is empty.";
     return false;
   }
 
-  std::vector<cv::Point> main_contour = *std::max_element(
+  // 1. Preprocessing
+  cv::Mat gray, blurred, thresh;
+  cv::cvtColor(bgr_image, gray, cv::COLOR_BGR2GRAY);
+  cv::GaussianBlur(gray, blurred, cv::Size(5, 5), 0);
+  cv::adaptiveThreshold(blurred, thresh, 255, cv::ADAPTIVE_THRESH_GAUSSIAN_C,
+                        cv::THRESH_BINARY_INV, 15, 4);
+
+  // 2. Find All Contours
+  std::vector<std::vector<cv::Point>> contours;
+  cv::findContours(thresh, contours, cv::RETR_EXTERNAL,
+                   cv::CHAIN_APPROX_SIMPLE);
+
+  if (contours.empty()) {
+    LOG_WARN << "No contours found on the adaptive threshold image.";
+    return false;
+  }
+  LOG_DEBUG << "total contour number: " << contours.size();
+  if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
+    cv::Mat debug_img = bgr_image.clone();
+
+    int cand_idx = 0;
+    for (const auto &cand : contours) {
+      // Use a color cycle for different candidates
+      cv::Scalar color((cand_idx * 60) % 255, 255, (cand_idx * 100 + 50) % 255);
+      cv::drawContours(debug_img, std::vector<std::vector<cv::Point>>{cand}, -1,
+                       color, 1);
+      cv::putText(debug_img, std::to_string(cand_idx), cand[0],
+                  cv::FONT_HERSHEY_SIMPLEX, 0.7, color, 2);
+      cand_idx++;
+    }
+
+    cv::imwrite("share/Debug/02_All_Contours_Found.jpg", debug_img);
+  }
+
+  // 3. Find the single largest contour.
+  std::vector<cv::Point> largest_contour = *std::max_element(
       contours.begin(), contours.end(), [](const auto &a, const auto &b) {
         return cv::contourArea(a) < cv::contourArea(b);
       });
 
-  if (main_contour.empty()) {
-    LOG_WARN << "Could not identify a main contour.";
+  if (cv::contourArea(largest_contour) <
+      (bgr_image.cols * bgr_image.rows * 0.05)) {
+    LOG_WARN << "Largest contour found is too small. Likely not the board.";
     return false;
   }
 
-  // 3. Find the dominant straight segments of the main contour
-  std::vector<cv::Point> approx;
-  cv::approxPolyDP(main_contour, approx,
-                   cv::arcLength(main_contour, true) * 0.01,
-                   true); // Use a smaller epsilon to get more segments
+  // 4. Use convexHull to smooth the noisy contour.
+  const std::vector<cv::Point> &hull = largest_contour;
+  // std::vector<cv::Point> hull;
+  // cv::convexHull(largest_contour, hull);
 
-  if (approx.size() < 4) {
-    LOG_WARN << "Contour approximation has fewer than 4 vertices ("
-             << approx.size() << ").";
-    return false;
-  }
+  // 5. Iterate epsilon to find ALL 4-sided approximations.
+  for (double epsilon_factor = 0.01; epsilon_factor <= 0.08;
+       epsilon_factor += 0.005) {
+    std::vector<cv::Point> approx;
+    cv::approxPolyDP(hull, approx, cv::arcLength(hull, true) * epsilon_factor,
+                     true);
 
-  // 4. Create a list of all segments with their angles
-  std::vector<Edge> all_edges;
-  for (size_t i = 0; i < approx.size(); ++i) {
-    cv::Point p1 = approx[i];
-    cv::Point p2 = approx[(i + 1) % approx.size()];
-    double angle = std::atan2(p2.y - p1.y, p2.x - p1.x) * 180.0 / CV_PI;
-    if (angle < 0)
-      angle += 180.0;
-    all_edges.push_back({p1, p2, cv::norm(p1 - p2), angle});
-  }
-
-  // 5. Cluster these edges into two groups by angle
-  if (all_edges.empty()) {
-    LOG_WARN << "No edges to cluster.";
-    return false;
-  }
-
-  std::vector<Edge> cluster1, cluster2;
-  cluster1.push_back(all_edges[0]);
-  double angle1 = all_edges[0].angle;
-  double angle2 = -1.0;
-  const double ANGLE_TOLERANCE =
-      20.0; // Cluster angles within 20 degrees of each other
-
-  for (size_t i = 1; i < all_edges.size(); ++i) {
-    double current_angle = all_edges[i].angle;
-    if (std::min(std::abs(current_angle - angle1),
-                 180.0 - std::abs(current_angle - angle1)) < ANGLE_TOLERANCE) {
-      cluster1.push_back(all_edges[i]);
-    } else {
-      if (angle2 < 0) { // This is the first edge for the second cluster
-        angle2 = current_angle;
-      }
-      if (std::min(std::abs(current_angle - angle2),
-                   180.0 - std::abs(current_angle - angle2)) <
-          ANGLE_TOLERANCE) {
-        cluster2.push_back(all_edges[i]);
-      }
-      // Ignore edges that don't fit either cluster
-    }
-  }
-
-  if (cluster1.size() < 2 || cluster2.size() < 2) {
-    LOG_WARN
-        << "Could not form two distinct clusters of at least 2 lines each. C1:"
-        << cluster1.size() << ", C2:" << cluster2.size();
-    return false;
-  }
-
-  // 6. From each cluster, find the two outermost lines
-  auto find_outermost_lines =
-      [](const std::vector<Edge> &cluster) -> std::pair<Edge, Edge> {
-    // Project center of each edge onto a line perpendicular to the cluster's
-    // average angle
-    double avg_angle_rad = 0;
-    for (const auto &edge : cluster)
-      avg_angle_rad += edge.angle * CV_PI / 180.0;
-    avg_angle_rad /= cluster.size();
-
-    cv::Point2f perp_axis(std::cos(avg_angle_rad + CV_PI / 2.0),
-                          std::sin(avg_angle_rad + CV_PI / 2.0));
-
-    double min_proj = DBL_MAX, max_proj = -DBL_MAX;
-    Edge min_edge, max_edge;
-
-    for (const auto &edge : cluster) {
-      cv::Point2f center = (edge.p1 + edge.p2) * 0.5f;
-      double proj = center.x * perp_axis.x + center.y * perp_axis.y;
-      if (proj < min_proj) {
-        min_proj = proj;
-        min_edge = edge;
-      }
-      if (proj > max_proj) {
-        max_proj = proj;
-        max_edge = edge;
-      }
-    }
-    return {min_edge, max_edge};
-  };
-
-  auto pair1 = find_outermost_lines(cluster1);
-  auto pair2 = find_outermost_lines(cluster2);
-
-  std::vector<Edge> boundary_edges = {pair1.first, pair1.second, pair2.first,
-                                      pair2.second};
-
-  // 7. Calculate the intersections of these four boundary lines
-  std::vector<cv::Point> final_quad_int;
-  for (size_t i = 0; i < 2; ++i) {
-    for (size_t j = 2; j < 4; ++j) {
-      cv::Point2f intersection;
-      if (get_line_intersection(boundary_edges[i].p1, boundary_edges[i].p2,
-                                boundary_edges[j].p1, boundary_edges[j].p2,
-                                intersection)) {
-        if (intersection.x >= 0 && intersection.x < bgr_image.cols &&
-            intersection.y >= 0 && intersection.y < bgr_image.rows) {
-          final_quad_int.push_back(intersection);
+    if (approx.size() == 4) {
+      // Check if this candidate is already in our list to avoid duplicates
+      bool is_duplicate = false;
+      for (const auto &existing_candidate : out_board_candidates) {
+        // *** FIX: Correct use of cv::norm to find distance between points ***
+        if (cv::norm(existing_candidate[0] - approx[0]) < 2 &&
+            cv::norm(existing_candidate[1] - approx[1]) < 2) {
+          is_duplicate = true;
+          break;
         }
       }
+
+      if (!is_duplicate) {
+        out_board_candidates.push_back(approx);
+        LOG_DEBUG << "Found a unique 4-sided candidate with epsilon factor: "
+                  << epsilon_factor;
+      }
     }
   }
 
-  if (final_quad_int.size() != 4) {
-    LOG_WARN << "The 4 boundary lines did not form a valid quadrilateral. "
-                "Intersections found: "
-             << final_quad_int.size();
-    return false;
-  }
-
-  std::vector<cv::Point> hull;
-  cv::convexHull(final_quad_int, hull);
-  if (hull.size() != 4) {
-    LOG_WARN << "Intersection points did not form a convex quadrilateral.";
-    return false;
-  }
-
+  // 6. Final logging and debug image generation
   if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
     cv::Mat debug_img = bgr_image.clone();
-    cv::polylines(debug_img, {main_contour}, true, {255, 0, 0}, 1);
-    for (const auto &edge : cluster1)
-      cv::line(debug_img, edge.p1, edge.p2, {0, 255, 0},
-               2); // Cluster 1 in Green
-    for (const auto &edge : cluster2)
-      cv::line(debug_img, edge.p1, edge.p2, {255, 0, 255},
-               2); // Cluster 2 in Magenta
-    cv::polylines(debug_img, {hull}, true, {0, 255, 255}, 3,
-                  cv::LINE_AA); // Final quad in Yellow
-    cv::imwrite("share/Debug/AngleClustering_Result.jpg", debug_img);
+    cv::polylines(debug_img, {largest_contour}, true, {255, 0, 0},
+                  1);                                       // Blue: Original
+    cv::polylines(debug_img, {hull}, true, {0, 255, 0}, 1); // Green: Hull
+
+    int cand_idx = 0;
+    for (const auto &cand : out_board_candidates) {
+      // Use a color cycle for different candidates
+      cv::Scalar color((cand_idx * 60) % 255, 255, (cand_idx * 100 + 50) % 255);
+      cv::polylines(debug_img, {cand}, true, color, 2);
+      cv::putText(debug_img, std::to_string(cand_idx), cand[0],
+                  cv::FONT_HERSHEY_SIMPLEX, 0.7, color, 2);
+      cand_idx++;
+    }
+
+    cv::imwrite("share/Debug/03_All_Candidates_Found.jpg", debug_img);
   }
 
-  // 8. Final Sanity Check
-  if (verify_grid_presence(edges, hull)) {
-    out_board_corners = hull;
-    LOG_INFO << "Successfully found board by angle clustering and verified "
-                "grid presence.";
-    return true;
+  if (out_board_candidates.empty()) {
+    LOG_WARN
+        << "Could not find any 4-sided approximation for the largest contour.";
+    return false;
   }
 
-  LOG_WARN << "Angle clustering candidate failed the final grid verification.";
-  return false;
+  LOG_INFO << "Found " << out_board_candidates.size()
+           << " potential board candidates.";
+  return true;
 }
