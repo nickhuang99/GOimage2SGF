@@ -414,4 +414,9 @@ bool find_board_quadrilateral_rough(
 
 bool findChessBoardCornersTest(const cv::Mat &image,
                                std::vector<cv::Point> &out_board_corners);
+bool refine_board_corners_pass2(
+    const cv::Mat &bgr_image,
+    const std::vector<std::vector<cv::Point>> &p1_candidates,
+    std::vector<cv::Point> &out_refined_corners);
+
 #endif // UTILITY_H

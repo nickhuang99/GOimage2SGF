@@ -2441,79 +2441,153 @@ void runMinMaxCornersWorkflow(const std::string &imagePath) {
   LOG_INFO << "--- MinMax Corner Detection Test Workflow Finished ---";
 }
 
-void runDetectBoardWorkflow(const std::string &imagePath) {
-  LOG_INFO << "--- Starting Rough Board Detection Test Workflow ---";
-  cv::Mat frame;
 
-  // 1. Get the source image
-  if (imagePath.empty()) {
-    LOG_INFO << "No --image specified. Capturing frame from webcam: "
-             << g_device_path;
-    if (!captureFrame(g_device_path, frame)) {
-      THROWGEMERROR("Board Detect Test FAILED: Could not capture frame.");
-    }
-    // Save captured frame for repeatable testing
-    auto now = std::chrono::system_clock::now();
-    auto in_time_t = std::chrono::system_clock::to_time_t(now);
-    std::stringstream ss;
-    ss << std::put_time(std::localtime(&in_time_t), "%Y-%m-%d_%H-%M-%S");
-    std::string timestamp = ss.str();
-    std::string saved_path = "share/capture_" + timestamp + ".jpg";
-    if (cv::imwrite(saved_path, frame)) {
-      LOG_INFO << "Saved captured frame for testing to: " << saved_path;
-    }
-  } else {
-    LOG_INFO << "Loading image from file: " << imagePath;
-    frame = cv::imread(imagePath);
-    if (frame.empty()) {
-      THROWGEMERROR("Board Detect Test FAILED: Failed to load image: " +
-                    imagePath);
-    }
-  }
 
-  // 2. Run the detection algorithm to get ALL candidates
-  std::vector<std::vector<cv::Point>> board_candidates;
-  if (find_board_quadrilateral_rough(frame, board_candidates)) {
-    LOG_INFO << "Board detection successful. Found " << board_candidates.size()
-             << " candidate(s).";
+/* =========================================================================
+ *
+ * gem.cpp
+ * * =========================================================================
+ * (Showing only the updated workflow function)
+ */
 
-    // 3. Draw ALL candidates for visual verification
-    cv::Mat display_image = frame.clone();
+void runDetectBoardWorkflow(const std::string& imagePath) {
+    LOG_INFO << "--- Starting Board Detection Workflow (Pass 1 + Pass 2) ---";
+    cv::Mat frame;
 
-    int cand_idx = 0;
-    for (const auto &corners : board_candidates) {
-      // Cycle through colors for different candidates
-      cv::Scalar color((cand_idx * 80 + 50) % 255, (cand_idx * 50 + 150) % 255,
-                       (cand_idx * 120) % 255);
-      if (corners.size() == 4) {
-        for (size_t i = 0; i < corners.size(); ++i) {
-          cv::line(display_image, corners[i], corners[(i + 1) % 4], color, 2,
-                   cv::LINE_AA);
+    // 1. Get the source image
+    if (imagePath.empty()) {
+        LOG_INFO << "No --image specified. Capturing frame from webcam: " << g_device_path;
+        if (!captureFrame(g_device_path, frame)) {
+            THROWGEMERROR("Test FAILED: Could not capture frame.");
         }
-      }
-      // Label each candidate
-      if (!corners.empty()) {
-        cv::putText(display_image, "Cand " + std::to_string(cand_idx),
-                    corners[0] + cv::Point(10, -5), cv::FONT_HERSHEY_SIMPLEX,
-                    0.6, color, 2);
-      }
-      cand_idx++;
+    } else {
+        LOG_INFO << "Loading image from file: " << imagePath;
+        frame = cv::imread(imagePath);
+        if (frame.empty()) {
+            THROWGEMERROR("Test FAILED: Failed to load image: " + imagePath);
+        }    
     }
 
-    cv::imshow("Rough Board Detection Result (All Candidates)", display_image);
-    LOG_INFO << "Displaying results. Press any key to exit.";
-    cv::waitKey(0);
-    cv::destroyAllWindows();
+    // --- PASS 1 ---
+    std::vector<std::vector<cv::Point>> p1_candidates;
+    if (!find_board_quadrilateral_rough(frame, p1_candidates)) {
+        LOG_ERROR << "PASS 1 FAILED. Could not find any rough board candidates.";
+        cv::imshow("PASS 1 FAILED", frame);
+        cv::waitKey(0);
+        cv::destroyAllWindows();
+        return;
+    }
 
-  } else {
-    LOG_ERROR
-        << "Board detection FAILED. Could not find any suitable quadrilateral.";
-    cv::imshow("Board Detection FAILED (No Quads Found)", frame);
-    cv::waitKey(0);
-    cv::destroyAllWindows();
-  }
-  LOG_INFO << "--- Rough Board Detection Test Workflow Finished ---";
+    // --- PASS 2 ---
+    std::vector<cv::Point> refined_corners;
+    if(refine_board_corners_pass2(frame, p1_candidates, refined_corners)) {
+        LOG_INFO << "PASS 2 SUCCESS. Board detected and corners refined.";
+        
+        cv::Mat display_image = frame.clone();
+        cv::polylines(display_image, {refined_corners}, true, {0, 255, 0}, 2, cv::LINE_AA);
+        for(const auto& p : refined_corners) {
+            cv::circle(display_image, p, 7, {0,0,255}, -1);
+        }
+        cv::putText(display_image, "Pass 2 Refined Result", {15,25}, cv::FONT_HERSHEY_SIMPLEX, 0.7, {0,255,0}, 2);
+        
+        cv::imshow("Final Board Detection Result", display_image);
+        LOG_INFO << "Displaying results. Press any key to exit.";
+        cv::waitKey(0);
+        cv::destroyAllWindows();
+
+    } else {
+      LOG_ERROR << "PASS 2 FAILED. Could not refine candidates from Pass 1.";
+      // Show the results from Pass 1 if Pass 2 fails
+      cv::Mat display_image = frame.clone();
+      int idx = 0;
+      for (const auto &cand : p1_candidates) {
+        cv::polylines(display_image, {cand}, true, {(idx * 80) % 255*1.0f, 200, 255},
+                      1);
+        idx++;
+      }
+      cv::putText(display_image, "PASS 2 FAILED. Showing P1 Candidates.",
+                  {15, 25}, cv::FONT_HERSHEY_SIMPLEX, 0.7, {0, 0, 255}, 2);
+      cv::imshow("Board Detection FAILED (Pass 2)", display_image);
+      cv::waitKey(0);
+      cv::destroyAllWindows();
+    }
+    LOG_INFO << "--- Board Detection Workflow Finished ---";
 }
+
+
+// void runDetectBoardWorkflow(const std::string &imagePath) {
+//   LOG_INFO << "--- Starting Rough Board Detection Test Workflow ---";
+//   cv::Mat frame;
+
+//   // 1. Get the source image
+//   if (imagePath.empty()) {
+//     LOG_INFO << "No --image specified. Capturing frame from webcam: "
+//              << g_device_path;
+//     if (!captureFrame(g_device_path, frame)) {
+//       THROWGEMERROR("Board Detect Test FAILED: Could not capture frame.");
+//     }
+//     // Save captured frame for repeatable testing
+//     auto now = std::chrono::system_clock::now();
+//     auto in_time_t = std::chrono::system_clock::to_time_t(now);
+//     std::stringstream ss;
+//     ss << std::put_time(std::localtime(&in_time_t), "%Y-%m-%d_%H-%M-%S");
+//     std::string timestamp = ss.str();
+//     std::string saved_path = "share/capture_" + timestamp + ".jpg";
+//     if (cv::imwrite(saved_path, frame)) {
+//       LOG_INFO << "Saved captured frame for testing to: " << saved_path;
+//     }
+//   } else {
+//     LOG_INFO << "Loading image from file: " << imagePath;
+//     frame = cv::imread(imagePath);
+//     if (frame.empty()) {
+//       THROWGEMERROR("Board Detect Test FAILED: Failed to load image: " +
+//                     imagePath);
+//     }
+//   }
+
+//   // 2. Run the detection algorithm to get ALL candidates
+//   std::vector<std::vector<cv::Point>> board_candidates;
+//   if (find_board_quadrilateral_rough(frame, board_candidates)) {
+//     LOG_INFO << "Board detection successful. Found " << board_candidates.size()
+//              << " candidate(s).";
+
+//     // 3. Draw ALL candidates for visual verification
+//     cv::Mat display_image = frame.clone();
+
+//     int cand_idx = 0;
+//     for (const auto &corners : board_candidates) {
+//       // Cycle through colors for different candidates
+//       cv::Scalar color((cand_idx * 80 + 50) % 255, (cand_idx * 50 + 150) % 255,
+//                        (cand_idx * 120) % 255);
+//       if (corners.size() == 4) {
+//         for (size_t i = 0; i < corners.size(); ++i) {
+//           cv::line(display_image, corners[i], corners[(i + 1) % 4], color, 2,
+//                    cv::LINE_AA);
+//         }
+//       }
+//       // Label each candidate
+//       if (!corners.empty()) {
+//         cv::putText(display_image, "Cand " + std::to_string(cand_idx),
+//                     corners[0] + cv::Point(10, -5), cv::FONT_HERSHEY_SIMPLEX,
+//                     0.6, color, 2);
+//       }
+//       cand_idx++;
+//     }
+
+//     cv::imshow("Rough Board Detection Result (All Candidates)", display_image);
+//     LOG_INFO << "Displaying results. Press any key to exit.";
+//     cv::waitKey(0);
+//     cv::destroyAllWindows();
+
+//   } else {
+//     LOG_ERROR
+//         << "Board detection FAILED. Could not find any suitable quadrilateral.";
+//     cv::imshow("Board Detection FAILED (No Quads Found)", frame);
+//     cv::waitKey(0);
+//     cv::destroyAllWindows();
+//   }
+//   LOG_INFO << "--- Rough Board Detection Test Workflow Finished ---";
+// }
 
 int main(int argc, char *argv[]) {
   // Initialize logger with default path and level.
