@@ -5223,7 +5223,6 @@ bool find_board_quadrilateral_rough(
   return true;
 }
 
-
 /**
  * @brief Takes a list of 18x18 interior grid points and extrapolates the four
  * outer corners.
@@ -5255,245 +5254,288 @@ extrapolate_corners_from_grid(const std::vector<cv::Point2f> &grid_points) {
   return {tl_outer, tr_outer, br_outer, bl_outer};
 }
 
-
 /**
- * @brief Calculates a "grid regularity" score for a perspective-corrected board image.
- * A higher score indicates a more uniform and complete grid.
+ * @brief Calculates a "grid regularity" score for a perspective-corrected board
+ * image. A higher score indicates a more uniform and complete grid.
  *
- * @param corrected_image The top-down, perspective-corrected image of a board candidate.
+ * @param corrected_image The top-down, perspective-corrected image of a board
+ * candidate.
  * @return A score representing the quality of the detected grid.
  */
-static double calculate_grid_regularity_score(const cv::Mat& corrected_image, const std::string& debug_candidate_name) {
-    if (corrected_image.empty()) return 0.0;
+static double
+calculate_grid_regularity_score(const cv::Mat &corrected_image,
+                                const std::string &debug_candidate_name) {
+  if (corrected_image.empty())
+    return 0.0;
 
-    extern bool bDebug;
-    cv::Mat gray, edges;
-    cv::cvtColor(corrected_image, gray, cv::COLOR_BGR2GRAY);
-    cv::adaptiveThreshold(gray, edges, 255, cv::ADAPTIVE_THRESH_GAUSSIAN_C, cv::THRESH_BINARY_INV, 11, 2);
+  extern bool bDebug;
+  cv::Mat gray, edges;
+  cv::cvtColor(corrected_image, gray, cv::COLOR_BGR2GRAY);
+  cv::adaptiveThreshold(gray, edges, 255, cv::ADAPTIVE_THRESH_GAUSSIAN_C,
+                        cv::THRESH_BINARY_INV, 11, 2);
 
-    if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
-        cv::imwrite("share/Debug/P2_Score_Thresh_" + debug_candidate_name + ".jpg", edges);
+  if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
+    cv::imwrite("share/Debug/P2_Score_Thresh_" + debug_candidate_name + ".jpg",
+                edges);
+  }
+
+  std::vector<cv::Vec4i> lines;
+  cv::HoughLinesP(edges, lines, 1, CV_PI / 180, 40, 30, 10);
+
+  if (lines.size() < 20)
+    return 0.0;
+
+  std::vector<double> horiz_y, vert_x;
+  const double angle_tolerance_rad = 15.0 * CV_PI / 180.0;
+
+  for (const auto &l : lines) {
+    double angle = std::atan2((double)l[3] - l[1], (double)l[2] - l[0]);
+    if (std::abs(angle) < angle_tolerance_rad ||
+        std::abs(angle - CV_PI) < angle_tolerance_rad) {
+      horiz_y.push_back((l[1] + l[3]) * 0.5);
+    } else if (std::abs(angle - CV_PI / 2.0) < angle_tolerance_rad ||
+               std::abs(angle + CV_PI / 2.0) < angle_tolerance_rad) {
+      vert_x.push_back((l[0] + l[2]) * 0.5);
+    }
+  }
+
+  if (horiz_y.size() < 10 || vert_x.size() < 10)
+    return 0.0;
+
+  auto calculate_spacing_stddev = [](std::vector<double> &values) -> double {
+    if (values.size() < 2)
+      return 1e6;
+    std::sort(values.begin(), values.end());
+    std::vector<double> spacings;
+    for (size_t i = 1; i < values.size(); ++i) {
+      spacings.push_back(values[i] - values[i - 1]);
     }
 
-    std::vector<cv::Vec4i> lines;
-    cv::HoughLinesP(edges, lines, 1, CV_PI / 180, 40, 30, 10);
+    double sum = std::accumulate(spacings.begin(), spacings.end(), 0.0);
+    double mean = sum / spacings.size();
+    double sq_sum = std::inner_product(spacings.begin(), spacings.end(),
+                                       spacings.begin(), 0.0);
+    double stddev = std::sqrt(sq_sum / spacings.size() - mean * mean);
+    return stddev;
+  };
 
-    if (lines.size() < 20) return 0.0; 
+  double stddev_h = calculate_spacing_stddev(horiz_y);
+  double stddev_v = calculate_spacing_stddev(vert_x);
 
-    std::vector<double> horiz_y, vert_x;
-    const double angle_tolerance_rad = 15.0 * CV_PI / 180.0;
-
-    for (const auto& l : lines) {
-        double angle = std::atan2((double)l[3] - l[1], (double)l[2] - l[0]);
-        if (std::abs(angle) < angle_tolerance_rad || std::abs(angle - CV_PI) < angle_tolerance_rad) {
-            horiz_y.push_back((l[1] + l[3]) * 0.5);
-        } else if (std::abs(angle - CV_PI/2.0) < angle_tolerance_rad || std::abs(angle + CV_PI/2.0) < angle_tolerance_rad) {
-            vert_x.push_back((l[0] + l[2]) * 0.5);
-        }
-    }
-
-    if (horiz_y.size() < 10 || vert_x.size() < 10) return 0.0;
-
-    auto calculate_spacing_stddev = [](std::vector<double>& values) -> double {
-        if (values.size() < 2) return 1e6;
-        std::sort(values.begin(), values.end());
-        std::vector<double> spacings;
-        for (size_t i = 1; i < values.size(); ++i) {
-            spacings.push_back(values[i] - values[i-1]);
-        }
-        
-        double sum = std::accumulate(spacings.begin(), spacings.end(), 0.0);
-        double mean = sum / spacings.size();
-        double sq_sum = std::inner_product(spacings.begin(), spacings.end(), spacings.begin(), 0.0);
-        double stddev = std::sqrt(sq_sum / spacings.size() - mean * mean);
-        return stddev;
-    };
-
-    double stddev_h = calculate_spacing_stddev(horiz_y);
-    double stddev_v = calculate_spacing_stddev(vert_x);
-
-    return (horiz_y.size() + vert_x.size()) / (stddev_h + stddev_v + 1.0);
+  return (horiz_y.size() + vert_x.size()) / (stddev_h + stddev_v + 1.0);
 }
 
 /**
- * @brief Pass 2: Refines the rough board corners from Pass 1 by analyzing the grid structure.
+ * @brief Pass 2: Refines the rough board corners from Pass 1 by analyzing the
+ * grid structure.
  *
- * This function takes one or more rough candidates, scores them based on the quality
- * of the grid in their perspective-corrected view, selects the best one, and then
- * refines its corners to high precision by extrapolating from the internal grid intersections.
+ * This function takes one or more rough candidates, scores them based on the
+ * quality of the grid in their perspective-corrected view, selects the best
+ * one, and then refines its corners to high precision by extrapolating from the
+ * internal grid intersections.
  *
  * @param bgr_image The original, raw BGR image.
  * @param p1_candidates A vector of rough quadrilaterals from Pass 1.
  * @param out_refined_corners The final, high-precision corner points.
  * @return true if a candidate could be successfully verified and refined.
  */
-bool refine_board_corners_pass2(const cv::Mat& bgr_image, const std::vector<std::vector<cv::Point>>& p1_candidates, std::vector<cv::Point>& out_refined_corners) {
-    LOG_INFO << "--- Starting Pass 2: Grid-Based Refinement ---";
-    extern bool bDebug;
-    if (p1_candidates.empty()) {
-        LOG_WARN << "Pass 2 received no candidates from Pass 1.";
-        return false;
-    }
+bool refine_board_corners_pass2(
+    const cv::Mat &bgr_image,
+    const std::vector<std::vector<cv::Point>> &p1_candidates,
+    std::vector<cv::Point> &out_refined_corners) {
+  LOG_INFO << "--- Starting Pass 2: Grid-Based Refinement ---";
+  extern bool bDebug;
+  if (p1_candidates.empty()) {
+    LOG_WARN << "Pass 2 received no candidates from Pass 1.";
+    return false;
+  }
 
-    double best_score = -1.0;
-    std::vector<cv::Point2f> best_candidate_f;
-    int best_candidate_idx = -1;
+  double best_score = -1.0;
+  std::vector<cv::Point2f> best_candidate_f;
+  int best_candidate_idx = -1;
 
-    // 1. Score each candidate
-    int idx = 0;
-    for (const auto& candidate : p1_candidates) {
-        if (candidate.size() != 4) continue;
-        
-        std::vector<cv::Point2f> candidate_f;
-        for(const auto& p : candidate) candidate_f.push_back(p);
-        
-        std::vector<cv::Point2f> dest_corners = getBoardCornersCorrected(bgr_image.cols, bgr_image.rows);
-        cv::Mat M = cv::getPerspectiveTransform(candidate_f, dest_corners);
-        cv::Mat corrected_img;
-        cv::warpPerspective(bgr_image, corrected_img, M, bgr_image.size());
+  // 1. Score each candidate
+  int idx = 0;
+  for (const auto &candidate : p1_candidates) {
+    if (candidate.size() != 4)
+      continue;
 
-        if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
-            cv::imwrite("share/Debug/P2_Candidate_" + std::to_string(idx) + "_CorrectedView.jpg", corrected_img);
-        }
+    std::vector<cv::Point2f> candidate_f;
+    for (const auto &p : candidate)
+      candidate_f.push_back(p);
 
-        double score = calculate_grid_regularity_score(corrected_img, "Cand" + std::to_string(idx));
-        LOG_DEBUG << "  Candidate " << idx << " score: " << score;
+    std::vector<cv::Point2f> dest_corners =
+        getBoardCornersCorrected(bgr_image.cols, bgr_image.rows);
+    cv::Mat M = cv::getPerspectiveTransform(candidate_f, dest_corners);
+    cv::Mat corrected_img;
+    cv::warpPerspective(bgr_image, corrected_img, M, bgr_image.size());
 
-        if (score > best_score) {
-            best_score = score;
-            best_candidate_f = candidate_f;
-            best_candidate_idx = idx;
-        }
-        idx++;
-    }
-
-    if (best_candidate_idx == -1) {
-        LOG_ERROR << "Pass 2 failed: No candidate produced a valid grid score.";
-        return false;
-    }
-
-    LOG_INFO << "Selected best candidate #" << best_candidate_idx << " with score " << best_score;
-
-    // 2. Refine the corners of the best candidate
-    std::vector<cv::Point2f> dest_corners = getBoardCornersCorrected(bgr_image.cols, bgr_image.rows);
-    cv::Mat M_best = cv::getPerspectiveTransform(best_candidate_f, dest_corners);
-    cv::Mat M_inv;
-    cv::invert(M_best, M_inv);
-    
-    cv::Mat best_corrected_img;
-    cv::warpPerspective(bgr_image, best_corrected_img, M_best, bgr_image.size());
-
-    // --- REFINEMENT LOGIC ---
-    cv::Mat gray, thresh;
-    cv::cvtColor(best_corrected_img, gray, cv::COLOR_BGR2GRAY);
-    cv::adaptiveThreshold(gray, thresh, 255, cv::ADAPTIVE_THRESH_GAUSSIAN_C, cv::THRESH_BINARY_INV, 11, 2);
-
-    // *** NEW: Create and apply an ROI mask to eliminate external noise ***
-    cv::Mat roi_mask = cv::Mat::zeros(thresh.size(), CV_8UC1);
-    std::vector<cv::Point> roi_poly;
-    for(const auto& p : dest_corners) roi_poly.push_back(p); // Use the ideal corners in the corrected view
-    cv::fillConvexPoly(roi_mask, roi_poly, cv::Scalar(255));
-    cv::Mat masked_thresh;
-    cv::bitwise_and(thresh, thresh, masked_thresh, roi_mask);
-    
     if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
-        cv::imwrite("share/Debug/P2_Masked_For_Hough.jpg", masked_thresh);
-    }
-    // *** END NEW ***
-
-    std::vector<cv::Vec4i> lines;
-    // *** FIX: Run HoughLinesP on the CLEAN, MASKED image ***
-    cv::HoughLinesP(masked_thresh, lines, 1, CV_PI / 180, 50, 50, 10);
-    
-    if (lines.size() < 20) {
-        LOG_ERROR << "Pass 2 Refinement failed: Not enough lines found in masked corrected view.";
-        return false;
+      cv::imwrite("share/Debug/P2_Candidate_" + std::to_string(idx) +
+                      "_CorrectedView.jpg",
+                  corrected_img);
     }
 
-    std::vector<cv::Point2f> intersections;
-    std::vector<cv::Vec4i> horiz_lines, vert_lines;
-    const double angle_tolerance = 15.0 * CV_PI / 180.0;
+    double score = calculate_grid_regularity_score(
+        corrected_img, "Cand" + std::to_string(idx));
+    LOG_DEBUG << "  Candidate " << idx << " score: " << score;
 
-    for(const auto& line : lines) {
-        double angle = std::atan2((double)line[3] - line[1], (double)line[2] - line[0]);
-        if(std::abs(angle) < angle_tolerance || std::abs(angle - CV_PI) < angle_tolerance)
-            horiz_lines.push_back(line);
-        else if(std::abs(angle - CV_PI/2.0) < angle_tolerance || std::abs(angle + CV_PI/2.0) < angle_tolerance)
-            vert_lines.push_back(line);
+    if (score > best_score) {
+      best_score = score;
+      best_candidate_f = candidate_f;
+      best_candidate_idx = idx;
     }
-    
-    if(horiz_lines.empty() || vert_lines.empty()){
-        LOG_ERROR << "Pass 2 Refinement failed: Could not separate lines into horizontal and vertical groups.";
-        return false;
+    idx++;
+  }
+
+  if (best_candidate_idx == -1) {
+    LOG_ERROR << "Pass 2 failed: No candidate produced a valid grid score.";
+    return false;
+  }
+
+  LOG_INFO << "Selected best candidate #" << best_candidate_idx
+           << " with score " << best_score;
+
+  // 2. Refine the corners of the best candidate
+  std::vector<cv::Point2f> dest_corners =
+      getBoardCornersCorrected(bgr_image.cols, bgr_image.rows);
+  cv::Mat M_best = cv::getPerspectiveTransform(best_candidate_f, dest_corners);
+  cv::Mat M_inv;
+  cv::invert(M_best, M_inv);
+
+  cv::Mat best_corrected_img;
+  cv::warpPerspective(bgr_image, best_corrected_img, M_best, bgr_image.size());
+
+  // --- REFINEMENT LOGIC ---
+  cv::Mat gray, thresh;
+  cv::cvtColor(best_corrected_img, gray, cv::COLOR_BGR2GRAY);
+  cv::adaptiveThreshold(gray, thresh, 255, cv::ADAPTIVE_THRESH_GAUSSIAN_C,
+                        cv::THRESH_BINARY_INV, 11, 2);
+
+  // *** NEW: Create and apply an ROI mask to eliminate external noise ***
+  cv::Mat roi_mask = cv::Mat::zeros(thresh.size(), CV_8UC1);
+  std::vector<cv::Point> roi_poly;
+  for (const auto &p : dest_corners)
+    roi_poly.push_back(p); // Use the ideal corners in the corrected view
+  cv::fillConvexPoly(roi_mask, roi_poly, cv::Scalar(255));
+  cv::Mat masked_thresh;
+  cv::bitwise_and(thresh, thresh, masked_thresh, roi_mask);
+
+  if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
+    cv::imwrite("share/Debug/P2_Masked_For_Hough.jpg", masked_thresh);
+  }
+  // *** END NEW ***
+
+  std::vector<cv::Vec4i> lines;
+  // *** FIX: Run HoughLinesP on the CLEAN, MASKED image ***
+  cv::HoughLinesP(masked_thresh, lines, 1, CV_PI / 180, 50, 50, 10);
+
+  if (lines.size() < 20) {
+    LOG_ERROR << "Pass 2 Refinement failed: Not enough lines found in masked "
+                 "corrected view.";
+    return false;
+  }
+
+  std::vector<cv::Point2f> intersections;
+  std::vector<cv::Vec4i> horiz_lines, vert_lines;
+  const double angle_tolerance = 15.0 * CV_PI / 180.0;
+
+  for (const auto &line : lines) {
+    double angle =
+        std::atan2((double)line[3] - line[1], (double)line[2] - line[0]);
+    if (std::abs(angle) < angle_tolerance ||
+        std::abs(angle - CV_PI) < angle_tolerance)
+      horiz_lines.push_back(line);
+    else if (std::abs(angle - CV_PI / 2.0) < angle_tolerance ||
+             std::abs(angle + CV_PI / 2.0) < angle_tolerance)
+      vert_lines.push_back(line);
+  }
+
+  if (horiz_lines.empty() || vert_lines.empty()) {
+    LOG_ERROR << "Pass 2 Refinement failed: Could not separate lines into "
+                 "horizontal and vertical groups.";
+    return false;
+  }
+
+  for (const auto &h_line : horiz_lines) {
+    for (const auto &v_line : vert_lines) {
+      cv::Point2f p1(h_line[0], h_line[1]), p2(h_line[2], h_line[3]);
+      cv::Point2f p3(v_line[0], v_line[1]), p4(v_line[2], v_line[3]);
+
+      float det = (p1.x - p2.x) * (p3.y - p4.y) - (p1.y - p2.y) * (p3.x - p4.x);
+      if (std::abs(det) > 1e-6) {
+        float t =
+            ((p1.x - p3.x) * (p3.y - p4.y) - (p1.y - p3.y) * (p3.x - p4.x)) /
+            det;
+        intersections.push_back(
+            cv::Point2f(p1.x + t * (p2.x - p1.x), p1.y + t * (p2.y - p1.y)));
+      }
     }
+  }
 
-    for(const auto& h_line : horiz_lines) {
-        for(const auto& v_line : vert_lines) {
-            cv::Point2f p1(h_line[0], h_line[1]), p2(h_line[2], h_line[3]);
-            cv::Point2f p3(v_line[0], v_line[1]), p4(v_line[2], v_line[3]);
-            
-            float det = (p1.x - p2.x) * (p3.y - p4.y) - (p1.y - p2.y) * (p3.x - p4.x);
-            if(std::abs(det) > 1e-6) {
-                float t = ((p1.x - p3.x) * (p3.y - p4.y) - (p1.y - p3.y) * (p3.x - p4.x)) / det;
-                intersections.push_back(cv::Point2f(p1.x + t * (p2.x - p1.x), p1.y + t * (p2.y - p1.y)));
-            }
-        }
-    }
-    
-    if (intersections.size() < 100) { 
-        LOG_ERROR << "Pass 2 Refinement failed: Found only " << intersections.size() << " grid intersections.";
-        return false;
-    }
-    
-    std::vector<cv::Point> intersection_points_for_hull;
-    for(const auto& p : intersections) intersection_points_for_hull.push_back(p);
+  if (intersections.size() < 100) {
+    LOG_ERROR << "Pass 2 Refinement failed: Found only " << intersections.size()
+              << " grid intersections.";
+    return false;
+  }
 
-    std::vector<cv::Point> grid_hull;
-    cv::convexHull(intersection_points_for_hull, grid_hull);
+  std::vector<cv::Point> intersection_points_for_hull;
+  for (const auto &p : intersections)
+    intersection_points_for_hull.push_back(p);
 
-    if (grid_hull.size() < 4) {
-        LOG_ERROR << "Pass 2 Refinement failed: Convex hull of intersections has fewer than 4 points.";
-        return false;
-    }
+  std::vector<cv::Point> grid_hull;
+  cv::convexHull(intersection_points_for_hull, grid_hull);
 
-    std::vector<cv::Point> inner_corners_approx;
-    cv::approxPolyDP(grid_hull, inner_corners_approx, cv::arcLength(grid_hull, true) * 0.05, true);
+  if (grid_hull.size() < 4) {
+    LOG_ERROR << "Pass 2 Refinement failed: Convex hull of intersections has "
+                 "fewer than 4 points.";
+    return false;
+  }
 
-    if (inner_corners_approx.size() != 4) {
-        LOG_ERROR << "Pass 2 Refinement failed: Could not approximate the grid hull to a quadrilateral. Vertices found: " << inner_corners_approx.size();
-        return false;
-    }
+  std::vector<cv::Point> inner_corners_approx;
+  cv::approxPolyDP(grid_hull, inner_corners_approx,
+                   cv::arcLength(grid_hull, true) * 0.05, true);
 
-    std::sort(inner_corners_approx.begin(), inner_corners_approx.end(), [](const cv::Point& a, const cv::Point& b){ return a.y < b.y; });
-    if (inner_corners_approx[0].x > inner_corners_approx[1].x) std::swap(inner_corners_approx[0], inner_corners_approx[1]);
-    if (inner_corners_approx[2].x < inner_corners_approx[3].x) std::swap(inner_corners_approx[2], inner_corners_approx[3]);
-    
-    cv::Point2f tl_inner = inner_corners_approx[0];
-    cv::Point2f tr_inner = inner_corners_approx[1];
-    cv::Point2f br_inner = inner_corners_approx[2];
-    cv::Point2f bl_inner = inner_corners_approx[3];
+  if (inner_corners_approx.size() != 4) {
+    LOG_ERROR << "Pass 2 Refinement failed: Could not approximate the grid "
+                 "hull to a quadrilateral. Vertices found: "
+              << inner_corners_approx.size();
+    return false;
+  }
 
-    float grid_width = cv::norm(tr_inner - tl_inner);
-    float grid_height = cv::norm(bl_inner - tl_inner);
-    float h_spacing = grid_width / 17.0f;
-    float v_spacing = grid_height / 17.0f;
+  std::sort(inner_corners_approx.begin(), inner_corners_approx.end(),
+            [](const cv::Point &a, const cv::Point &b) { return a.y < b.y; });
+  if (inner_corners_approx[0].x > inner_corners_approx[1].x)
+    std::swap(inner_corners_approx[0], inner_corners_approx[1]);
+  if (inner_corners_approx[2].x < inner_corners_approx[3].x)
+    std::swap(inner_corners_approx[2], inner_corners_approx[3]);
 
-    cv::Point2f vec_h = (tr_inner - tl_inner) / grid_width;
-    cv::Point2f vec_v = (bl_inner - tl_inner) / grid_height;
+  cv::Point2f tl_inner = inner_corners_approx[0];
+  cv::Point2f tr_inner = inner_corners_approx[1];
+  cv::Point2f br_inner = inner_corners_approx[2];
+  cv::Point2f bl_inner = inner_corners_approx[3];
 
-    std::vector<cv::Point2f> refined_corners_corrected = {
-        tl_inner - vec_h * h_spacing - vec_v * v_spacing,
-        tr_inner + vec_h * h_spacing - vec_v * v_spacing,
-        br_inner + vec_h * h_spacing + vec_v * v_spacing,
-        bl_inner - vec_h * h_spacing + vec_v * v_spacing
-    };
-    
-    std::vector<cv::Point2f> final_corners_raw;
-    cv::perspectiveTransform(refined_corners_corrected, final_corners_raw, M_inv);
+  float grid_width = cv::norm(tr_inner - tl_inner);
+  float grid_height = cv::norm(bl_inner - tl_inner);
+  float h_spacing = grid_width / 17.0f;
+  float v_spacing = grid_height / 17.0f;
 
-    out_refined_corners.clear();
-    for(const auto& p : final_corners_raw) out_refined_corners.push_back(p);
+  cv::Point2f vec_h = (tr_inner - tl_inner) / grid_width;
+  cv::Point2f vec_v = (bl_inner - tl_inner) / grid_height;
 
-    LOG_INFO << "Pass 2 successful. Corners refined.";
-    return true;
+  std::vector<cv::Point2f> refined_corners_corrected = {
+      tl_inner - vec_h * h_spacing - vec_v * v_spacing,
+      tr_inner + vec_h * h_spacing - vec_v * v_spacing,
+      br_inner + vec_h * h_spacing + vec_v * v_spacing,
+      bl_inner - vec_h * h_spacing + vec_v * v_spacing};
+
+  std::vector<cv::Point2f> final_corners_raw;
+  cv::perspectiveTransform(refined_corners_corrected, final_corners_raw, M_inv);
+
+  out_refined_corners.clear();
+  for (const auto &p : final_corners_raw)
+    out_refined_corners.push_back(p);
+
+  LOG_INFO << "Pass 2 successful. Corners refined.";
+  return true;
 }
