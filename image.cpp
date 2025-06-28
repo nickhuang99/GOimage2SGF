@@ -5223,7 +5223,39 @@ bool find_board_quadrilateral_rough(
   return true;
 }
 
-// --- NEW: Pass 2 Helper Functions ---
+
+/**
+ * @brief Takes a list of 18x18 interior grid points and extrapolates the four
+ * outer corners.
+ *
+ * @param grid_points A vector of 324 cv::Point2f, sorted row by row.
+ * @return A vector containing the 4 extrapolated corner points (TL, TR, BR,
+ * BL).
+ */
+static std::vector<cv::Point2f>
+extrapolate_corners_from_grid(const std::vector<cv::Point2f> &grid_points) {
+  if (grid_points.size() != 18 * 18)
+    return {};
+
+  cv::Point2f tl_inner = grid_points[0];
+  cv::Point2f tr_inner = grid_points[18 - 1];
+  cv::Point2f bl_inner = grid_points[18 * (18 - 1)];
+  cv::Point2f br_inner = grid_points[18 * 18 - 1];
+
+  // Estimate the average spacing vector for one grid cell
+  cv::Point2f vec_h = (tr_inner - tl_inner) / 17.0f;
+  cv::Point2f vec_v = (bl_inner - tl_inner) / 17.0f;
+
+  // Extrapolate outwards by one grid unit
+  cv::Point2f tl_outer = tl_inner - vec_h - vec_v;
+  cv::Point2f tr_outer = tr_inner + vec_h - vec_v;
+  cv::Point2f bl_outer = bl_inner - vec_h + vec_v;
+  cv::Point2f br_outer = br_inner + vec_h + vec_v;
+
+  return {tl_outer, tr_outer, br_outer, bl_outer};
+}
+
+
 /**
  * @brief Calculates a "grid regularity" score for a perspective-corrected board image.
  * A higher score indicates a more uniform and complete grid.
@@ -5282,40 +5314,6 @@ static double calculate_grid_regularity_score(const cv::Mat& corrected_image, co
 
     return (horiz_y.size() + vert_x.size()) / (stddev_h + stddev_v + 1.0);
 }
-
-
-/**
- * @brief Takes a list of 18x18 interior grid points and extrapolates the four
- * outer corners.
- *
- * @param grid_points A vector of 324 cv::Point2f, sorted row by row.
- * @return A vector containing the 4 extrapolated corner points (TL, TR, BR,
- * BL).
- */
-static std::vector<cv::Point2f>
-extrapolate_corners_from_grid(const std::vector<cv::Point2f> &grid_points) {
-  if (grid_points.size() != 18 * 18)
-    return {};
-
-  cv::Point2f tl_inner = grid_points[0];
-  cv::Point2f tr_inner = grid_points[18 - 1];
-  cv::Point2f bl_inner = grid_points[18 * (18 - 1)];
-  cv::Point2f br_inner = grid_points[18 * 18 - 1];
-
-  // Estimate the average spacing vector for one grid cell
-  cv::Point2f vec_h = (tr_inner - tl_inner) / 17.0f;
-  cv::Point2f vec_v = (bl_inner - tl_inner) / 17.0f;
-
-  // Extrapolate outwards by one grid unit
-  cv::Point2f tl_outer = tl_inner - vec_h - vec_v;
-  cv::Point2f tr_outer = tr_inner + vec_h - vec_v;
-  cv::Point2f bl_outer = bl_inner - vec_h + vec_v;
-  cv::Point2f br_outer = br_inner + vec_h + vec_v;
-
-  return {tl_outer, tr_outer, br_outer, bl_outer};
-}
-
-
 
 /**
  * @brief Pass 2: Refines the rough board corners from Pass 1 by analyzing the grid structure.
@@ -5385,16 +5383,30 @@ bool refine_board_corners_pass2(const cv::Mat& bgr_image, const std::vector<std:
     cv::Mat best_corrected_img;
     cv::warpPerspective(bgr_image, best_corrected_img, M_best, bgr_image.size());
 
-    // --- REFINEMENT LOGIC: Replace findChessboardCorners with HoughLinesP ---
+    // --- REFINEMENT LOGIC ---
     cv::Mat gray, thresh;
     cv::cvtColor(best_corrected_img, gray, cv::COLOR_BGR2GRAY);
     cv::adaptiveThreshold(gray, thresh, 255, cv::ADAPTIVE_THRESH_GAUSSIAN_C, cv::THRESH_BINARY_INV, 11, 2);
 
+    // *** NEW: Create and apply an ROI mask to eliminate external noise ***
+    cv::Mat roi_mask = cv::Mat::zeros(thresh.size(), CV_8UC1);
+    std::vector<cv::Point> roi_poly;
+    for(const auto& p : dest_corners) roi_poly.push_back(p); // Use the ideal corners in the corrected view
+    cv::fillConvexPoly(roi_mask, roi_poly, cv::Scalar(255));
+    cv::Mat masked_thresh;
+    cv::bitwise_and(thresh, thresh, masked_thresh, roi_mask);
+    
+    if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
+        cv::imwrite("share/Debug/P2_Masked_For_Hough.jpg", masked_thresh);
+    }
+    // *** END NEW ***
+
     std::vector<cv::Vec4i> lines;
-    cv::HoughLinesP(thresh, lines, 1, CV_PI / 180, 50, 50, 10);
+    // *** FIX: Run HoughLinesP on the CLEAN, MASKED image ***
+    cv::HoughLinesP(masked_thresh, lines, 1, CV_PI / 180, 50, 50, 10);
     
     if (lines.size() < 20) {
-        LOG_ERROR << "Pass 2 Refinement failed: Not enough lines found in best candidate's corrected view.";
+        LOG_ERROR << "Pass 2 Refinement failed: Not enough lines found in masked corrected view.";
         return false;
     }
 
@@ -5428,43 +5440,54 @@ bool refine_board_corners_pass2(const cv::Mat& bgr_image, const std::vector<std:
         }
     }
     
-    if (intersections.size() < 100) { // Should find a large portion of the 324 intersections
+    if (intersections.size() < 100) { 
         LOG_ERROR << "Pass 2 Refinement failed: Found only " << intersections.size() << " grid intersections.";
         return false;
     }
     
-    // Find the four corners of the inner grid by finding the bounding box of all intersections
-    cv::Rect bounding_box = cv::boundingRect(intersections);
+    std::vector<cv::Point> intersection_points_for_hull;
+    for(const auto& p : intersections) intersection_points_for_hull.push_back(p);
+
+    std::vector<cv::Point> grid_hull;
+    cv::convexHull(intersection_points_for_hull, grid_hull);
+
+    if (grid_hull.size() < 4) {
+        LOG_ERROR << "Pass 2 Refinement failed: Convex hull of intersections has fewer than 4 points.";
+        return false;
+    }
+
+    std::vector<cv::Point> inner_corners_approx;
+    cv::approxPolyDP(grid_hull, inner_corners_approx, cv::arcLength(grid_hull, true) * 0.05, true);
+
+    if (inner_corners_approx.size() != 4) {
+        LOG_ERROR << "Pass 2 Refinement failed: Could not approximate the grid hull to a quadrilateral. Vertices found: " << inner_corners_approx.size();
+        return false;
+    }
+
+    std::sort(inner_corners_approx.begin(), inner_corners_approx.end(), [](const cv::Point& a, const cv::Point& b){ return a.y < b.y; });
+    if (inner_corners_approx[0].x > inner_corners_approx[1].x) std::swap(inner_corners_approx[0], inner_corners_approx[1]);
+    if (inner_corners_approx[2].x < inner_corners_approx[3].x) std::swap(inner_corners_approx[2], inner_corners_approx[3]);
     
-    // Extrapolate outwards
-    float grid_width = bounding_box.width;
-    float grid_height = bounding_box.height;
+    cv::Point2f tl_inner = inner_corners_approx[0];
+    cv::Point2f tr_inner = inner_corners_approx[1];
+    cv::Point2f br_inner = inner_corners_approx[2];
+    cv::Point2f bl_inner = inner_corners_approx[3];
+
+    float grid_width = cv::norm(tr_inner - tl_inner);
+    float grid_height = cv::norm(bl_inner - tl_inner);
     float h_spacing = grid_width / 17.0f;
     float v_spacing = grid_height / 17.0f;
 
+    cv::Point2f vec_h = (tr_inner - tl_inner) / grid_width;
+    cv::Point2f vec_v = (bl_inner - tl_inner) / grid_height;
+
     std::vector<cv::Point2f> refined_corners_corrected = {
-        cv::Point2f(bounding_box.x - h_spacing, bounding_box.y - v_spacing),
-        cv::Point2f(bounding_box.x + grid_width + h_spacing, bounding_box.y - v_spacing),
-        cv::Point2f(bounding_box.x + grid_width + h_spacing, bounding_box.y + grid_height + v_spacing),
-        cv::Point2f(bounding_box.x - h_spacing, bounding_box.y + grid_height + v_spacing)
+        tl_inner - vec_h * h_spacing - vec_v * v_spacing,
+        tr_inner + vec_h * h_spacing - vec_v * v_spacing,
+        br_inner + vec_h * h_spacing + vec_v * v_spacing,
+        bl_inner - vec_h * h_spacing + vec_v * v_spacing
     };
-
-    // --- NEW: Debug visualization for the refinement step ---
-    if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
-      cv::Mat grid_debug = best_corrected_img.clone();
-      for (const auto &p : intersections)
-        cv::circle(grid_debug, p, 2, {0, 0, 255}, -1);
-      cv::polylines(grid_debug,
-                    { std::vector < cv::Point > 
-                        {cv::Point(refined_corners_corrected[0]),
-                         cv::Point(refined_corners_corrected[1]),
-                         cv::Point(refined_corners_corrected[2]),
-                         cv::Point(refined_corners_corrected[3])}},
-                    true, {0, 255, 255}, 2);
-      cv::imwrite("share/Debug/P2_Refinement_Grid_Analysis.jpg", grid_debug);
-    }
-
-    // 3. Transform the refined corners back to the original image space
+    
     std::vector<cv::Point2f> final_corners_raw;
     cv::perspectiveTransform(refined_corners_corrected, final_corners_raw, M_inv);
 
