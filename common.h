@@ -418,5 +418,5 @@ bool refine_board_corners_pass2(
     const cv::Mat &bgr_image,
     const std::vector<std::vector<cv::Point>> &p1_candidates,
     std::vector<cv::Point> &out_refined_corners);
-
+void runMinMaxCornersWorkflow(const std::string &imagePath);
 #endif // UTILITY_H
