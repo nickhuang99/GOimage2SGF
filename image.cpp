@@ -5353,6 +5353,31 @@ static double calculate_spacing_stddev(const std::vector<float>& values) {
     return std::sqrt(sq_sum / spacings.size() - mean * mean);
 };
 
+// *** NEW DEBUG HELPER ***
+// Draws a 1D histogram to an image file for visualization.
+static void draw_histogram(const std::vector<float>& data, const std::string& filename, int image_width = 1000, int image_height = 400) {
+    if (data.empty()) return;
+
+    cv::Mat hist_image = cv::Mat::zeros(image_height, image_width, CV_8UC3);
+    double max_val = 0;
+    for(const auto& val : data) {
+        if (val > max_val) max_val = val;
+    }
+
+    float bin_width = (float)image_width / data.size();
+
+    for (size_t i = 0; i < data.size(); ++i) {
+        float bin_height = (data[i] / max_val) * (image_height * 0.95);
+        cv::rectangle(hist_image,
+                      cv::Point(i * bin_width, image_height),
+                      cv::Point((i + 1) * bin_width, image_height - bin_height),
+                      cv::Scalar(150, 150, 255), // Light red bars
+                      cv::FILLED);
+    }
+    cv::imwrite("share/Debug/" + filename, hist_image);
+}
+
+
 bool refine_board_corners_pass2(
     const cv::Mat &bgr_image,
     const std::vector<std::vector<cv::Point>> &p1_candidates,
@@ -5494,15 +5519,35 @@ bool refine_board_corners_pass2(
     LOG_WARN << "Primary method failed or was rejected. Falling back to Hough Line Transform method.";
     cv::Mat edges;
     cv::Canny(gray, edges, 50, 150, 3);
+    if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG)
+     cv::imwrite("share/Debug/P2_Fallback_01_Canny.jpg", edges);
+
+
     std::vector<cv::Vec4i> lines;
-    cv::HoughLinesP(edges, lines, 1, CV_PI / 180, 30, gray.cols * 0.1, 5);
-    
+
+    // *** FIX: Relaxed parameters for low-quality images ***
+    int hough_threshold = 20; // Lowered from 30
+    double min_line_length = gray.cols * 0.05; // Lowered from 10% to 5% of width
+    double max_line_gap = 10; // Increased from 5
+
+    cv::HoughLinesP(edges, lines, 1, CV_PI / 180, hough_threshold,
+                    min_line_length, max_line_gap);
+    LOG_DEBUG << "Fallback: Found " << lines.size() << " raw Hough line segments.";
+    if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
+      cv::Mat hough_img = best_corrected_img.clone();
+      for (const auto &l : lines)
+        cv::line(hough_img, {l[0], l[1]}, {l[2], l[3]}, {100, 255, 100}, 1);
+      cv::imwrite("share/Debug/P2_Fallback_02_HoughLines.jpg", hough_img);
+    }
     std::vector<cv::Vec4i> horizontal_lines, vertical_lines;
     for(const auto& l : lines) {
         double angle = std::abs(std::atan2(l[3] - l[1], l[2] - l[0]) * 180.0 / CV_PI);
         if (angle < 45 || angle > 135) horizontal_lines.push_back(l);
         else vertical_lines.push_back(l);
     }
+    LOG_DEBUG << "Fallback: Separated into " << horizontal_lines.size()
+              << " horizontal and " << vertical_lines.size()
+              << " vertical lines.";
 
     std::vector<cv::Point2f> intersections;
     for(const auto& h : horizontal_lines) {
@@ -5515,11 +5560,31 @@ bool refine_board_corners_pass2(
             }
         }
     }
-    
+    LOG_DEBUG << "Fallback: Calculated " << intersections.size() << " intersection points.";
+    if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
+      cv::Mat intersection_img = best_corrected_img.clone();
+      for (const auto &p : intersections)
+        cv::circle(intersection_img, p, 2, {0, 0, 255}, cv::FILLED);
+      cv::imwrite("share/Debug/P2_Fallback_03_Intersections.jpg",
+                  intersection_img);
+    }
+
     if (intersections.size() < 100) {
         LOG_ERROR << "Fallback Hough method failed to find enough intersection points.";
         return false;
     }
+    // *** NEW: Temporarily isolate the histogram creation to debug it ***
+    std::vector<float> x_histogram(bgr_image.cols, 0.0f);
+    for(const auto& p : intersections) if(p.x >= 0 && p.x < x_histogram.size()) x_histogram[p.x]++;
+    if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) 
+      draw_histogram(x_histogram, "P2_Fallback_04_X_Histogram.jpg");
+
+    std::vector<float> y_histogram(bgr_image.rows, 0.0f);
+    for (const auto &p : intersections)
+      if (p.y >= 0 && p.y < y_histogram.size())
+        y_histogram[p.y]++;
+    if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG)
+      draw_histogram(y_histogram, "P2_Fallback_05_Y_Histogram.jpg");
 
     std::vector<float> vert_x = find_grid_lines_via_histogram(intersections, 0, 19, bgr_image.cols);
     std::vector<float> horiz_y = find_grid_lines_via_histogram(intersections, 1, 19, bgr_image.rows);
