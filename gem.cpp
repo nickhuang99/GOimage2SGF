@@ -2479,6 +2479,37 @@ void runDetectBoardWorkflow(const std::string &imagePath) {
     cv::waitKey(0);
     cv::destroyAllWindows();
     return;
+  } else {
+    LOG_INFO << "Board detection successful. Found " << p1_candidates.size()
+             << " candidate(s).";
+
+    // 3. Draw ALL candidates for visual verification
+    cv::Mat display_image = frame.clone();
+
+    int cand_idx = 0;
+    for (const auto &corners : p1_candidates) {
+      // Cycle through colors for different candidates
+      cv::Scalar color((cand_idx * 80 + 50) % 255, (cand_idx * 50 + 150) % 255,
+                       (cand_idx * 120) % 255);
+      if (corners.size() == 4) {
+        for (size_t i = 0; i < corners.size(); ++i) {
+          cv::line(display_image, corners[i], corners[(i + 1) % 4], color, 2,
+                   cv::LINE_AA);
+        }
+      }
+      // Label each candidate
+      if (!corners.empty()) {
+        cv::putText(display_image, "Cand " + std::to_string(cand_idx),
+                    corners[0] + cv::Point(10, -5), cv::FONT_HERSHEY_SIMPLEX,
+                    0.6, color, 2);
+      }
+      cand_idx++;
+    }
+
+    cv::imshow("Rough Board Detection Result (All Candidates)", display_image);
+    LOG_INFO << "Displaying results. Press any key to exit.";
+    cv::waitKey(0);
+    cv::destroyAllWindows();
   }
 
   // --- PASS 2 ---

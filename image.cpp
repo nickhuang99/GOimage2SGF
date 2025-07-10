@@ -5118,7 +5118,7 @@ bool find_board_quadrilateral_rough(
     return false;
   }
   LOG_DEBUG << "total contour number: " << contours.size();
-  if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
+  if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::TRACE) {
     cv::Mat debug_img = bgr_image.clone();
 
     int cand_idx = 0;
@@ -5158,7 +5158,7 @@ bool find_board_quadrilateral_rough(
       cv::approxPolyDP(hull, approx, cv::arcLength(hull, true) * epsilon_factor,
                        true);
 
-      if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
+      if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::TRACE) {
         cv::Mat debug_img = bgr_image.clone();
 
         // Use a color cycle for different candidates
@@ -5197,7 +5197,7 @@ bool find_board_quadrilateral_rough(
   }
 
   // 6. Final logging and debug image generation
-  if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
+  if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::TRACE) {
     cv::Mat debug_img = bgr_image.clone();
 
     int cand_idx = 0;
@@ -5371,72 +5371,61 @@ calculate_grid_regularity_score(const cv::Mat &corrected_image,
  * @return true if a candidate could be successfully verified and refined.
  */
 /**
- * @brief Pass 2: Refines the rough board corners from Pass 1 by analyzing the
- * grid structure.
+ * @brief Pass 2: Refines the rough board corners from Pass 1 by analyzing the grid structure.
  *
- * This revised function uses the highly robust cv::findChessboardCorners to
- * directly detect the 18x18 inner grid on a perspective-corrected image of the
- * best candidate from Pass 1. It then extrapolates from these precise inner
- * corners to find the final physical board corners. This method is more
- * reliable and accurate than a manual approach based on Hough Lines.
+ * This function implements a robust line-detection strategy suitable for Go boards.
+ * It corrects the perspective, finds all grid lines via Hough transform, clusters them
+ * to determine the 19 precise horizontal and vertical line positions, and then
+ * extrapolates the final corners from this idealized grid.
  *
  * @param bgr_image The original, raw BGR image.
  * @param p1_candidates A vector of rough quadrilaterals from Pass 1.
  * @param out_refined_corners The final, high-precision corner points.
  * @return true if a candidate could be successfully verified and refined.
  */
+ using namespace std;
+ using namespace cv;
 bool refine_board_corners_pass2(
     const cv::Mat &bgr_image,
     const std::vector<std::vector<cv::Point>> &p1_candidates,
     std::vector<cv::Point> &out_refined_corners) {
-  LOG_INFO << "--- Starting Pass 2: Grid-Based Refinement (Using "
-              "cv::findChessboardCorners) ---";
+  LOG_INFO << "--- Starting Pass 2: Grid-Based Refinement (Using Hough Line Clustering) ---";
   extern bool bDebug;
   if (p1_candidates.empty()) {
     LOG_WARN << "Pass 2 received no candidates from Pass 1.";
     return false;
+  } else {
+    LOG_INFO << "candidates size: " << p1_candidates.size();
   }
 
   double best_score = -1.0;
   std::vector<cv::Point2f> best_candidate_f;
   int best_candidate_idx = -1;
 
-  // 1. Score each candidate to find the best one
+  // 1. Find the best candidate based on grid regularity score
   int idx = 0;
   for (const auto &candidate : p1_candidates) {
     if (candidate.size() != 4)
       continue;
 
-    // --- START: ROBUST CORNER SORTING LOGIC ---
+    // Robust corner sorting
     std::vector<cv::Point> sorted_candidate = candidate;
-
-    // 1. Find the centroid of the quadrilateral.
-    // *** FIX: Renamed 'M' to 'moments' to avoid conflict ***
     cv::Moments moments = cv::moments(sorted_candidate);
     cv::Point2f center(moments.m10 / moments.m00, moments.m01 / moments.m00);
-
-    // 2. Sort the points by the angle they make with the centroid.
     std::sort(sorted_candidate.begin(), sorted_candidate.end(),
-              [&center](const cv::Point &a, const cv::Point &b) {
+              [&center](const cv::Point& a, const cv::Point& b) {
                 return std::atan2(a.y - center.y, a.x - center.x) <
                        std::atan2(b.y - center.y, b.x - center.x);
               });
-
-    // 3. Find the point closest to the image's top-left (0,0).
     int min_sum_idx = 0;
     double min_sum = sorted_candidate[0].x + sorted_candidate[0].y;
     for (int i = 1; i < 4; ++i) {
-      if (sorted_candidate[i].x + sorted_candidate[i].y < min_sum) {
-        min_sum = sorted_candidate[i].x + sorted_candidate[i].y;
-        min_sum_idx = i;
-      }
+        if (sorted_candidate[i].x + sorted_candidate[i].y < min_sum) {
+            min_sum = sorted_candidate[i].x + sorted_candidate[i].y;
+            min_sum_idx = i;
+        }
     }
-
-    // 4. Rotate the sorted vector so that the TL corner is always the first
-    // element.
-    std::rotate(sorted_candidate.begin(),
-                sorted_candidate.begin() + min_sum_idx, sorted_candidate.end());
-    // --- END: ROBUST CORNER SORTING LOGIC ---
+    std::rotate(sorted_candidate.begin(), sorted_candidate.begin() + min_sum_idx, sorted_candidate.end());
 
     std::vector<cv::Point2f> candidate_f;
     for (const auto &p : sorted_candidate)
@@ -5444,22 +5433,15 @@ bool refine_board_corners_pass2(
 
     std::vector<cv::Point2f> dest_corners =
         getBoardCornersCorrected(bgr_image.cols, bgr_image.rows);
-
-    // This 'M' is now unambiguous and refers to the transformation matrix.
     cv::Mat M = cv::getPerspectiveTransform(candidate_f, dest_corners);
     cv::Mat corrected_img;
     cv::warpPerspective(bgr_image, corrected_img, M, bgr_image.size());
 
-    if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
-      cv::imwrite("share/Debug/P2_Candidate_" + std::to_string(idx) +
-                      "_CorrectedView.jpg",
-                  corrected_img);
+    double score = calculate_grid_regularity_score(corrected_img, "Cand" + std::to_string(idx));
+    if (bDebug) {
+        cv::imwrite("share/Debug/P2_Candidate_" + std::to_string(idx) + "_CorrectedView.jpg", corrected_img);
     }
-
-    double score = calculate_grid_regularity_score(
-        corrected_img, "Cand" + std::to_string(idx));
     LOG_DEBUG << "  Candidate " << idx << " score: " << score;
-
     if (score > best_score) {
       best_score = score;
       best_candidate_f = candidate_f;
@@ -5468,109 +5450,168 @@ bool refine_board_corners_pass2(
     idx++;
   }
 
-  if (best_candidate_idx == -1) {
+  if (best_candidate_idx == -1 || best_score < 1.0) { // Add score check
     LOG_ERROR << "Pass 2 failed: No candidate produced a valid grid score.";
     return false;
   }
 
-  LOG_INFO << "Selected best candidate #" << best_candidate_idx
-           << " with score " << best_score;
+  LOG_INFO << "Selected best candidate #" << best_candidate_idx << " with score " << best_score;
 
-  // 2. Create the final corrected view and inverse transform matrix for the
-  // best candidate
-  std::vector<cv::Point2f> dest_corners =
-      getBoardCornersCorrected(bgr_image.cols, bgr_image.rows);
+  // 2. Perform the definitive refinement on the best candidate
+  std::vector<cv::Point2f> dest_corners = getBoardCornersCorrected(bgr_image.cols, bgr_image.rows);
   cv::Mat M_best = cv::getPerspectiveTransform(best_candidate_f, dest_corners);
   cv::Mat M_inv;
   cv::invert(M_best, M_inv);
-
   cv::Mat best_corrected_img;
   cv::warpPerspective(bgr_image, best_corrected_img, M_best, bgr_image.size());
 
-  // 3. Find the 18x18 inner grid using cv::findChessboardCorners
-  cv::Mat gray_corrected;
-  cv::cvtColor(best_corrected_img, gray_corrected, cv::COLOR_BGR2GRAY);
+  // 3. Thresholding and line detection
+  cv::Mat gray, thresh;
+  cv::cvtColor(best_corrected_img, gray, cv::COLOR_BGR2GRAY);
+  cv::adaptiveThreshold(gray, thresh, 255, cv::ADAPTIVE_THRESH_GAUSSIAN_C, cv::THRESH_BINARY_INV, 11, 2);
 
-  // A mask helps to ignore noise outside the board area in the corrected view
-  cv::Mat roi_mask = cv::Mat::zeros(gray_corrected.size(), CV_8UC1);
+  // Masking to remove noise outside the board area
+  cv::Mat roi_mask = cv::Mat::zeros(thresh.size(), CV_8UC1);
   std::vector<cv::Point> roi_poly;
-  for (const auto &p : dest_corners)
-    roi_poly.push_back(p);
+  for(const auto& p : dest_corners) roi_poly.push_back(p);
   cv::fillConvexPoly(roi_mask, roi_poly, cv::Scalar(255));
-  cv::Mat masked_gray;
-  gray_corrected.copyTo(masked_gray, roi_mask);
+  cv::bitwise_and(thresh, thresh, thresh, roi_mask);
+  if(bDebug) cv::imwrite("share/Debug/P2_Masked_For_Hough.jpg", thresh);
 
-  if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
-    cv::imwrite("share/Debug/P2_Masked_For_Chessboard.jpg", masked_gray);
+  // --- NEW: More Aggressive Morphological cleaning to remove salt-and-pepper
+  // noise ---
+  cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(3, 3));
+  cv::Mat cleaned_thresh;
+  // Erode to remove small noise specks
+  cv::erode(thresh, cleaned_thresh, kernel, cv::Point(-1, -1), 1);
+  // Dilate to restore the main grid lines
+  cv::dilate(cleaned_thresh, cleaned_thresh, kernel, cv::Point(-1, -1), 1);
+  if (bDebug)
+    cv::imwrite("share/Debug/P2_Morphologically_Cleaned.jpg", cleaned_thresh);
+  // --- END NEW ---
+
+  std::vector<cv::Vec4i> lines;
+  cv::HoughLinesP(thresh, lines, 1, CV_PI / 180, 50, 50, 10);
+
+  if (lines.size() < 20) {
+      LOG_ERROR << "Pass 2 Refinement failed: Not enough Hough lines found (" << lines.size() << ").";
+      return false;
+  } else {
+    LOG_DEBUG << "Pass 2 Refinement Hough lines found: " << lines.size();
   }
+  // --- NEW: DEBUG VISUALIZATION for clustered lines ---
+  // make it a debug lambda:
+  auto debug_line_image_lambda = [ & best_corrected_img](                                     
+                                     const std::vector<float> &vert_x,
+                                     const std::vector<float> &horiz_y,
+                                     const std::string &name) {
+    cv::Mat clustered_lines_img = best_corrected_img.clone();
+    for (float y : horiz_y) {
+      cv::line(clustered_lines_img, cv::Point(0, y),
+               cv::Point(clustered_lines_img.cols, y), {0, 255, 0}, 1);
+    }
+    for (float x : vert_x) {
+      cv::line(clustered_lines_img, cv::Point(x, 0),
+               cv::Point(x, clustered_lines_img.rows), {255, 0, 255}, 1);
+    }
+    cv::imwrite("share/Debug/" + name + ".jpg", clustered_lines_img);
+    LOG_DEBUG << "Saved debug_line_image_lambda image for file name: " << name;
+  };
 
-  cv::Size patternSize(18, 18); // A 19x19 Go board has 18x18 internal corners
-  std::vector<cv::Point2f> inner_grid_corners;
+  // if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
+  //   cv::Mat clustered_lines_img = best_corrected_img.clone();
+  //   for (float y : final_horiz_lines) {
+  //     cv::line(clustered_lines_img, cv::Point(0, y),
+  //              cv::Point(clustered_lines_img.cols, y), {0, 255, 0}, 1);
+  //   }
+  //   for (float x : final_vert_lines) {
+  //     cv::line(clustered_lines_img, cv::Point(x, 0),
+  //              cv::Point(x, clustered_lines_img.rows), {255, 0, 255}, 1);
+  //   }
+  //   cv::imwrite("share/Debug/P2_Clustered_Grid_Lines.jpg", clustered_lines_img);
+  //   LOG_DEBUG << "Saved clustered grid lines debug image.";
+  // }
+  // --- END DEBUG ---
+  // 4. Separate lines into horizontal and vertical and get their coordinates
+  std::vector<float> horiz_y, vert_x;
+  const float angle_tolerance_rad = 15.0f * CV_PI / 180.0f;
+  for (const auto &l : lines) {
+    float angle = std::atan2((float)l[3] - l[1], (float)l[2] - l[0]);
+    if (std::abs(angle) < angle_tolerance_rad ||
+        std::abs(angle - CV_PI) < angle_tolerance_rad) {
+      horiz_y.push_back(((float)l[1] + l[3]) * 0.5f);
+    } else if (std::abs(angle - CV_PI / 2.0f) < angle_tolerance_rad ||
+               std::abs(angle + CV_PI / 2.0f) < angle_tolerance_rad) {
+      vert_x.push_back(((float)l[0] + l[2]) * 0.5f);
+    }
+  }
+  if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
+    debug_line_image_lambda(vert_x, horiz_y, "step4");
+  }
+  // 5. Cluster the line coordinates to find the 19 main grid lines
+  auto cluster_1d = [](std::vector<float> &data, int k) -> std::vector<float> {
+    if (data.size() < static_cast<size_t>(k))
+      return {};
+    cv::Mat samples(data.size(), 1, CV_32F, data.data());
+    cv::Mat labels, centers;
+    cv::kmeans(samples, k, labels,
+               cv::TermCriteria(cv::TermCriteria::EPS + cv::TermCriteria::COUNT,
+                                10, 1.0),
+               3, cv::KMEANS_PP_CENTERS, centers);
+    std::vector<float> clustered_lines;
+    for (int i = 0; i < centers.rows; ++i) {
+      clustered_lines.push_back(centers.at<float>(i));
+    }
+    std::sort(clustered_lines.begin(), clustered_lines.end());
+    return clustered_lines;
+  };
 
-  bool found = cv::findChessboardCorners(
-      masked_gray, patternSize, inner_grid_corners,
-      cv::CALIB_CB_ADAPTIVE_THRESH | cv::CALIB_CB_NORMALIZE_IMAGE);
-
-  if (!found) {
-    LOG_ERROR << "Pass 2 Refinement failed: cv::findChessboardCorners could "
-                 "not find the 18x18 grid pattern.";
+  std::vector<float> final_horiz_lines = cluster_1d(horiz_y, 19);
+  std::vector<float> final_vert_lines = cluster_1d(vert_x, 19);
+  if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
+    debug_line_image_lambda(final_vert_lines, final_horiz_lines, "step5");
+  }
+  
+  if (final_horiz_lines.size() != 19 || final_vert_lines.size() != 19) {
+    LOG_ERROR
+        << "Pass 2 Refinement failed: Could not cluster into a 19x19 grid. H:"
+        << final_horiz_lines.size() << ", V:" << final_vert_lines.size();
     return false;
   }
 
-  LOG_INFO
-      << "Pass 2: cv::findChessboardCorners successfully found the inner grid.";
+  // 6. Extrapolate from the clustered grid
+  cv::Point2f tl_inner(final_vert_lines.front(), final_horiz_lines.front());
+  cv::Point2f tr_inner(final_vert_lines.back(), final_horiz_lines.front());
+  cv::Point2f bl_inner(final_vert_lines.front(), final_horiz_lines.back());
+  
+  float h_spacing = (tr_inner.x - tl_inner.x) / 18.0f;
+  float v_spacing = (bl_inner.y - tl_inner.y) / 18.0f;
 
-  // 4. Extrapolate from the found inner corners to the physical board corners.
-  cv::Point2f tl_inner = inner_grid_corners[0];
-  cv::Point2f tr_inner = inner_grid_corners[patternSize.width - 1];
-  cv::Point2f bl_inner =
-      inner_grid_corners[patternSize.width * (patternSize.height - 1)];
-  cv::Point2f br_inner =
-      inner_grid_corners[patternSize.width * patternSize.height - 1];
-
-  // Estimate the average spacing vector for one grid cell
-  cv::Point2f vec_h = (tr_inner - tl_inner) / (patternSize.width - 1.0f);
-  cv::Point2f vec_v = (bl_inner - tl_inner) / (patternSize.height - 1.0f);
-
-  // Extrapolate outwards by one grid unit to get the final corners in the
-  // corrected image
   std::vector<cv::Point2f> refined_corners_corrected = {
-      tl_inner - vec_h - vec_v, // Extrapolated Top-Left
-      tr_inner + vec_h - vec_v, // Extrapolated Top-Right
-      br_inner + vec_h + vec_v, // Extrapolated Bottom-Right
-      bl_inner - vec_h + vec_v  // Extrapolated Bottom-Left
+      cv::Point2f(tl_inner.x - h_spacing, tl_inner.y - v_spacing),
+      cv::Point2f(tr_inner.x + h_spacing, tr_inner.y - v_spacing),
+      cv::Point2f(tr_inner.x + h_spacing, bl_inner.y + v_spacing), // BR
+      cv::Point2f(tl_inner.x - h_spacing, bl_inner.y + v_spacing)  // BL
   };
-
-  // Debug visualization of the refinement step
-  if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
-    cv::Mat grid_debug = best_corrected_img.clone();
-    cv::drawChessboardCorners(grid_debug, patternSize, inner_grid_corners,
-                              found);
-    cv::polylines(
-        grid_debug,
-        std::vector<cv::Point>{cv::Point(refined_corners_corrected[0]),
-                               cv::Point(refined_corners_corrected[1]),
-                               cv::Point(refined_corners_corrected[2]),
-                               cv::Point(refined_corners_corrected[3])},
-        true, {0, 255, 255}, 2,
-        cv::LINE_AA); // Yellow for extrapolated boundary
-    cv::imwrite("share/Debug/P2_Refinement_Analysis.jpg", grid_debug);
+  
+  std::vector<cv::Point2f> final_corners_raw;
+  // 7. Transform back and finalize
+  cv::perspectiveTransform(refined_corners_corrected, final_corners_raw, M_inv);
+  
+  out_refined_corners.clear();
+  for(const auto& p : final_corners_raw) {
+      out_refined_corners.push_back(p);
   }
 
-  // 5. Transform the refined corners back to the original image space
-  std::vector<cv::Point2f> final_corners_raw;
-  cv::perspectiveTransform(refined_corners_corrected, final_corners_raw, M_inv);
+  if(bDebug) {
+    cv::Mat debug_img = bgr_image.clone();
+    cv::polylines(debug_img, out_refined_corners, true, {0,255,0}, 2, cv::LINE_AA);
+    cv::imwrite("share/Debug/Final_Refined_Result.jpg", debug_img);
+  }
 
-  out_refined_corners.clear();
-  for (const auto &p : final_corners_raw)
-    out_refined_corners.push_back(p);
-
-  LOG_INFO << "Pass 2 successful. Corners refined.";
+  LOG_INFO << "Pass 2 successful. Corners refined via line clustering.";
   return true;
 }
-
-using namespace cv;
-using namespace std;
 
 // 计算两点间距离
 double distanceBetweenPoints(const Point2f &p1, const Point2f &p2) {
