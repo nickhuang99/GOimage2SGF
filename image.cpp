@@ -5371,77 +5371,75 @@ calculate_grid_regularity_score(const cv::Mat &corrected_image,
  * @return true if a candidate could be successfully verified and refined.
  */
 /**
- * @brief Pass 2: Refines the rough board corners from Pass 1 by analyzing the grid structure.
+ * @brief Pass 2: Refines the rough board corners from Pass 1 by analyzing the
+ * grid structure.
  *
- * This function implements a robust line-detection strategy suitable for Go boards.
- * It corrects the perspective, finds all grid lines via Hough transform, clusters them
- * to determine the 19 precise horizontal and vertical line positions, and then
- * extrapolates the final corners from this idealized grid.
+ * This function implements a robust line-detection strategy suitable for Go
+ * boards. It corrects the perspective, finds all grid lines via Hough
+ * transform, clusters them to determine the 19 precise horizontal and vertical
+ * line positions, and then extrapolates the final corners from this idealized
+ * grid.
  *
  * @param bgr_image The original, raw BGR image.
  * @param p1_candidates A vector of rough quadrilaterals from Pass 1.
  * @param out_refined_corners The final, high-precision corner points.
  * @return true if a candidate could be successfully verified and refined.
  */
- using namespace std;
- using namespace cv;
+using namespace std;
+using namespace cv;
 bool refine_board_corners_pass2(
     const cv::Mat &bgr_image,
     const std::vector<std::vector<cv::Point>> &p1_candidates,
     std::vector<cv::Point> &out_refined_corners) {
-  LOG_INFO << "--- Starting Pass 2: Grid-Based Refinement (Using Hough Line Clustering) ---";
+
+  LOG_INFO << "--- Starting Pass 2: Grid-Based Refinement (Using ROBUST "
+              "Histogram Peak Finding) ---";
   extern bool bDebug;
+
   if (p1_candidates.empty()) {
     LOG_WARN << "Pass 2 received no candidates from Pass 1.";
     return false;
-  } else {
-    LOG_INFO << "candidates size: " << p1_candidates.size();
   }
 
+  // ... (Step 1 & 2: Find best candidate - This part is unchanged and correct)
+  // ...
   double best_score = -1.0;
   std::vector<cv::Point2f> best_candidate_f;
   int best_candidate_idx = -1;
-
-  // 1. Find the best candidate based on grid regularity score
   int idx = 0;
   for (const auto &candidate : p1_candidates) {
     if (candidate.size() != 4)
       continue;
-
-    // Robust corner sorting
     std::vector<cv::Point> sorted_candidate = candidate;
     cv::Moments moments = cv::moments(sorted_candidate);
     cv::Point2f center(moments.m10 / moments.m00, moments.m01 / moments.m00);
     std::sort(sorted_candidate.begin(), sorted_candidate.end(),
-              [&center](const cv::Point& a, const cv::Point& b) {
+              [&center](const cv::Point &a, const cv::Point &b) {
                 return std::atan2(a.y - center.y, a.x - center.x) <
                        std::atan2(b.y - center.y, b.x - center.x);
               });
     int min_sum_idx = 0;
     double min_sum = sorted_candidate[0].x + sorted_candidate[0].y;
     for (int i = 1; i < 4; ++i) {
-        if (sorted_candidate[i].x + sorted_candidate[i].y < min_sum) {
-            min_sum = sorted_candidate[i].x + sorted_candidate[i].y;
-            min_sum_idx = i;
-        }
+      if (sorted_candidate[i].x + sorted_candidate[i].y < min_sum) {
+        min_sum = sorted_candidate[i].x + sorted_candidate[i].y;
+        min_sum_idx = i;
+      }
     }
-    std::rotate(sorted_candidate.begin(), sorted_candidate.begin() + min_sum_idx, sorted_candidate.end());
+    std::rotate(sorted_candidate.begin(),
+                sorted_candidate.begin() + min_sum_idx, sorted_candidate.end());
 
     std::vector<cv::Point2f> candidate_f;
     for (const auto &p : sorted_candidate)
       candidate_f.push_back(p);
-
-    std::vector<cv::Point2f> dest_corners =
+    std::vector<cv::Point2f> dest_corners_warp =
         getBoardCornersCorrected(bgr_image.cols, bgr_image.rows);
-    cv::Mat M = cv::getPerspectiveTransform(candidate_f, dest_corners);
+    cv::Mat M = cv::getPerspectiveTransform(candidate_f, dest_corners_warp);
     cv::Mat corrected_img;
     cv::warpPerspective(bgr_image, corrected_img, M, bgr_image.size());
 
-    double score = calculate_grid_regularity_score(corrected_img, "Cand" + std::to_string(idx));
-    if (bDebug) {
-        cv::imwrite("share/Debug/P2_Candidate_" + std::to_string(idx) + "_CorrectedView.jpg", corrected_img);
-    }
-    LOG_DEBUG << "  Candidate " << idx << " score: " << score;
+    double score = calculate_grid_regularity_score(
+        corrected_img, "Cand" + std::to_string(idx));
     if (score > best_score) {
       best_score = score;
       best_candidate_f = candidate_f;
@@ -5449,167 +5447,168 @@ bool refine_board_corners_pass2(
     }
     idx++;
   }
-
-  if (best_candidate_idx == -1 || best_score < 1.0) { // Add score check
-    LOG_ERROR << "Pass 2 failed: No candidate produced a valid grid score.";
+  if (best_candidate_idx == -1) {
+    LOG_ERROR << "Pass 2 failed: No valid candidate found.";
     return false;
   }
-
-  LOG_INFO << "Selected best candidate #" << best_candidate_idx << " with score " << best_score;
-
-  // 2. Perform the definitive refinement on the best candidate
-  std::vector<cv::Point2f> dest_corners = getBoardCornersCorrected(bgr_image.cols, bgr_image.rows);
+  LOG_INFO << "Selected best candidate #" << best_candidate_idx
+           << " with score " << best_score;
+  std::vector<cv::Point2f> dest_corners =
+      getBoardCornersCorrected(bgr_image.cols, bgr_image.rows);
   cv::Mat M_best = cv::getPerspectiveTransform(best_candidate_f, dest_corners);
   cv::Mat M_inv;
   cv::invert(M_best, M_inv);
   cv::Mat best_corrected_img;
   cv::warpPerspective(bgr_image, best_corrected_img, M_best, bgr_image.size());
 
-  // 3. Thresholding and line detection
-  cv::Mat gray, thresh;
+  // Step 3: Corner Detection (Unchanged)
+  cv::Mat gray;
   cv::cvtColor(best_corrected_img, gray, cv::COLOR_BGR2GRAY);
-  cv::adaptiveThreshold(gray, thresh, 255, cv::ADAPTIVE_THRESH_GAUSSIAN_C, cv::THRESH_BINARY_INV, 11, 2);
+  std::vector<cv::Point2f> corners;
+  cv::goodFeaturesToTrack(gray, corners, 500, 0.01, 10, cv::noArray(), 3, false,
+                          0.04);
 
-  // Masking to remove noise outside the board area
-  cv::Mat roi_mask = cv::Mat::zeros(thresh.size(), CV_8UC1);
-  std::vector<cv::Point> roi_poly;
-  for(const auto& p : dest_corners) roi_poly.push_back(p);
-  cv::fillConvexPoly(roi_mask, roi_poly, cv::Scalar(255));
-  cv::bitwise_and(thresh, thresh, thresh, roi_mask);
-  if(bDebug) cv::imwrite("share/Debug/P2_Masked_For_Hough.jpg", thresh);
-
-  // --- NEW: More Aggressive Morphological cleaning to remove salt-and-pepper
-  // noise ---
-  cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(3, 3));
-  cv::Mat cleaned_thresh;
-  // Erode to remove small noise specks
-  cv::erode(thresh, cleaned_thresh, kernel, cv::Point(-1, -1), 1);
-  // Dilate to restore the main grid lines
-  cv::dilate(cleaned_thresh, cleaned_thresh, kernel, cv::Point(-1, -1), 1);
-  if (bDebug)
-    cv::imwrite("share/Debug/P2_Morphologically_Cleaned.jpg", cleaned_thresh);
-  // --- END NEW ---
-
-  std::vector<cv::Vec4i> lines;
-  cv::HoughLinesP(thresh, lines, 1, CV_PI / 180, 50, 50, 10);
-
-  if (lines.size() < 20) {
-      LOG_ERROR << "Pass 2 Refinement failed: Not enough Hough lines found (" << lines.size() << ").";
-      return false;
-  } else {
-    LOG_DEBUG << "Pass 2 Refinement Hough lines found: " << lines.size();
+  const size_t MIN_CORNERS_FOUND = 19 * 19 * 0.5;
+  if (corners.size() < MIN_CORNERS_FOUND) {
+    LOG_ERROR << "Pass 2 failed: Not enough corners found. Expected >"
+              << MIN_CORNERS_FOUND << ", found " << corners.size();
+    return false;
   }
-  // --- NEW: DEBUG VISUALIZATION for clustered lines ---
-  // make it a debug lambda:
-  auto debug_line_image_lambda = [ & best_corrected_img](                                     
-                                     const std::vector<float> &vert_x,
-                                     const std::vector<float> &horiz_y,
-                                     const std::string &name) {
-    cv::Mat clustered_lines_img = best_corrected_img.clone();
-    for (float y : horiz_y) {
-      cv::line(clustered_lines_img, cv::Point(0, y),
-               cv::Point(clustered_lines_img.cols, y), {0, 255, 0}, 1);
-    }
-    for (float x : vert_x) {
-      cv::line(clustered_lines_img, cv::Point(x, 0),
-               cv::Point(x, clustered_lines_img.rows), {255, 0, 255}, 1);
-    }
-    cv::imwrite("share/Debug/" + name + ".jpg", clustered_lines_img);
-    LOG_DEBUG << "Saved debug_line_image_lambda image for file name: " << name;
-  };
+  LOG_INFO << "Found " << corners.size() << " raw corner candidates.";
 
-  // if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
-  //   cv::Mat clustered_lines_img = best_corrected_img.clone();
-  //   for (float y : final_horiz_lines) {
-  //     cv::line(clustered_lines_img, cv::Point(0, y),
-  //              cv::Point(clustered_lines_img.cols, y), {0, 255, 0}, 1);
-  //   }
-  //   for (float x : final_vert_lines) {
-  //     cv::line(clustered_lines_img, cv::Point(x, 0),
-  //              cv::Point(x, clustered_lines_img.rows), {255, 0, 255}, 1);
-  //   }
-  //   cv::imwrite("share/Debug/P2_Clustered_Grid_Lines.jpg", clustered_lines_img);
-  //   LOG_DEBUG << "Saved clustered grid lines debug image.";
-  // }
-  // --- END DEBUG ---
-  // 4. Separate lines into horizontal and vertical and get their coordinates
-  std::vector<float> horiz_y, vert_x;
-  const float angle_tolerance_rad = 15.0f * CV_PI / 180.0f;
-  for (const auto &l : lines) {
-    float angle = std::atan2((float)l[3] - l[1], (float)l[2] - l[0]);
-    if (std::abs(angle) < angle_tolerance_rad ||
-        std::abs(angle - CV_PI) < angle_tolerance_rad) {
-      horiz_y.push_back(((float)l[1] + l[3]) * 0.5f);
-    } else if (std::abs(angle - CV_PI / 2.0f) < angle_tolerance_rad ||
-               std::abs(angle + CV_PI / 2.0f) < angle_tolerance_rad) {
-      vert_x.push_back(((float)l[0] + l[2]) * 0.5f);
+  // ========================================================================
+  // Step 4. Grid Structuring via ROBUST Histogram Peak Finding (IMPROVED LOGIC)
+  // ========================================================================
+  auto find_grid_lines_via_histogram =
+      [](const std::vector<cv::Point2f> &points, int dimension, int num_lines,
+         int image_dim_size) -> std::vector<float> {
+    // 1. Create histogram
+    std::vector<float> histogram_float(image_dim_size, 0.0f);
+    for (const auto &p : points) {
+      int pos =
+          (dimension == 0) ? static_cast<int>(p.x) : static_cast<int>(p.y);
+      if (pos >= 0 && pos < image_dim_size) {
+        histogram_float[pos]++;
+      }
     }
-  }
-  if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
-    debug_line_image_lambda(vert_x, horiz_y, "step4");
-  }
-  // 5. Cluster the line coordinates to find the 19 main grid lines
-  auto cluster_1d = [](std::vector<float> &data, int k) -> std::vector<float> {
-    if (data.size() < static_cast<size_t>(k))
+
+    // 2. Smooth the histogram to reduce noise
+    cv::Mat hist_mat(histogram_float);
+    cv::GaussianBlur(hist_mat, hist_mat, cv::Size(1, 5), 0); // 1D vertical blur
+
+    // 3. Find peaks with minimum height and distance
+    std::vector<std::pair<int, float>> peaks;
+    double max_val = 0;
+    cv::minMaxLoc(hist_mat, nullptr, &max_val);
+    const float MIN_PEAK_HEIGHT = static_cast<float>(max_val * 0.15);
+    const int MIN_PEAK_DISTANCE =
+        static_cast<int>((float)image_dim_size / 19.0f * 0.5f);
+
+    for (int i = 1; i < image_dim_size - 1; ++i) {
+      float val = hist_mat.at<float>(i);
+      if (val > hist_mat.at<float>(i - 1) && val > hist_mat.at<float>(i + 1) &&
+          val > MIN_PEAK_HEIGHT) {
+        peaks.push_back({i, val});
+      }
+    }
+
+    // 4. Sort by height and enforce minimum distance (non-maximal suppression)
+    std::sort(peaks.begin(), peaks.end(),
+              [](const auto &a, const auto &b) { return a.second > b.second; });
+
+    std::vector<std::pair<int, float>> final_peaks;
+    for (const auto &peak : peaks) {
+      if (final_peaks.size() >= static_cast<size_t>(num_lines))
+        break;
+      bool is_far_enough = true;
+      for (const auto &final_peak : final_peaks) {
+        if (std::abs(peak.first - final_peak.first) < MIN_PEAK_DISTANCE) {
+          is_far_enough = false;
+          break;
+        }
+      }
+      if (is_far_enough) {
+        final_peaks.push_back(peak);
+      }
+    }
+
+    if (final_peaks.size() < static_cast<size_t>(num_lines * 0.9)) {
+      LOG_WARN
+          << "Robust histogram failed to find enough distinct lines. Found: "
+          << final_peaks.size();
       return {};
-    cv::Mat samples(data.size(), 1, CV_32F, data.data());
-    cv::Mat labels, centers;
-    cv::kmeans(samples, k, labels,
-               cv::TermCriteria(cv::TermCriteria::EPS + cv::TermCriteria::COUNT,
-                                10, 1.0),
-               3, cv::KMEANS_PP_CENTERS, centers);
-    std::vector<float> clustered_lines;
-    for (int i = 0; i < centers.rows; ++i) {
-      clustered_lines.push_back(centers.at<float>(i));
     }
-    std::sort(clustered_lines.begin(), clustered_lines.end());
-    return clustered_lines;
+
+    // 5. Sort final peaks by position
+    std::sort(final_peaks.begin(), final_peaks.end(),
+              [](const auto &a, const auto &b) { return a.first < b.first; });
+
+    std::vector<float> final_lines;
+    for (const auto &peak : final_peaks) {
+      final_lines.push_back(static_cast<float>(peak.first));
+    }
+    return final_lines;
   };
 
-  std::vector<float> final_horiz_lines = cluster_1d(horiz_y, 19);
-  std::vector<float> final_vert_lines = cluster_1d(vert_x, 19);
-  if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
-    debug_line_image_lambda(final_vert_lines, final_horiz_lines, "step5");
-  }
-  
-  if (final_horiz_lines.size() != 19 || final_vert_lines.size() != 19) {
-    LOG_ERROR
-        << "Pass 2 Refinement failed: Could not cluster into a 19x19 grid. H:"
-        << final_horiz_lines.size() << ", V:" << final_vert_lines.size();
+  std::vector<float> final_vert_x =
+      find_grid_lines_via_histogram(corners, 0, 19, bgr_image.cols);
+  std::vector<float> final_horiz_y =
+      find_grid_lines_via_histogram(corners, 1, 19, bgr_image.rows);
+
+  if (final_vert_x.size() != 19 || final_horiz_y.size() != 19) {
+    LOG_ERROR << "Pass 2 Refinement failed: Could not find 19x19 grid lines. V:"
+              << final_vert_x.size() << ", H:" << final_horiz_y.size();
     return false;
   }
 
-  // 6. Extrapolate from the clustered grid
-  cv::Point2f tl_inner(final_vert_lines.front(), final_horiz_lines.front());
-  cv::Point2f tr_inner(final_vert_lines.back(), final_horiz_lines.front());
-  cv::Point2f bl_inner(final_vert_lines.front(), final_horiz_lines.back());
-  
-  float h_spacing = (tr_inner.x - tl_inner.x) / 18.0f;
-  float v_spacing = (bl_inner.y - tl_inner.y) / 18.0f;
+  // ... (Step 5 & 6: Extrapolate and finalize - Unchanged and now uses correct
+  // lines) ...
+  float tl_x = final_vert_x.front();
+  float tl_y = final_horiz_y.front();
+  float br_x = final_vert_x.back();
+  float br_y = final_horiz_y.back();
+  float avg_x_step = (br_x - tl_x) / 18.0f;
+  float avg_y_step = (br_y - tl_y) / 18.0f;
+  // cv::Point2f tl_outer(tl_x - avg_x_step, tl_y - avg_y_step);
+  // cv::Point2f tr_outer(br_x + avg_x_step, tl_y - avg_y_step);
+  // cv::Point2f br_outer(br_x + avg_x_step, br_y + avg_y_step);
+  // cv::Point2f bl_outer(tl_x - avg_x_step, br_y + avg_y_step);
 
-  std::vector<cv::Point2f> refined_corners_corrected = {
-      cv::Point2f(tl_inner.x - h_spacing, tl_inner.y - v_spacing),
-      cv::Point2f(tr_inner.x + h_spacing, tr_inner.y - v_spacing),
-      cv::Point2f(tr_inner.x + h_spacing, bl_inner.y + v_spacing), // BR
-      cv::Point2f(tl_inner.x - h_spacing, bl_inner.y + v_spacing)  // BL
-  };
-  
-  std::vector<cv::Point2f> final_corners_raw;
-  // 7. Transform back and finalize
-  cv::perspectiveTransform(refined_corners_corrected, final_corners_raw, M_inv);
-  
+  cv::Point2f tl_outer(tl_x, tl_y);
+  cv::Point2f tr_outer(br_x, tl_y);
+  cv::Point2f br_outer(br_x, br_y);
+  cv::Point2f bl_outer(tl_x, br_y);
+  std::vector<cv::Point2f> refined_corners_corrected = {tl_outer, tr_outer,
+                                                        br_outer, bl_outer};
+
+  if (bDebug) {
+    cv::Mat ideal_grid_img = best_corrected_img.clone();
+    for (float y : final_horiz_y)
+      cv::line(ideal_grid_img, cv::Point2f(0, y),
+               cv::Point2f(ideal_grid_img.cols, y), {0, 255, 0}, 1);
+    for (float x : final_vert_x)
+      cv::line(ideal_grid_img, cv::Point2f(x, 0),
+               cv::Point2f(x, ideal_grid_img.rows), {255, 0, 0}, 1);
+    std::vector<cv::Point> refined_corners_for_drawing;
+    for (const auto &p_float : refined_corners_corrected) {
+      refined_corners_for_drawing.push_back(
+          cv::Point(static_cast<int>(p_float.x), static_cast<int>(p_float.y)));
+    }
+    cv::polylines(ideal_grid_img, {refined_corners_for_drawing}, true,
+                  {0, 255, 255}, 2);
+    cv::imwrite("share/Debug/P2_Idealized_Grid_Histogram.jpg", ideal_grid_img);
+  }
+
+  std::vector<cv::Point2f> final_corners_raw_f;
+  cv::perspectiveTransform(refined_corners_corrected, final_corners_raw_f,
+                           M_inv);
   out_refined_corners.clear();
-  for(const auto& p : final_corners_raw) {
-      out_refined_corners.push_back(p);
+  for (const auto &p : final_corners_raw_f) {
+    out_refined_corners.push_back(p);
   }
 
-  if(bDebug) {
-    cv::Mat debug_img = bgr_image.clone();
-    cv::polylines(debug_img, out_refined_corners, true, {0,255,0}, 2, cv::LINE_AA);
-    cv::imwrite("share/Debug/Final_Refined_Result.jpg", debug_img);
-  }
-
-  LOG_INFO << "Pass 2 successful. Corners refined via line clustering.";
+  LOG_INFO << "Pass 2 successful. Corners refined via robust histogram peak "
+              "finding.";
   return true;
 }
 

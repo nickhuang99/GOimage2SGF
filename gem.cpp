@@ -2514,7 +2514,8 @@ void runDetectBoardWorkflow(const std::string &imagePath) {
 
   // --- PASS 2 ---
   std::vector<cv::Point> refined_corners;
-  if (refine_board_corners_pass2(frame, p1_candidates, refined_corners)) {
+  if (refine_board_corners_pass2(frame, p1_candidates, refined_corners) &&
+      !refined_corners.empty()) {
     LOG_INFO << "PASS 2 SUCCESS. Board detected and corners refined.";
 
     cv::Mat display_image = frame.clone();
