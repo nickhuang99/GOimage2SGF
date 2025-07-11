@@ -5467,66 +5467,72 @@ find_sharp_grid_lines(const std::vector<float> &histogram, int num_lines) {
  * peaks.
  *
  * This function is designed to handle data with residual perspective
- * distortion. It finds the most dominant peak region as an anchor, estimates
- * the grid spacing, generates an ideal grid, and then "snaps" the ideal lines
- * to the real data.
+ * distortion. It uses a Fast Fourier Transform (FFT) to robustly determine the
+ * grid's average spacing. It then creates an ideal grid template and slides it
+ * across the histogram to find the optimal alignment, preventing the shifting
+ * errors of the previous anchor-based method.
  *
  * @param histogram A vector representing the 1D projection of detected points.
  * @param num_lines The target number of lines to find (e.g., 19).
  * @return A vector of the found line positions, sorted by position. Returns
  * empty if it fails.
  */
-// In image.cpp
-
-// ... (No changes to other helper functions) ...
-// In image.cpp
-
-// ... (No changes to other helper functions) ...
-
 static std::vector<float>
 find_smeared_grid_lines(const std::vector<float> &histogram, int num_lines) {
-  if (histogram.empty())
+  if (histogram.empty()) {
     return {};
+  }
 
-  // Step 1: Robust Spacing Estimation via FFT (This part is working correctly)
+  // --- Step 1: Robust Spacing Estimation via FFT ---
   cv::Mat hist_mat_for_fft;
   cv::Mat(histogram).convertTo(hist_mat_for_fft, CV_32F);
+
+  // Perform a 1D Discrete Fourier Transform
   cv::dft(hist_mat_for_fft, hist_mat_for_fft, cv::DFT_COMPLEX_OUTPUT);
+
+  // Calculate the magnitude spectrum
   cv::Mat magnitude_spectrum;
   std::vector<cv::Mat> split_dft;
   cv::split(hist_mat_for_fft, split_dft);
   cv::magnitude(split_dft[0], split_dft[1], magnitude_spectrum);
 
+  // Find the peak in the frequency spectrum (ignoring the DC component at index
+  // 0)
   double max_freq_val = 0;
   int peak_freq_idx = 0;
+  // Start from a low index to avoid low-frequency noise
   for (int i = 5; i < magnitude_spectrum.rows / 2; ++i) {
     if (magnitude_spectrum.at<float>(i) > max_freq_val) {
       max_freq_val = magnitude_spectrum.at<float>(i);
       peak_freq_idx = i;
     }
   }
-  if (peak_freq_idx == 0)
+
+  if (peak_freq_idx == 0) {
+    LOG_ERROR << "SmearedLines: Could not find a dominant frequency via FFT.";
     return {};
+  }
+
   float avg_spacing =
       static_cast<float>(histogram.size()) / static_cast<float>(peak_freq_idx);
   LOG_DEBUG << "SmearedLines: Robust spacing via FFT = " << avg_spacing;
 
-  // --- Step 2: Grid Template Matching (NEW, ROBUST ALIGNMENT) ---
-  // Replaces the flawed anchor-based logic.
-
+  // --- Step 2: Grid Template Matching for Robust Alignment ---
   float best_offset = 0;
   double max_score = -1.0;
 
   // We only need to test offsets within one grid cell's range
   for (float offset = 0; offset < avg_spacing; offset += 1.0f) {
     double current_score = 0;
+    // For the current offset, sum the histogram values at each ideal line
+    // position
     for (int i = 0; i < num_lines; ++i) {
       int pos = static_cast<int>(round(offset + i * avg_spacing));
       if (pos >= 0 && pos < (int)histogram.size()) {
-        // Add the histogram value (the "energy") at this ideal line position
         current_score += histogram[pos];
       }
     }
+    // If this offset gives a better score, store it
     if (current_score > max_score) {
       max_score = current_score;
       best_offset = offset;
@@ -5536,20 +5542,20 @@ find_smeared_grid_lines(const std::vector<float> &histogram, int num_lines) {
   LOG_DEBUG << "SmearedLines: Best grid alignment found with offset "
             << best_offset;
 
-  // Step 3: Generate the final lines using the best offset
+  // --- Step 3: Generate the final lines using the best found offset ---
   std::vector<float> final_lines;
   for (int i = 0; i < num_lines; ++i) {
     final_lines.push_back(best_offset + i * avg_spacing);
   }
 
   // Final validation
-  if (final_lines.size() != static_cast<size_t>(num_lines))
+  if (final_lines.size() != static_cast<size_t>(num_lines)) {
+    // This should ideally not happen if the loop runs completely
     return {};
+  }
 
   return final_lines;
 }
-
-// ... (The rest of image.cpp remains unchanged) ...
 
 static void finalize_corners(const std::vector<float> &vert_x,
                              const std::vector<float> &horiz_y,
