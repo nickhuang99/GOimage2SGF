@@ -5631,19 +5631,33 @@ create_histogram(const std::vector<cv::Point2f> &points, int dimension,
   }
   return histogram;
 }
+// In image.cpp
 
-// --- The Main Adaptive Refinement Function ---
+// NOTE: This function requires the helper functions:
+// `calculate_spacing_stddev`, `find_sharp_grid_lines`, `create_histogram`, and
+// `finalize_corners` from our previous work.
+
+/**
+ * @brief (RESTORED BEST VERSION) Refines board corners using the most robust
+ * method for high-quality images.
+ *
+ * This version uses a single, direct pipeline:
+ * 1. Corrects perspective based on the best candidate from Pass 1.
+ * 2. Uses cv::goodFeaturesToTrack to find grid intersections.
+ * 3. Uses a robust histogram analysis to find the 19x19 grid lines from the
+ * corners. This approach is proven to be highly accurate for clear, well-lit
+ * images.
+ */
 bool refine_board_corners_pass2(
     const cv::Mat &bgr_image,
     const std::vector<std::vector<cv::Point>> &p1_candidates,
     std::vector<cv::Point> &out_refined_corners) {
 
-  LOG_INFO << "--- Starting Pass 2: ADAPTIVE Grid-Based Refinement with "
-              "Quality Control ---";
+  LOG_INFO
+      << "--- Starting Pass 2: Board Refinement (Restored Robust Method) ---";
   extern bool bDebug;
 
-  // ... (Step 1 & 2: Find best candidate and get corrected image - Unchanged)
-  // ...
+  // --- Step 1 & 2: Find best candidate and get corrected image ---
   if (p1_candidates.empty())
     return false;
   double best_score = -1.0;
@@ -5670,8 +5684,11 @@ bool refine_board_corners_pass2(
       best_candidate_idx = i;
     }
   }
-  if (best_candidate_idx == -1)
+  if (best_candidate_idx == -1) {
+    LOG_ERROR << "Pass 2 failed: No suitable candidate from Pass 1.";
     return false;
+  }
+
   LOG_INFO << "Selected best candidate #" << best_candidate_idx
            << " with score " << best_score;
   cv::Mat M_best = cv::getPerspectiveTransform(
@@ -5684,72 +5701,34 @@ bool refine_board_corners_pass2(
   cv::Mat gray;
   cv::cvtColor(best_corrected_img, gray, cv::COLOR_BGR2GRAY);
 
-  bool primary_method_success = false;
-
-  // --- STRATEGY 1: Corner Detection (High-Quality Images) ---
-  LOG_INFO
-      << "Attempting refinement using primary method (goodFeaturesToTrack)...";
+  // --- Step 3: Find Corners using goodFeaturesToTrack ---
+  LOG_INFO << "Attempting refinement using goodFeaturesToTrack...";
   std::vector<cv::Point2f> corners;
   cv::goodFeaturesToTrack(gray, corners, 500, 0.01, 10);
 
-  if (corners.size() >= 100) {
-    std::vector<float> vert_x =
-        find_sharp_grid_lines(create_histogram(corners, 0, gray.cols), 19);
-    std::vector<float> horiz_y =
-        find_sharp_grid_lines(create_histogram(corners, 1, gray.rows), 19);
-
-    if (vert_x.size() == 19 && horiz_y.size() == 19) {
-      double avg_x_spacing = (vert_x.back() - vert_x.front()) / 18.0;
-      double avg_y_spacing = (horiz_y.back() - horiz_y.front()) / 18.0;
-      if (calculate_spacing_stddev(vert_x) < (avg_x_spacing * 0.20) &&
-          calculate_spacing_stddev(horiz_y) < (avg_y_spacing * 0.20)) {
-        LOG_INFO << "Primary method successful with a high-quality grid.";
-        primary_method_success = true;
-        finalize_corners(vert_x, horiz_y, M_inv, out_refined_corners);
-      } else {
-        LOG_WARN << "Primary method found 19x19 lines, but grid quality is "
-                    "poor. Rejecting.";
-      }
-    }
-  }
-
-  if (primary_method_success)
-    return true;
-
-  // --- STRATEGY 2: Hough Lines (Fallback for Low-Quality Images) ---
-  LOG_WARN << "Primary method failed or was rejected. Falling back to Hough "
-              "Line Transform method.";
-  cv::Mat edges;
-  cv::Canny(gray, edges, 50, 150, 3);
-  std::vector<cv::Vec4i> lines;
-  cv::HoughLinesP(edges, lines, 1, CV_PI / 180, 20, gray.cols * 0.05, 10);
-
-  // ... (Calculate intersections from Hough lines as before) ...
-  std::vector<cv::Point2f> intersections =
-      get_intersections_from_hough_lines(lines, bgr_image.size());
-  if (intersections.size() < 100) {
-    LOG_ERROR
-        << "Fallback Hough method failed to find enough intersection points.";
+  if (corners.size() < 100) {
+    LOG_ERROR << "Failed to find enough feature corners (" << corners.size()
+              << "). Image may be too blurry or low-contrast.";
     return false;
   }
 
-  // *** MODIFIED: Use the new specialized histogram functions ***
+  // --- Step 4: Find Grid Lines using Histogram Analysis ---
   std::vector<float> vert_x =
-      find_sharp_grid_lines(create_histogram(intersections, 0, gray.cols), 19);
-  std::vector<float> horiz_y = find_smeared_grid_lines(
-      create_histogram(intersections, 1, gray.rows), 19);
+      find_sharp_grid_lines(create_histogram(corners, 0, gray.cols), 19);
+  std::vector<float> horiz_y =
+      find_sharp_grid_lines(create_histogram(corners, 1, gray.rows), 19);
 
-  LOG_DEBUG << "Fallback method found " << vert_x.size() << " vertical and "
-            << horiz_y.size() << " horizontal lines.";
-
-  if (vert_x.size() == 19 && horiz_y.size() == 19) {
-    LOG_INFO << "Fallback method successful.";
-    finalize_corners(vert_x, horiz_y, M_inv, out_refined_corners);
-    return true;
+  if (vert_x.size() != 19 || horiz_y.size() != 19) {
+    LOG_ERROR
+        << "Failed to find a 19x19 grid from the detected corners. Found V:"
+        << vert_x.size() << ", H:" << horiz_y.size();
+    return false;
   }
 
-  LOG_ERROR << "All refinement strategies failed.";
-  return false;
+  // --- Step 5: Finalize Corners and Return Success ---
+  LOG_INFO << "Successfully refined board corners.";
+  finalize_corners(vert_x, horiz_y, M_inv, out_refined_corners);
+  return true;
 }
 
 /**
