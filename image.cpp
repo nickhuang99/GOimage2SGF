@@ -5059,7 +5059,8 @@ struct LineSegment {
   double length;
 };
 
-// // Helper function to find the intersection of two lines defined by two points
+// // Helper function to find the intersection of two lines defined by two
+// points
 // // each.
 // static bool get_line_intersection(cv::Point p1, cv::Point p2, cv::Point p3,
 //                                   cv::Point p4, cv::Point2f &intersection) {
@@ -5069,21 +5070,24 @@ struct LineSegment {
 //     return false;
 //   }
 //   float t =
-//       (float)((p1.x - p3.x) * (p3.y - p4.y) - (p1.y - p3.y) * (p3.x - p4.x)) /
-//       det;
+//       (float)((p1.x - p3.x) * (p3.y - p4.y) - (p1.y - p3.y) * (p3.x - p4.x))
+//       / det;
 //   intersection.x = p1.x + t * (p2.x - p1.x);
 //   intersection.y = p1.y + t * (p2.y - p1.y);
 //   return true;
 // }
 
-
 // Helper function to find the intersection of two lines.
-static bool get_line_intersection(cv::Point2f p1, cv::Point2f p2, cv::Point2f p3, cv::Point2f p4, cv::Point2f &intersection) {
-    float det = (p2.x - p1.x) * (p4.y - p3.y) - (p2.y - p1.y) * (p4.x - p3.x);
-    if (std::abs(det) < 1e-6) return false;
-    float t = ((p3.x - p1.x) * (p4.y - p3.y) - (p3.y - p1.y) * (p4.x - p3.x)) / det;
-    intersection = p1 + t * (p2 - p1);
-    return true;
+static bool get_line_intersection(cv::Point2f p1, cv::Point2f p2,
+                                  cv::Point2f p3, cv::Point2f p4,
+                                  cv::Point2f &intersection) {
+  float det = (p2.x - p1.x) * (p4.y - p3.y) - (p2.y - p1.y) * (p4.x - p3.x);
+  if (std::abs(det) < 1e-6)
+    return false;
+  float t =
+      ((p3.x - p1.x) * (p4.y - p3.y) - (p3.y - p1.y) * (p4.x - p3.x)) / det;
+  intersection = p1 + t * (p2 - p1);
+  return true;
 }
 
 /**
@@ -5339,277 +5343,417 @@ using namespace std;
 using namespace cv;
 // In image.cpp
 
-
 // Helper to calculate spacing standard deviation for grid quality check.
-static double calculate_spacing_stddev(const std::vector<float>& values) {
-    if (values.size() < 2) return 1e9; // Return a large number for failure
-    std::vector<double> spacings;
-    for (size_t i = 1; i < values.size(); ++i) {
-        spacings.push_back(values[i] - values[i-1]);
-    }
-    double sum = std::accumulate(spacings.begin(), spacings.end(), 0.0);
-    double mean = sum / spacings.size();
-    double sq_sum = std::inner_product(spacings.begin(), spacings.end(), spacings.begin(), 0.0);
-    return std::sqrt(sq_sum / spacings.size() - mean * mean);
+static double calculate_spacing_stddev(const std::vector<float> &values) {
+  if (values.size() < 2)
+    return 1e9; // Return a large number for failure
+  std::vector<double> spacings;
+  for (size_t i = 1; i < values.size(); ++i) {
+    spacings.push_back(values[i] - values[i - 1]);
+  }
+  double sum = std::accumulate(spacings.begin(), spacings.end(), 0.0);
+  double mean = sum / spacings.size();
+  double sq_sum = std::inner_product(spacings.begin(), spacings.end(),
+                                     spacings.begin(), 0.0);
+  return std::sqrt(sq_sum / spacings.size() - mean * mean);
 };
 
 // *** NEW DEBUG HELPER ***
 // Draws a 1D histogram to an image file for visualization.
-static void draw_histogram(const std::vector<float>& data, const std::string& filename, int image_width = 1000, int image_height = 400) {
-    if (data.empty()) return;
+static void draw_histogram(const std::vector<float> &data,
+                           const std::string &filename, int image_width = 1000,
+                           int image_height = 400) {
+  if (data.empty())
+    return;
 
-    cv::Mat hist_image = cv::Mat::zeros(image_height, image_width, CV_8UC3);
-    double max_val = 0;
-    for(const auto& val : data) {
-        if (val > max_val) max_val = val;
-    }
+  cv::Mat hist_image = cv::Mat::zeros(image_height, image_width, CV_8UC3);
+  double max_val = 0;
+  for (const auto &val : data) {
+    if (val > max_val)
+      max_val = val;
+  }
 
-    float bin_width = (float)image_width / data.size();
+  float bin_width = (float)image_width / data.size();
 
-    for (size_t i = 0; i < data.size(); ++i) {
-        float bin_height = (data[i] / max_val) * (image_height * 0.95);
-        cv::rectangle(hist_image,
-                      cv::Point(i * bin_width, image_height),
-                      cv::Point((i + 1) * bin_width, image_height - bin_height),
-                      cv::Scalar(150, 150, 255), // Light red bars
-                      cv::FILLED);
-    }
-    cv::imwrite("share/Debug/" + filename, hist_image);
+  for (size_t i = 0; i < data.size(); ++i) {
+    float bin_height = (data[i] / max_val) * (image_height * 0.95);
+    cv::rectangle(hist_image, cv::Point(i * bin_width, image_height),
+                  cv::Point((i + 1) * bin_width, image_height - bin_height),
+                  cv::Scalar(150, 150, 255), // Light red bars
+                  cv::FILLED);
+  }
+  cv::imwrite("share/Debug/" + filename, hist_image);
 }
 
+// In image.cpp
 
+// ... (keep existing includes and helper functions like get_line_intersection,
+// etc.) ...
+
+/**
+ * @brief Finds grid lines from a histogram with sharp, well-defined peaks.
+ *
+ * This function is optimized for clean data. It smooths the histogram, finds
+ * prominent peaks, and then calculates their center-of-mass for sub-pixel
+ * accuracy.
+ *
+ * @param histogram A vector representing the 1D projection of detected points.
+ * @param num_lines The target number of lines to find (e.g., 19).
+ * @return A vector of the found line positions, sorted by position. Returns
+ * empty if it fails.
+ */
+static std::vector<float>
+find_sharp_grid_lines(const std::vector<float> &histogram, int num_lines) {
+  if (histogram.empty())
+    return {};
+
+  cv::Mat hist_mat(histogram);
+  cv::GaussianBlur(hist_mat, hist_mat, cv::Size(1, 5), 0);
+
+  std::vector<std::pair<int, float>> peaks;
+  double max_val;
+  cv::minMaxLoc(hist_mat, nullptr, &max_val);
+  const float MIN_PEAK_HEIGHT = static_cast<float>(max_val * 0.1);
+
+  for (int i = 1; i < hist_mat.rows - 1; ++i) {
+    float val = hist_mat.at<float>(i);
+    if (val > hist_mat.at<float>(i - 1) && val > hist_mat.at<float>(i + 1) &&
+        val > MIN_PEAK_HEIGHT) {
+      peaks.push_back({i, val});
+    }
+  }
+
+  std::sort(peaks.begin(), peaks.end(),
+            [](const auto &a, const auto &b) { return a.second > b.second; });
+
+  std::vector<float> final_lines;
+  const int MIN_PEAK_DISTANCE =
+      static_cast<int>((float)histogram.size() / num_lines * 0.7f);
+
+  for (const auto &peak : peaks) {
+    if (final_lines.size() >= static_cast<size_t>(num_lines))
+      break;
+    bool is_far_enough = true;
+    for (const auto &accepted_line_pos : final_lines) {
+      if (std::abs(peak.first - accepted_line_pos) < MIN_PEAK_DISTANCE) {
+        is_far_enough = false;
+        break;
+      }
+    }
+    if (is_far_enough) {
+      float total_mass = 0, weighted_sum = 0;
+      int window = 2;
+      for (int j = -window; j <= window; ++j) {
+        int pos = peak.first + j;
+        if (pos >= 0 && pos < (int)histogram.size()) {
+          float mass = hist_mat.at<float>(pos);
+          total_mass += mass;
+          weighted_sum += static_cast<float>(pos) * mass;
+        }
+      }
+      final_lines.push_back((total_mass > 0) ? (weighted_sum / total_mass)
+                                             : static_cast<float>(peak.first));
+    }
+  }
+
+  if (final_lines.size() < static_cast<size_t>(num_lines))
+    return {};
+  std::sort(final_lines.begin(), final_lines.end());
+  return final_lines;
+}
+
+/**
+ * @brief Finds grid lines from a histogram with wide, smeared, or irregular
+ * peaks.
+ *
+ * This function is designed to handle data with residual perspective
+ * distortion. It finds the most dominant peak region as an anchor, estimates
+ * the grid spacing, generates an ideal grid, and then "snaps" the ideal lines
+ * to the real data.
+ *
+ * @param histogram A vector representing the 1D projection of detected points.
+ * @param num_lines The target number of lines to find (e.g., 19).
+ * @return A vector of the found line positions, sorted by position. Returns
+ * empty if it fails.
+ */
+// In image.cpp
+
+// ... (No changes to other helper functions) ...
+// In image.cpp
+
+// ... (No changes to other helper functions) ...
+
+static std::vector<float>
+find_smeared_grid_lines(const std::vector<float> &histogram, int num_lines) {
+  if (histogram.empty())
+    return {};
+
+  // Step 1: Robust Spacing Estimation via FFT (This part is working correctly)
+  cv::Mat hist_mat_for_fft;
+  cv::Mat(histogram).convertTo(hist_mat_for_fft, CV_32F);
+  cv::dft(hist_mat_for_fft, hist_mat_for_fft, cv::DFT_COMPLEX_OUTPUT);
+  cv::Mat magnitude_spectrum;
+  std::vector<cv::Mat> split_dft;
+  cv::split(hist_mat_for_fft, split_dft);
+  cv::magnitude(split_dft[0], split_dft[1], magnitude_spectrum);
+
+  double max_freq_val = 0;
+  int peak_freq_idx = 0;
+  for (int i = 5; i < magnitude_spectrum.rows / 2; ++i) {
+    if (magnitude_spectrum.at<float>(i) > max_freq_val) {
+      max_freq_val = magnitude_spectrum.at<float>(i);
+      peak_freq_idx = i;
+    }
+  }
+  if (peak_freq_idx == 0)
+    return {};
+  float avg_spacing =
+      static_cast<float>(histogram.size()) / static_cast<float>(peak_freq_idx);
+  LOG_DEBUG << "SmearedLines: Robust spacing via FFT = " << avg_spacing;
+
+  // --- Step 2: Grid Template Matching (NEW, ROBUST ALIGNMENT) ---
+  // Replaces the flawed anchor-based logic.
+
+  float best_offset = 0;
+  double max_score = -1.0;
+
+  // We only need to test offsets within one grid cell's range
+  for (float offset = 0; offset < avg_spacing; offset += 1.0f) {
+    double current_score = 0;
+    for (int i = 0; i < num_lines; ++i) {
+      int pos = static_cast<int>(round(offset + i * avg_spacing));
+      if (pos >= 0 && pos < (int)histogram.size()) {
+        // Add the histogram value (the "energy") at this ideal line position
+        current_score += histogram[pos];
+      }
+    }
+    if (current_score > max_score) {
+      max_score = current_score;
+      best_offset = offset;
+    }
+  }
+
+  LOG_DEBUG << "SmearedLines: Best grid alignment found with offset "
+            << best_offset;
+
+  // Step 3: Generate the final lines using the best offset
+  std::vector<float> final_lines;
+  for (int i = 0; i < num_lines; ++i) {
+    final_lines.push_back(best_offset + i * avg_spacing);
+  }
+
+  // Final validation
+  if (final_lines.size() != static_cast<size_t>(num_lines))
+    return {};
+
+  return final_lines;
+}
+
+// ... (The rest of image.cpp remains unchanged) ...
+
+static void finalize_corners(const std::vector<float> &vert_x,
+                             const std::vector<float> &horiz_y,
+                             const cv::Mat &M_inv,
+                             std::vector<cv::Point> &out_refined_corners) {
+  float tl_x = vert_x.front(), tl_y = horiz_y.front(), br_x = vert_x.back(),
+        br_y = horiz_y.back();
+  std::vector<cv::Point2f> refined_corners_corrected = {
+      {tl_x, tl_y}, {br_x, tl_y}, {br_x, br_y}, {tl_x, br_y}};
+  std::vector<cv::Point2f> final_corners_f;
+  cv::perspectiveTransform(refined_corners_corrected, final_corners_f, M_inv);
+  out_refined_corners.clear();
+  for (const auto &p : final_corners_f)
+    out_refined_corners.push_back(p);
+}
+
+// *** NEW HELPER FUNCTION TO ADD ***
+// This function was missing, causing the compile error.
+static std::vector<cv::Point2f>
+get_intersections_from_hough_lines(const std::vector<cv::Vec4i> &lines,
+                                   cv::Size image_size) {
+  std::vector<cv::Vec4i> horizontal_lines, vertical_lines;
+  const double angle_tolerance_deg =
+      45.0; // Lines within 45 deg of horizontal/vertical axis
+
+  for (const auto &l : lines) {
+    double angle =
+        std::abs(std::atan2(l[3] - l[1], l[2] - l[0]) * 180.0 / CV_PI);
+    // Normalize angle to be within [0, 180)
+    while (angle >= 180.0)
+      angle -= 180.0;
+
+    if (angle < angle_tolerance_deg || angle > (180.0 - angle_tolerance_deg)) {
+      horizontal_lines.push_back(l);
+    } else if (std::abs(angle - 90.0) < angle_tolerance_deg) {
+      vertical_lines.push_back(l);
+    }
+  }
+
+  std::vector<cv::Point2f> intersections;
+  for (const auto &h : horizontal_lines) {
+    for (const auto &v : vertical_lines) {
+      cv::Point2f intersection_pt;
+      if (get_line_intersection({(float)h[0], (float)h[1]},
+                                {(float)h[2], (float)h[3]},
+                                {(float)v[0], (float)v[1]},
+                                {(float)v[2], (float)v[3]}, intersection_pt)) {
+        // Check if the intersection is within the image bounds
+        if (intersection_pt.x >= 0 && intersection_pt.x < image_size.width &&
+            intersection_pt.y >= 0 && intersection_pt.y < image_size.height) {
+          intersections.push_back(intersection_pt);
+        }
+      }
+    }
+  }
+  LOG_DEBUG << "Fallback: Found " << horizontal_lines.size() << "H, "
+            << vertical_lines.size() << "V lines, yielding "
+            << intersections.size() << " intersections.";
+  return intersections;
+}
+
+// You will also need these two small helper functions placed before
+// refine_board_corners_pass2
+static std::vector<float>
+create_histogram(const std::vector<cv::Point2f> &points, int dimension,
+                 int image_dim_size) {
+  std::vector<float> histogram(image_dim_size, 0.0f);
+  for (const auto &p : points) {
+    int pos = (dimension == 0) ? static_cast<int>(p.x) : static_cast<int>(p.y);
+    if (pos >= 0 && pos < image_dim_size) {
+      histogram[pos]++;
+    }
+  }
+  return histogram;
+}
+
+// --- The Main Adaptive Refinement Function ---
 bool refine_board_corners_pass2(
     const cv::Mat &bgr_image,
     const std::vector<std::vector<cv::Point>> &p1_candidates,
     std::vector<cv::Point> &out_refined_corners) {
 
-    LOG_INFO << "--- Starting Pass 2: ADAPTIVE Grid-Based Refinement with Quality Control ---";
-    extern bool bDebug;
+  LOG_INFO << "--- Starting Pass 2: ADAPTIVE Grid-Based Refinement with "
+              "Quality Control ---";
+  extern bool bDebug;
 
-    // Step 1: Find the best candidate from Pass 1
-    if (p1_candidates.empty()) return false;
-    double best_score = -1.0;
-    std::vector<cv::Point2f> best_candidate_f;
-    int best_candidate_idx = -1;
-    for (size_t i = 0; i < p1_candidates.size(); ++i) {
-      if (p1_candidates[i].size() != 4)
-        continue;
-
-      // *** FIX: Convert integer points to float points before calling the
-      // function ***
-      std::vector<cv::Point2f> current_candidate_f;
-      for (const auto &p : p1_candidates[i]) {
-        current_candidate_f.push_back(cv::Point2f(p));
-      }
-
-      cv::Mat M = cv::getPerspectiveTransform(
-          current_candidate_f,
-          getBoardCornersCorrected(bgr_image.cols, bgr_image.rows));
-      if (M.empty())
-        continue; // Add a check for a valid transform
-
-      cv::Mat corrected_img;
-      cv::warpPerspective(bgr_image, corrected_img, M, bgr_image.size());
-      double score = calculate_grid_regularity_score(
-          corrected_img, "Cand" + std::to_string(i));
-
-      if (score > best_score) {
-        best_score = score;
-        best_candidate_f = current_candidate_f; // Store the float version
-        best_candidate_idx = i;
-      }
+  // ... (Step 1 & 2: Find best candidate and get corrected image - Unchanged)
+  // ...
+  if (p1_candidates.empty())
+    return false;
+  double best_score = -1.0;
+  std::vector<cv::Point2f> best_candidate_f;
+  int best_candidate_idx = -1;
+  for (size_t i = 0; i < p1_candidates.size(); ++i) {
+    if (p1_candidates[i].size() != 4)
+      continue;
+    std::vector<cv::Point2f> current_candidate_f;
+    for (const auto &p : p1_candidates[i])
+      current_candidate_f.push_back(cv::Point2f(p));
+    cv::Mat M = cv::getPerspectiveTransform(
+        current_candidate_f,
+        getBoardCornersCorrected(bgr_image.cols, bgr_image.rows));
+    if (M.empty())
+      continue;
+    cv::Mat corrected_img;
+    cv::warpPerspective(bgr_image, corrected_img, M, bgr_image.size());
+    double score = calculate_grid_regularity_score(corrected_img,
+                                                   "Cand" + std::to_string(i));
+    if (score > best_score) {
+      best_score = score;
+      best_candidate_f = current_candidate_f;
+      best_candidate_idx = i;
     }
-    if (best_candidate_idx == -1)
-      return false;
+  }
+  if (best_candidate_idx == -1)
+    return false;
+  LOG_INFO << "Selected best candidate #" << best_candidate_idx
+           << " with score " << best_score;
+  cv::Mat M_best = cv::getPerspectiveTransform(
+      best_candidate_f,
+      getBoardCornersCorrected(bgr_image.cols, bgr_image.rows));
+  cv::Mat M_inv;
+  cv::invert(M_best, M_inv);
+  cv::Mat best_corrected_img;
+  cv::warpPerspective(bgr_image, best_corrected_img, M_best, bgr_image.size());
+  cv::Mat gray;
+  cv::cvtColor(best_corrected_img, gray, cv::COLOR_BGR2GRAY);
 
-    // Step 2: Get perspective-corrected image
-    LOG_INFO << "Selected best candidate #" << best_candidate_idx << " with score " << best_score;
-    cv::Mat M_best = cv::getPerspectiveTransform(best_candidate_f, getBoardCornersCorrected(bgr_image.cols, bgr_image.rows));
-    cv::Mat M_inv;
-    cv::invert(M_best, M_inv);
-    cv::Mat best_corrected_img;
-    cv::warpPerspective(bgr_image, best_corrected_img, M_best, bgr_image.size());
-    cv::Mat gray;
-    cv::cvtColor(best_corrected_img, gray, cv::COLOR_BGR2GRAY);
+  bool primary_method_success = false;
 
-    // Lambda for histogram analysis (reused by both strategies)
-    auto find_grid_lines_via_histogram =
-        [](const std::vector<cv::Point2f> &points, int dimension, int num_lines, int image_dim_size) -> std::vector<float> {
-            // ... (histogram logic from previous version is correct) ...
-            if (points.empty()) return {};
-            std::vector<float> histogram_float(image_dim_size, 0.0f);
-            for (const auto &p : points) {
-                int pos = (dimension == 0) ? static_cast<int>(p.x) : static_cast<int>(p.y);
-                if (pos >= 0 && pos < image_dim_size) { histogram_float[pos]++; }
-            }
-            cv::Mat hist_mat(histogram_float);
-            cv::GaussianBlur(hist_mat, hist_mat, cv::Size(1, 5), 0);
-            std::vector<std::pair<int, float>> peaks;
-            double max_val;
-            cv::minMaxLoc(hist_mat, nullptr, &max_val);
-            const float MIN_PEAK_HEIGHT = static_cast<float>(max_val * 0.1);
-            for (int i = 1; i < image_dim_size - 1; ++i) {
-                float val = hist_mat.at<float>(i);
-                if (val > hist_mat.at<float>(i-1) && val > hist_mat.at<float>(i+1) && val > MIN_PEAK_HEIGHT) { peaks.push_back({i, val}); }
-            }
-            std::sort(peaks.begin(), peaks.end(), [](const auto &a, const auto &b) { return a.second > b.second; });
-            std::vector<float> final_lines;
-            const int MIN_PEAK_DISTANCE = static_cast<int>((float)image_dim_size / 19.0f * 0.7f);
-            for(const auto& peak : peaks) {
-                if (final_lines.size() >= static_cast<size_t>(num_lines)) break;
-                bool is_far_enough = true;
-                for (const auto& accepted_line_pos : final_lines) { if (std::abs(peak.first - accepted_line_pos) < MIN_PEAK_DISTANCE) { is_far_enough = false; break; } }
-                if(is_far_enough) {
-                    float total_mass = 0, weighted_sum = 0; int window = 2;
-                    for (int j = -window; j <= window; ++j) {
-                        int pos = peak.first + j;
-                        if (pos >= 0 && pos < image_dim_size) {
-                            float mass = hist_mat.at<float>(pos);
-                            total_mass += mass;
-                            weighted_sum += static_cast<float>(pos) * mass;
-                        }
-                    }
-                    final_lines.push_back((total_mass > 0) ? (weighted_sum / total_mass) : static_cast<float>(peak.first));
-                }
-            }
-            if (final_lines.size() < static_cast<size_t>(num_lines)) return {};
-            std::sort(final_lines.begin(), final_lines.end());
-            return final_lines;
-    };
-    
-    bool primary_method_success = false;
-    
-    // --- STRATEGY 1: Corner Detection (High-Quality Images) ---
-    LOG_INFO << "Attempting refinement using primary method (goodFeaturesToTrack)...";
-    std::vector<cv::Point2f> corners;
-    cv::goodFeaturesToTrack(gray, corners, 500, 0.01, 10, cv::noArray(), 3, false, 0.04);
-    
-    if (corners.size() >= 100) { // Require a decent number of corners
-        std::vector<float> vert_x = find_grid_lines_via_histogram(corners, 0, 19, bgr_image.cols);
-        std::vector<float> horiz_y = find_grid_lines_via_histogram(corners, 1, 19, bgr_image.rows);
+  // --- STRATEGY 1: Corner Detection (High-Quality Images) ---
+  LOG_INFO
+      << "Attempting refinement using primary method (goodFeaturesToTrack)...";
+  std::vector<cv::Point2f> corners;
+  cv::goodFeaturesToTrack(gray, corners, 500, 0.01, 10);
 
-        if (vert_x.size() == 19 && horiz_y.size() == 19) {
-            // *** NEW: VERIFY THE GRID'S QUALITY ***
-            double avg_x_spacing = (vert_x.back() - vert_x.front()) / 18.0;
-            double avg_y_spacing = (horiz_y.back() - horiz_y.front()) / 18.0;
-            double stddev_x = calculate_spacing_stddev(vert_x);
-            double stddev_y = calculate_spacing_stddev(horiz_y);
-            
-            // Allow up to 20% standard deviation relative to the average spacing
-            if (stddev_x < (avg_x_spacing * 0.20) && stddev_y < (avg_y_spacing * 0.20)) {
-                LOG_INFO << "Primary method successful with a high-quality grid.";
-                primary_method_success = true;
-                // Finalize results for primary method
-                float tl_x = vert_x.front(), tl_y = horiz_y.front(), br_x = vert_x.back(), br_y = horiz_y.back();
-                std::vector<cv::Point2f> refined_corners_corrected = { {tl_x, tl_y}, {br_x, tl_y}, {br_x, br_y}, {tl_x, br_y} };
-                std::vector<cv::Point2f> final_corners_f;
-                cv::perspectiveTransform(refined_corners_corrected, final_corners_f, M_inv);
-                out_refined_corners.assign(final_corners_f.begin(), final_corners_f.end());
-            } else {
-                LOG_WARN << "Primary method found 19x19 lines, but grid quality is poor (stddev x: " << stddev_x << ", y: " << stddev_y << "). Rejecting.";
-            }
-        }
-    }
-
-    if (primary_method_success) {
-        return true;
-    }
-
-    // --- STRATEGY 2: Hough Lines (Fallback for Low-Quality Images) ---
-    LOG_WARN << "Primary method failed or was rejected. Falling back to Hough Line Transform method.";
-    cv::Mat edges;
-    cv::Canny(gray, edges, 50, 150, 3);
-    if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG)
-     cv::imwrite("share/Debug/P2_Fallback_01_Canny.jpg", edges);
-
-
-    std::vector<cv::Vec4i> lines;
-
-    // *** FIX: Relaxed parameters for low-quality images ***
-    int hough_threshold = 20; // Lowered from 30
-    double min_line_length = gray.cols * 0.05; // Lowered from 10% to 5% of width
-    double max_line_gap = 10; // Increased from 5
-
-    cv::HoughLinesP(edges, lines, 1, CV_PI / 180, hough_threshold,
-                    min_line_length, max_line_gap);
-    LOG_DEBUG << "Fallback: Found " << lines.size() << " raw Hough line segments.";
-    if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
-      cv::Mat hough_img = best_corrected_img.clone();
-      for (const auto &l : lines)
-        cv::line(hough_img, {l[0], l[1]}, {l[2], l[3]}, {100, 255, 100}, 1);
-      cv::imwrite("share/Debug/P2_Fallback_02_HoughLines.jpg", hough_img);
-    }
-    std::vector<cv::Vec4i> horizontal_lines, vertical_lines;
-    for(const auto& l : lines) {
-        double angle = std::abs(std::atan2(l[3] - l[1], l[2] - l[0]) * 180.0 / CV_PI);
-        if (angle < 45 || angle > 135) horizontal_lines.push_back(l);
-        else vertical_lines.push_back(l);
-    }
-    LOG_DEBUG << "Fallback: Separated into " << horizontal_lines.size()
-              << " horizontal and " << vertical_lines.size()
-              << " vertical lines.";
-
-    std::vector<cv::Point2f> intersections;
-    for(const auto& h : horizontal_lines) {
-        for(const auto& v : vertical_lines) {
-            cv::Point2f intersection_pt;
-            if(get_line_intersection({(float)h[0],(float)h[1]}, {(float)h[2],(float)h[3]}, {(float)v[0],(float)v[1]}, {(float)v[2],(float)v[3]}, intersection_pt)) {
-                if (intersection_pt.x > 0 && intersection_pt.x < bgr_image.cols && intersection_pt.y > 0 && intersection_pt.y < bgr_image.rows) {
-                    intersections.push_back(intersection_pt);
-                }
-            }
-        }
-    }
-    LOG_DEBUG << "Fallback: Calculated " << intersections.size() << " intersection points.";
-    if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) {
-      cv::Mat intersection_img = best_corrected_img.clone();
-      for (const auto &p : intersections)
-        cv::circle(intersection_img, p, 2, {0, 0, 255}, cv::FILLED);
-      cv::imwrite("share/Debug/P2_Fallback_03_Intersections.jpg",
-                  intersection_img);
-    }
-
-    if (intersections.size() < 100) {
-        LOG_ERROR << "Fallback Hough method failed to find enough intersection points.";
-        return false;
-    }
-    // *** NEW: Temporarily isolate the histogram creation to debug it ***
-    std::vector<float> x_histogram(bgr_image.cols, 0.0f);
-    for(const auto& p : intersections) if(p.x >= 0 && p.x < x_histogram.size()) x_histogram[p.x]++;
-    if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG) 
-      draw_histogram(x_histogram, "P2_Fallback_04_X_Histogram.jpg");
-
-    std::vector<float> y_histogram(bgr_image.rows, 0.0f);
-    for (const auto &p : intersections)
-      if (p.y >= 0 && p.y < y_histogram.size())
-        y_histogram[p.y]++;
-    if (bDebug && Logger::getGlobalLogLevel() >= LogLevel::DEBUG)
-      draw_histogram(y_histogram, "P2_Fallback_05_Y_Histogram.jpg");
-
-    std::vector<float> vert_x = find_grid_lines_via_histogram(intersections, 0, 19, bgr_image.cols);
-    std::vector<float> horiz_y = find_grid_lines_via_histogram(intersections, 1, 19, bgr_image.rows);
+  if (corners.size() >= 100) {
+    std::vector<float> vert_x =
+        find_sharp_grid_lines(create_histogram(corners, 0, gray.cols), 19);
+    std::vector<float> horiz_y =
+        find_sharp_grid_lines(create_histogram(corners, 1, gray.rows), 19);
 
     if (vert_x.size() == 19 && horiz_y.size() == 19) {
-        LOG_INFO << "Fallback method successful.";
-        float tl_x = vert_x.front(), tl_y = horiz_y.front(), br_x = vert_x.back(), br_y = horiz_y.back();
-        std::vector<cv::Point2f> refined_corners_corrected = { {tl_x, tl_y}, {br_x, tl_y}, {br_x, br_y}, {tl_x, br_y} };
-        std::vector<cv::Point2f> final_corners_f;
-        cv::perspectiveTransform(refined_corners_corrected, final_corners_f, M_inv);
-        out_refined_corners.assign(final_corners_f.begin(), final_corners_f.end());
-        return true;
+      double avg_x_spacing = (vert_x.back() - vert_x.front()) / 18.0;
+      double avg_y_spacing = (horiz_y.back() - horiz_y.front()) / 18.0;
+      if (calculate_spacing_stddev(vert_x) < (avg_x_spacing * 0.20) &&
+          calculate_spacing_stddev(horiz_y) < (avg_y_spacing * 0.20)) {
+        LOG_INFO << "Primary method successful with a high-quality grid.";
+        primary_method_success = true;
+        finalize_corners(vert_x, horiz_y, M_inv, out_refined_corners);
+      } else {
+        LOG_WARN << "Primary method found 19x19 lines, but grid quality is "
+                    "poor. Rejecting.";
+      }
     }
-    
-    LOG_ERROR << "All refinement strategies failed.";
+  }
+
+  if (primary_method_success)
+    return true;
+
+  // --- STRATEGY 2: Hough Lines (Fallback for Low-Quality Images) ---
+  LOG_WARN << "Primary method failed or was rejected. Falling back to Hough "
+              "Line Transform method.";
+  cv::Mat edges;
+  cv::Canny(gray, edges, 50, 150, 3);
+  std::vector<cv::Vec4i> lines;
+  cv::HoughLinesP(edges, lines, 1, CV_PI / 180, 20, gray.cols * 0.05, 10);
+
+  // ... (Calculate intersections from Hough lines as before) ...
+  std::vector<cv::Point2f> intersections =
+      get_intersections_from_hough_lines(lines, bgr_image.size());
+  if (intersections.size() < 100) {
+    LOG_ERROR
+        << "Fallback Hough method failed to find enough intersection points.";
     return false;
+  }
+
+  // *** MODIFIED: Use the new specialized histogram functions ***
+  std::vector<float> vert_x =
+      find_sharp_grid_lines(create_histogram(intersections, 0, gray.cols), 19);
+  std::vector<float> horiz_y = find_smeared_grid_lines(
+      create_histogram(intersections, 1, gray.rows), 19);
+
+  LOG_DEBUG << "Fallback method found " << vert_x.size() << " vertical and "
+            << horiz_y.size() << " horizontal lines.";
+
+  if (vert_x.size() == 19 && horiz_y.size() == 19) {
+    LOG_INFO << "Fallback method successful.";
+    finalize_corners(vert_x, horiz_y, M_inv, out_refined_corners);
+    return true;
+  }
+
+  LOG_ERROR << "All refinement strategies failed.";
+  return false;
 }
 
-
 /**
- * @brief Attempts to refine board corners using the standard OpenCV findChessboardCorners function.
+ * @brief Attempts to refine board corners using the standard OpenCV
+ * findChessboardCorners function.
  *
- * NOTE: This is an experimental approach. This function is designed for checkerboards,
- * not Go boards, and may fail. It is provided to test all possible solutions.
- * It works by attempting to find the 18x18 grid of interior corners on the board.
+ * NOTE: This is an experimental approach. This function is designed for
+ * checkerboards, not Go boards, and may fail. It is provided to test all
+ * possible solutions. It works by attempting to find the 18x18 grid of interior
+ * corners on the board.
  *
  * @param bgr_image The input BGR image.
  * @param p1_candidates A vector of rough quadrilaterals from Pass 1.
@@ -5621,99 +5765,120 @@ bool refine_board_with_chessboard_finder(
     const std::vector<std::vector<cv::Point>> &p1_candidates,
     std::vector<cv::Point> &out_refined_corners) {
 
-    LOG_INFO << "--- Starting Pass 2: Experimental Refinement (using findChessboardCorners) ---";
-    extern bool bDebug;
+  LOG_INFO << "--- Starting Pass 2: Experimental Refinement (using "
+              "findChessboardCorners) ---";
+  extern bool bDebug;
 
-    // Step 1: Find the best candidate from Pass 1 (same logic as before)
-    if (p1_candidates.empty()) return false;
-    double best_score = -1.0;
-    std::vector<cv::Point2f> best_candidate_f;
-    int best_candidate_idx = -1;
-    for (size_t i = 0; i < p1_candidates.size(); ++i) {
-        if (p1_candidates[i].size() != 4) continue;
-        std::vector<cv::Point2f> current_candidate_f;
-        for(const auto& p : p1_candidates[i]) current_candidate_f.push_back(cv::Point2f(p));
-        cv::Mat M = cv::getPerspectiveTransform(current_candidate_f, getBoardCornersCorrected(bgr_image.cols, bgr_image.rows));
-        if (M.empty()) continue;
-        cv::Mat corrected_img;
-        cv::warpPerspective(bgr_image, corrected_img, M, bgr_image.size());
-        double score = calculate_grid_regularity_score(corrected_img, "Cand" + std::to_string(i));
-        if (score > best_score) {
-            best_score = score;
-            best_candidate_f = current_candidate_f;
-            best_candidate_idx = i;
-        }
+  // Step 1: Find the best candidate from Pass 1 (same logic as before)
+  if (p1_candidates.empty())
+    return false;
+  double best_score = -1.0;
+  std::vector<cv::Point2f> best_candidate_f;
+  int best_candidate_idx = -1;
+  for (size_t i = 0; i < p1_candidates.size(); ++i) {
+    if (p1_candidates[i].size() != 4)
+      continue;
+    std::vector<cv::Point2f> current_candidate_f;
+    for (const auto &p : p1_candidates[i])
+      current_candidate_f.push_back(cv::Point2f(p));
+    cv::Mat M = cv::getPerspectiveTransform(
+        current_candidate_f,
+        getBoardCornersCorrected(bgr_image.cols, bgr_image.rows));
+    if (M.empty())
+      continue;
+    cv::Mat corrected_img;
+    cv::warpPerspective(bgr_image, corrected_img, M, bgr_image.size());
+    double score = calculate_grid_regularity_score(corrected_img,
+                                                   "Cand" + std::to_string(i));
+    if (score > best_score) {
+      best_score = score;
+      best_candidate_f = current_candidate_f;
+      best_candidate_idx = i;
     }
-    if (best_candidate_idx == -1) return false;
+  }
+  if (best_candidate_idx == -1)
+    return false;
 
-    // Step 2: Get the best perspective-corrected image
-    LOG_INFO << "Selected best candidate #" << best_candidate_idx << " with score " << best_score;
-    cv::Mat M_best = cv::getPerspectiveTransform(best_candidate_f, getBoardCornersCorrected(bgr_image.cols, bgr_image.rows));
-    cv::Mat M_inv;
-    cv::invert(M_best, M_inv);
-    cv::Mat corrected_image;
-    cv::warpPerspective(bgr_image, corrected_image, M_best, bgr_image.size());
+  // Step 2: Get the best perspective-corrected image
+  LOG_INFO << "Selected best candidate #" << best_candidate_idx
+           << " with score " << best_score;
+  cv::Mat M_best = cv::getPerspectiveTransform(
+      best_candidate_f,
+      getBoardCornersCorrected(bgr_image.cols, bgr_image.rows));
+  cv::Mat M_inv;
+  cv::invert(M_best, M_inv);
+  cv::Mat corrected_image;
+  cv::warpPerspective(bgr_image, corrected_image, M_best, bgr_image.size());
 
-    // Step 3: Pre-process for findChessboardCorners
-    cv::Mat gray;
-    cv::cvtColor(corrected_image, gray, cv::COLOR_BGR2GRAY);
-    // Applying a morphological close can sometimes help connect broken grid lines
-    // and make the squares more prominent for the detector.
-    cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(3, 3));
-    cv::morphologyEx(gray, gray, cv::MORPH_CLOSE, kernel);
+  // Step 3: Pre-process for findChessboardCorners
+  cv::Mat gray;
+  cv::cvtColor(corrected_image, gray, cv::COLOR_BGR2GRAY);
+  // Applying a morphological close can sometimes help connect broken grid lines
+  // and make the squares more prominent for the detector.
+  cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(3, 3));
+  cv::morphologyEx(gray, gray, cv::MORPH_CLOSE, kernel);
 
-    if (bDebug) {
-        cv::imwrite("share/Debug/P2_Chessboard_Preprocessed.jpg", gray);
-    }
+  if (bDebug) {
+    cv::imwrite("share/Debug/P2_Chessboard_Preprocessed.jpg", gray);
+  }
 
-    // Step 4: Attempt to find the 18x18 interior grid
-    cv::Size pattern_size(18, 18);
-    std::vector<cv::Point2f> found_corners;
-    bool found = cv::findChessboardCorners(gray, pattern_size, found_corners,
-                                           cv::CALIB_CB_ADAPTIVE_THRESH | cv::CALIB_CB_NORMALIZE_IMAGE);
+  // Step 4: Attempt to find the 18x18 interior grid
+  cv::Size pattern_size(18, 18);
+  std::vector<cv::Point2f> found_corners;
+  bool found = cv::findChessboardCorners(gray, pattern_size, found_corners,
+                                         cv::CALIB_CB_ADAPTIVE_THRESH |
+                                             cv::CALIB_CB_NORMALIZE_IMAGE);
 
-    if (!found) {
-        LOG_ERROR << "findChessboardCorners method failed. Could not find the 18x18 grid pattern.";
-        return false;
-    }
-    
-    LOG_INFO << "findChessboardCorners method SUCCESS. Found the 18x18 grid pattern.";
+  if (!found) {
+    LOG_ERROR << "findChessboardCorners method failed. Could not find the "
+                 "18x18 grid pattern.";
+    return false;
+  }
 
-    // Step 5: Refine and extrapolate from the found interior corners
-    // findChessboardCorners returns the 324 interior points. We need the 4 outer corners of this group.
-    cv::Point2f tl_inner = found_corners[0];
-    cv::Point2f tr_inner = found_corners[pattern_size.width - 1];
-    cv::Point2f bl_inner = found_corners[(pattern_size.height - 1) * pattern_size.width];
-    cv::Point2f br_inner = found_corners[pattern_size.height * pattern_size.width - 1];
+  LOG_INFO
+      << "findChessboardCorners method SUCCESS. Found the 18x18 grid pattern.";
 
-    // Extrapolate one grid unit outwards to find the physical corners
-    cv::Point2f vec_h = (tr_inner - tl_inner) / (pattern_size.width - 1.0f);
-    cv::Point2f vec_v = (bl_inner - tl_inner) / (pattern_size.height - 1.0f);
+  // Step 5: Refine and extrapolate from the found interior corners
+  // findChessboardCorners returns the 324 interior points. We need the 4 outer
+  // corners of this group.
+  cv::Point2f tl_inner = found_corners[0];
+  cv::Point2f tr_inner = found_corners[pattern_size.width - 1];
+  cv::Point2f bl_inner =
+      found_corners[(pattern_size.height - 1) * pattern_size.width];
+  cv::Point2f br_inner =
+      found_corners[pattern_size.height * pattern_size.width - 1];
 
-    cv::Point2f tl_outer = tl_inner - vec_h - vec_v;
-    cv::Point2f tr_outer = tr_inner + vec_h - vec_v;
-    cv::Point2f br_outer = br_inner + vec_h + vec_v;
-    cv::Point2f bl_outer = bl_inner - vec_h + vec_v;
+  // Extrapolate one grid unit outwards to find the physical corners
+  cv::Point2f vec_h = (tr_inner - tl_inner) / (pattern_size.width - 1.0f);
+  cv::Point2f vec_v = (bl_inner - tl_inner) / (pattern_size.height - 1.0f);
 
-    std::vector<cv::Point2f> final_corners_corrected = {tl_outer, tr_outer, br_outer, bl_outer};
+  cv::Point2f tl_outer = tl_inner - vec_h - vec_v;
+  cv::Point2f tr_outer = tr_inner + vec_h - vec_v;
+  cv::Point2f br_outer = br_inner + vec_h + vec_v;
+  cv::Point2f bl_outer = bl_inner - vec_h + vec_v;
 
-    // Step 6: Transform back to original image coordinates
-    std::vector<cv::Point2f> final_corners_f;
-    cv::perspectiveTransform(final_corners_corrected, final_corners_f, M_inv);
-    out_refined_corners.assign(final_corners_f.begin(), final_corners_f.end());
+  std::vector<cv::Point2f> final_corners_corrected = {tl_outer, tr_outer,
+                                                      br_outer, bl_outer};
 
-    if (bDebug) {
-        cv::Mat debug_img = corrected_image.clone();
-        cv::drawChessboardCorners(debug_img, pattern_size, found_corners, found);
-        
-        std::vector<cv::Point> corners_to_draw;
-        for(const auto& p : final_corners_corrected) corners_to_draw.push_back(p);
-        cv::polylines(debug_img, {corners_to_draw}, true, {0, 255, 0}, 2); // Extrapolated corners in green
+  // Step 6: Transform back to original image coordinates
+  std::vector<cv::Point2f> final_corners_f;
+  cv::perspectiveTransform(final_corners_corrected, final_corners_f, M_inv);
+  out_refined_corners.assign(final_corners_f.begin(), final_corners_f.end());
 
-        cv::imwrite("share/Debug/P2_Chessboard_Result.jpg", debug_img);
-    }
-    
-    return true;
+  if (bDebug) {
+    cv::Mat debug_img = corrected_image.clone();
+    cv::drawChessboardCorners(debug_img, pattern_size, found_corners, found);
+
+    std::vector<cv::Point> corners_to_draw;
+    for (const auto &p : final_corners_corrected)
+      corners_to_draw.push_back(p);
+    cv::polylines(debug_img, {corners_to_draw}, true, {0, 255, 0},
+                  2); // Extrapolated corners in green
+
+    cv::imwrite("share/Debug/P2_Chessboard_Result.jpg", debug_img);
+  }
+
+  return true;
 }
 
 // 计算两点间距离
