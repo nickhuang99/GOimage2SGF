@@ -5604,6 +5604,118 @@ bool refine_board_corners_pass2(
 }
 
 
+/**
+ * @brief Attempts to refine board corners using the standard OpenCV findChessboardCorners function.
+ *
+ * NOTE: This is an experimental approach. This function is designed for checkerboards,
+ * not Go boards, and may fail. It is provided to test all possible solutions.
+ * It works by attempting to find the 18x18 grid of interior corners on the board.
+ *
+ * @param bgr_image The input BGR image.
+ * @param p1_candidates A vector of rough quadrilaterals from Pass 1.
+ * @param out_refined_corners The final, high-precision corner points (output).
+ * @return true if the 18x18 grid is successfully found and processed.
+ */
+bool refine_board_with_chessboard_finder(
+    const cv::Mat &bgr_image,
+    const std::vector<std::vector<cv::Point>> &p1_candidates,
+    std::vector<cv::Point> &out_refined_corners) {
+
+    LOG_INFO << "--- Starting Pass 2: Experimental Refinement (using findChessboardCorners) ---";
+    extern bool bDebug;
+
+    // Step 1: Find the best candidate from Pass 1 (same logic as before)
+    if (p1_candidates.empty()) return false;
+    double best_score = -1.0;
+    std::vector<cv::Point2f> best_candidate_f;
+    int best_candidate_idx = -1;
+    for (size_t i = 0; i < p1_candidates.size(); ++i) {
+        if (p1_candidates[i].size() != 4) continue;
+        std::vector<cv::Point2f> current_candidate_f;
+        for(const auto& p : p1_candidates[i]) current_candidate_f.push_back(cv::Point2f(p));
+        cv::Mat M = cv::getPerspectiveTransform(current_candidate_f, getBoardCornersCorrected(bgr_image.cols, bgr_image.rows));
+        if (M.empty()) continue;
+        cv::Mat corrected_img;
+        cv::warpPerspective(bgr_image, corrected_img, M, bgr_image.size());
+        double score = calculate_grid_regularity_score(corrected_img, "Cand" + std::to_string(i));
+        if (score > best_score) {
+            best_score = score;
+            best_candidate_f = current_candidate_f;
+            best_candidate_idx = i;
+        }
+    }
+    if (best_candidate_idx == -1) return false;
+
+    // Step 2: Get the best perspective-corrected image
+    LOG_INFO << "Selected best candidate #" << best_candidate_idx << " with score " << best_score;
+    cv::Mat M_best = cv::getPerspectiveTransform(best_candidate_f, getBoardCornersCorrected(bgr_image.cols, bgr_image.rows));
+    cv::Mat M_inv;
+    cv::invert(M_best, M_inv);
+    cv::Mat corrected_image;
+    cv::warpPerspective(bgr_image, corrected_image, M_best, bgr_image.size());
+
+    // Step 3: Pre-process for findChessboardCorners
+    cv::Mat gray;
+    cv::cvtColor(corrected_image, gray, cv::COLOR_BGR2GRAY);
+    // Applying a morphological close can sometimes help connect broken grid lines
+    // and make the squares more prominent for the detector.
+    cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(3, 3));
+    cv::morphologyEx(gray, gray, cv::MORPH_CLOSE, kernel);
+
+    if (bDebug) {
+        cv::imwrite("share/Debug/P2_Chessboard_Preprocessed.jpg", gray);
+    }
+
+    // Step 4: Attempt to find the 18x18 interior grid
+    cv::Size pattern_size(18, 18);
+    std::vector<cv::Point2f> found_corners;
+    bool found = cv::findChessboardCorners(gray, pattern_size, found_corners,
+                                           cv::CALIB_CB_ADAPTIVE_THRESH | cv::CALIB_CB_NORMALIZE_IMAGE);
+
+    if (!found) {
+        LOG_ERROR << "findChessboardCorners method failed. Could not find the 18x18 grid pattern.";
+        return false;
+    }
+    
+    LOG_INFO << "findChessboardCorners method SUCCESS. Found the 18x18 grid pattern.";
+
+    // Step 5: Refine and extrapolate from the found interior corners
+    // findChessboardCorners returns the 324 interior points. We need the 4 outer corners of this group.
+    cv::Point2f tl_inner = found_corners[0];
+    cv::Point2f tr_inner = found_corners[pattern_size.width - 1];
+    cv::Point2f bl_inner = found_corners[(pattern_size.height - 1) * pattern_size.width];
+    cv::Point2f br_inner = found_corners[pattern_size.height * pattern_size.width - 1];
+
+    // Extrapolate one grid unit outwards to find the physical corners
+    cv::Point2f vec_h = (tr_inner - tl_inner) / (pattern_size.width - 1.0f);
+    cv::Point2f vec_v = (bl_inner - tl_inner) / (pattern_size.height - 1.0f);
+
+    cv::Point2f tl_outer = tl_inner - vec_h - vec_v;
+    cv::Point2f tr_outer = tr_inner + vec_h - vec_v;
+    cv::Point2f br_outer = br_inner + vec_h + vec_v;
+    cv::Point2f bl_outer = bl_inner - vec_h + vec_v;
+
+    std::vector<cv::Point2f> final_corners_corrected = {tl_outer, tr_outer, br_outer, bl_outer};
+
+    // Step 6: Transform back to original image coordinates
+    std::vector<cv::Point2f> final_corners_f;
+    cv::perspectiveTransform(final_corners_corrected, final_corners_f, M_inv);
+    out_refined_corners.assign(final_corners_f.begin(), final_corners_f.end());
+
+    if (bDebug) {
+        cv::Mat debug_img = corrected_image.clone();
+        cv::drawChessboardCorners(debug_img, pattern_size, found_corners, found);
+        
+        std::vector<cv::Point> corners_to_draw;
+        for(const auto& p : final_corners_corrected) corners_to_draw.push_back(p);
+        cv::polylines(debug_img, {corners_to_draw}, true, {0, 255, 0}, 2); // Extrapolated corners in green
+
+        cv::imwrite("share/Debug/P2_Chessboard_Result.jpg", debug_img);
+    }
+    
+    return true;
+}
+
 // 计算两点间距离
 double distanceBetweenPoints(const Point2f &p1, const Point2f &p2) {
   double dx = p1.x - p2.x;

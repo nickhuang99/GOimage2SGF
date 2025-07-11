@@ -419,4 +419,9 @@ bool refine_board_corners_pass2(
     const std::vector<std::vector<cv::Point>> &p1_candidates,
     std::vector<cv::Point> &out_refined_corners);
 void runMinMaxCornersWorkflow(const std::string &imagePath);
+
+bool refine_board_with_chessboard_finder(
+    const cv::Mat &bgr_image,
+    const std::vector<std::vector<cv::Point>> &p1_candidates,
+    std::vector<cv::Point> &out_refined_corners);
 #endif // UTILITY_H
