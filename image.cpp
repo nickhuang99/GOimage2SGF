@@ -5633,158 +5633,522 @@ create_histogram(const std::vector<cv::Point2f> &points, int dimension,
 }
 // In image.cpp
 
-// NOTE: This function requires the helper functions: `calculate_spacing_stddev`, 
-// `find_sharp_grid_lines`, `create_histogram`, and `finalize_corners` 
-// from our previous work.
+// NOTE: This function requires the helper functions:
+// `calculate_spacing_stddev`, `find_sharp_grid_lines`, `create_histogram`, and
+// `finalize_corners` from our previous work.
 
 /**
  * @brief The final, adaptive board refinement function with masking.
  *
  * Implements a two-stage adaptive strategy.
  * STAGE 1: Attempts refinement using a high-precision corner detector.
- * STAGE 2 (Fallback): If Stage 1 fails, it now uses the Pass 1 result to create a
- * MASK, ensuring the Hough line search is constrained to the board area. It then
- * uses a simple median-based approach on the clean lines to find the boundaries.
+ * STAGE 2 (Fallback): If Stage 1 fails, it now uses the Pass 1 result to create
+ * a MASK, ensuring the Hough line search is constrained to the board area. It
+ * then uses a simple median-based approach on the clean lines to find the
+ * boundaries.
  */
+// bool refine_board_corners_pass2(
+//     const cv::Mat &bgr_image,
+//     const std::vector<std::vector<cv::Point>> &p1_candidates,
+//     std::vector<cv::Point> &out_refined_corners) {
+
+//     LOG_INFO << "--- Starting Pass 2: ADAPTIVE Grid-Based Refinement (w/
+//     Masking) ---"; extern bool bDebug;
+
+//     // --- Step 1 & 2: Find best candidate and get corrected image ---
+//     if (p1_candidates.empty()) return false;
+//     double best_score = -1.0;
+//     std::vector<cv::Point2f> best_candidate_f;
+//     int best_candidate_idx = -1;
+//     for (size_t i = 0; i < p1_candidates.size(); ++i) {
+//       if (p1_candidates[i].size() != 4) continue;
+//       std::vector<cv::Point2f> current_candidate_f;
+//       for(const auto& p : p1_candidates[i])
+//       current_candidate_f.push_back(cv::Point2f(p)); cv::Mat M =
+//       cv::getPerspectiveTransform(current_candidate_f,
+//       getBoardCornersCorrected(bgr_image.cols, bgr_image.rows)); if
+//       (M.empty()) continue; cv::Mat corrected_img;
+//       cv::warpPerspective(bgr_image, corrected_img, M, bgr_image.size());
+//       double score = calculate_grid_regularity_score(corrected_img, "Cand" +
+//       std::to_string(i)); if (score > best_score) {
+//           best_score = score;
+//           best_candidate_f = current_candidate_f;
+//           best_candidate_idx = i;
+//       }
+//     }
+//     if (best_candidate_idx == -1) return false;
+//     LOG_INFO << "Selected best candidate #" << best_candidate_idx << " with
+//     score " << best_score; cv::Mat M_best =
+//     cv::getPerspectiveTransform(best_candidate_f,
+//     getBoardCornersCorrected(bgr_image.cols, bgr_image.rows)); cv::Mat M_inv;
+//     cv::invert(M_best, M_inv);
+//     cv::Mat best_corrected_img;
+//     cv::warpPerspective(bgr_image, best_corrected_img, M_best,
+//     bgr_image.size()); cv::Mat gray; cv::cvtColor(best_corrected_img, gray,
+//     cv::COLOR_BGR2GRAY);
+
+//     // --- STRATEGY 1: Corner Detection (for High-Quality Images) ---
+//     LOG_INFO << "Attempting refinement using primary method
+//     (goodFeaturesToTrack)..."; std::vector<cv::Point2f> corners;
+//     cv::goodFeaturesToTrack(gray, corners, 500, 0.01, 10);
+
+//     if (corners.size() >= 100) {
+//         std::vector<float> vert_x =
+//         find_sharp_grid_lines(create_histogram(corners, 0, gray.cols), 19);
+//         std::vector<float> horiz_y =
+//         find_sharp_grid_lines(create_histogram(corners, 1, gray.rows), 19);
+
+//         if (vert_x.size() == 19 && horiz_y.size() == 19) {
+//             double avg_x_spacing = (vert_x.back() - vert_x.front()) / 18.0;
+//             double avg_y_spacing = (horiz_y.back() - horiz_y.front()) / 18.0;
+//             double stddev_x = calculate_spacing_stddev(vert_x);
+//             double stddev_y = calculate_spacing_stddev(horiz_y);
+//             double aspect_ratio_error = std::abs(avg_x_spacing -
+//             avg_y_spacing) / std::max(avg_x_spacing, avg_y_spacing);
+
+//             if (stddev_x < (avg_x_spacing * 0.20) && stddev_y <
+//             (avg_y_spacing * 0.20) && aspect_ratio_error < 0.20) {
+//                 LOG_INFO << "Primary method successful with a high-quality
+//                 grid."; finalize_corners(vert_x, horiz_y, M_inv,
+//                 out_refined_corners); return true;
+//             } else {
+//                  LOG_WARN << "Primary method found 19x19 lines, but grid
+//                  quality is poor. Rejecting.";
+//             }
+//         }
+//     }
+
+//     // --- STRATEGY 2: Masked Median-based Fallback ---
+//     LOG_WARN << "Primary method failed or was rejected. Falling back to
+//     MASKED Hough Median method."; cv::Mat edges; cv::Canny(gray, edges, 50,
+//     150, 3);
+
+//     // *** NEW: Create a mask from the Pass 1 candidate to constrain the
+//     search *** cv::Mat mask = cv::Mat::zeros(gray.size(), CV_8UC1);
+//     // Get the corners of the board in the *corrected* image space
+//     std::vector<cv::Point> corrected_candidate_corners;
+//     cv::perspectiveTransform(best_candidate_f, corrected_candidate_corners,
+//     M_best);
+//     // Draw a filled polygon to create the mask
+//     cv::fillConvexPoly(mask, corrected_candidate_corners, cv::Scalar(255));
+
+//     cv::Mat masked_edges;
+//     cv::bitwise_and(edges, mask, masked_edges);
+
+//     if (bDebug) {
+//         cv::imwrite("share/Debug/P2_Fallback_Masked_Edges.jpg",
+//         masked_edges);
+//     }
+
+//     std::vector<cv::Vec4i> lines;
+//     cv::HoughLinesP(masked_edges, lines, 1, CV_PI / 180, 20, gray.cols *
+//     0.05, 10);
+
+//     if (lines.size() < 20) {
+//         LOG_ERROR << "Fallback failed: Not enough Hough lines found within
+//         the mask (" << lines.size() << ")."; return false;
+//     }
+
+//     std::vector<float> horizontal_y_coords, vertical_x_coords;
+//     for(const auto& l : lines) {
+//         double angle = std::abs(std::atan2(l[3] - l[1], l[2] - l[0]) * 180.0
+//         / CV_PI); if (angle < 45 || angle > 135) {
+//             horizontal_y_coords.push_back((l[1] + l[3]) * 0.5f);
+//         } else {
+//             vertical_x_coords.push_back((l[0] + l[2]) * 0.5f);
+//         }
+//     }
+
+//     if (horizontal_y_coords.size() < 10 || vertical_x_coords.size() < 10) {
+//         LOG_ERROR << "Fallback failed: Not enough horizontal/vertical lines
+//         after separation."; return false;
+//     }
+
+//     auto find_median_boundary = [](std::vector<float>& coords, bool get_min)
+//     -> float {
+//         std::sort(coords.begin(), coords.end());
+//         size_t n = coords.size();
+//         if (n == 0) return 0.0f;
+
+//         if (get_min) {
+//             // Find the median of the first 25% of lines
+//             size_t count = n / 4;
+//             if (count == 0) return coords[0];
+//             return (count % 2 != 0) ? coords[count/2] : (coords[count/2 - 1]
+//             + coords[count/2]) / 2.0f;
+//         } else {
+//             // Find the median of the last 25% of lines
+//             size_t start = n - (n / 4);
+//             if (start >= n) return coords.back();
+//             std::vector<float> sub_vec(coords.begin() + start, coords.end());
+//             size_t count = sub_vec.size();
+//             return (count % 2 != 0) ? sub_vec[count/2] : (sub_vec[count/2 -
+//             1] + sub_vec[count/2]) / 2.0f;
+//         }
+//     };
+
+//     float top_y = find_median_boundary(horizontal_y_coords, true);
+//     float bottom_y = find_median_boundary(horizontal_y_coords, false);
+//     float left_x = find_median_boundary(vertical_x_coords, true);
+//     float right_x = find_median_boundary(vertical_x_coords, false);
+
+//     std::vector<cv::Point2f> pass2_corners_corrected = { {left_x, top_y},
+//     {right_x, top_y}, {right_x, bottom_y}, {left_x, bottom_y} };
+//     std::vector<cv::Point2f> pass2_corners_raw;
+//     cv::perspectiveTransform(pass2_corners_corrected, pass2_corners_raw,
+//     M_inv);
+
+//     LOG_INFO << "Fallback method successful.";
+//     out_refined_corners.assign(pass2_corners_raw.begin(),
+//     pass2_corners_raw.end()); return true;
+// }
+
 bool refine_board_corners_pass2(
     const cv::Mat &bgr_image,
     const std::vector<std::vector<cv::Point>> &p1_candidates,
     std::vector<cv::Point> &out_refined_corners) {
 
-    LOG_INFO << "--- Starting Pass 2: ADAPTIVE Grid-Based Refinement (w/ Masking) ---";
-    extern bool bDebug;
+  LOG_INFO
+      << "--- Starting Pass 2: ADAPTIVE Grid-Based Refinement (w/ Masking) ---";
+  extern bool bDebug;
 
-    // --- Step 1 & 2: Find best candidate and get corrected image ---
-    if (p1_candidates.empty()) return false;
-    double best_score = -1.0;
-    std::vector<cv::Point2f> best_candidate_f;
-    int best_candidate_idx = -1;
-    for (size_t i = 0; i < p1_candidates.size(); ++i) {
-      if (p1_candidates[i].size() != 4) continue;
-      std::vector<cv::Point2f> current_candidate_f;
-      for(const auto& p : p1_candidates[i]) current_candidate_f.push_back(cv::Point2f(p));
-      cv::Mat M = cv::getPerspectiveTransform(current_candidate_f, getBoardCornersCorrected(bgr_image.cols, bgr_image.rows));
-      if (M.empty()) continue;
-      cv::Mat corrected_img;
-      cv::warpPerspective(bgr_image, corrected_img, M, bgr_image.size());
-      double score = calculate_grid_regularity_score(corrected_img, "Cand" + std::to_string(i));
-      if (score > best_score) {
-          best_score = score;
-          best_candidate_f = current_candidate_f;
-          best_candidate_idx = i;
+  // Step 1 & 2: Find best candidate and get corrected image
+  if (p1_candidates.empty())
+    return false;
+  double best_score = -1.0;
+  std::vector<cv::Point2f> best_candidate_f;
+  int best_candidate_idx = -1;
+  for (size_t i = 0; i < p1_candidates.size(); ++i) {
+    if (p1_candidates[i].size() != 4)
+      continue;
+    std::vector<cv::Point2f> current_candidate_f;
+    for (const auto &p : p1_candidates[i])
+      current_candidate_f.push_back(cv::Point2f(p));
+    cv::Mat M = cv::getPerspectiveTransform(
+        current_candidate_f,
+        getBoardCornersCorrected(bgr_image.cols, bgr_image.rows));
+    if (M.empty())
+      continue;
+    cv::Mat corrected_img;
+    cv::warpPerspective(bgr_image, corrected_img, M, bgr_image.size());
+    double score = calculate_grid_regularity_score(corrected_img,
+                                                   "Cand" + std::to_string(i));
+    if (score > best_score) {
+      best_score = score;
+      best_candidate_f = current_candidate_f;
+      best_candidate_idx = i;
+    }
+  }
+  if (best_candidate_idx == -1)
+    return false;
+  LOG_INFO << "Selected best candidate #" << best_candidate_idx
+           << " with score " << best_score;
+
+  cv::Mat M_best = cv::getPerspectiveTransform(
+      best_candidate_f,
+      getBoardCornersCorrected(bgr_image.cols, bgr_image.rows));
+  cv::Mat M_inv;
+  cv::invert(M_best, M_inv);
+  LOG_DEBUG << "M_inv type: " << M_inv.type() << ", size: " << M_inv.size();
+  if (M_inv.empty() || M_inv.type() != CV_64F || M_inv.rows != 3 ||
+      M_inv.cols != 3) {
+    LOG_ERROR << "Invalid M_inv matrix for perspective transform.";
+    return false;
+  }
+  cv::Mat best_corrected_img;
+  cv::warpPerspective(bgr_image, best_corrected_img, M_best, bgr_image.size());
+
+  // Enhanced Preprocessing
+  cv::Mat gray, enhanced_gray;
+  cv::cvtColor(best_corrected_img, gray, cv::COLOR_BGR2GRAY);
+  cv::Ptr<cv::CLAHE> clahe = cv::createCLAHE();
+  clahe->setClipLimit(4.0);
+  clahe->setTilesGridSize(cv::Size(8, 8));
+  clahe->apply(gray, enhanced_gray);
+  cv::Mat bilateral;
+  cv::bilateralFilter(enhanced_gray, bilateral, 5, 75, 75);
+
+  // Dynamic Canny Thresholds
+  double median_val = cv::mean(bilateral)[0];
+  double low_threshold = std::max(20.0, median_val * 0.5);
+  double high_threshold = std::min(150.0, median_val * 1.5);
+
+  // STRATEGY 1: Corner Detection
+  LOG_INFO
+      << "Attempting refinement using primary method (goodFeaturesToTrack)...";
+  std::vector<cv::Point2f> corners;
+  cv::goodFeaturesToTrack(bilateral, corners, 1000, 0.005, 5);
+  if (bDebug) {
+    cv::imwrite("share/Debug/P2_Enhanced_Gray.jpg", bilateral);
+  }
+
+  if (corners.size() >= 100) {
+    std::vector<float> vert_x =
+        find_sharp_grid_lines(create_histogram(corners, 0, bilateral.cols), 19);
+    std::vector<float> horiz_y =
+        find_sharp_grid_lines(create_histogram(corners, 1, bilateral.rows), 19);
+
+    if (vert_x.size() == 19 && horiz_y.size() == 19) {
+      double avg_x_spacing = (vert_x.back() - vert_x.front()) / 18.0;
+      double avg_y_spacing = (horiz_y.back() - horiz_y.front()) / 18.0;
+      double stddev_x = calculate_spacing_stddev(vert_x);
+      double stddev_y = calculate_spacing_stddev(horiz_y);
+      double aspect_ratio_error = std::abs(avg_x_spacing - avg_y_spacing) /
+                                  std::max(avg_x_spacing, avg_y_spacing);
+
+      if (stddev_x < (avg_x_spacing * 0.30) &&
+          stddev_y < (avg_y_spacing * 0.30) && aspect_ratio_error < 0.30) {
+        LOG_INFO << "Primary method successful with a high-quality grid.";
+        finalize_corners(vert_x, horiz_y, M_inv, out_refined_corners);
+        return true;
+      } else {
+        LOG_DEBUG << "Sharp grid lines failed, trying smeared grid lines.";
+        vert_x = find_smeared_grid_lines(
+            create_histogram(corners, 0, bilateral.cols), 19);
+        horiz_y = find_smeared_grid_lines(
+            create_histogram(corners, 1, bilateral.rows), 19);
+        if (vert_x.size() == 19 && horiz_y.size() == 19) {
+          double stddev_x = calculate_spacing_stddev(vert_x);
+          double stddev_y = calculate_spacing_stddev(horiz_y);
+          double avg_x_spacing = (vert_x.back() - vert_x.front()) / 18.0;
+          double avg_y_spacing = (horiz_y.back() - horiz_y.front()) / 18.0;
+          double aspect_ratio_error = std::abs(avg_x_spacing - avg_y_spacing) /
+                                      std::max(avg_x_spacing, avg_y_spacing);
+          if (stddev_x < (avg_x_spacing * 0.30) &&
+              stddev_y < (avg_y_spacing * 0.30) && aspect_ratio_error < 0.30) {
+            LOG_INFO << "Smeared grid lines successful.";
+            finalize_corners(vert_x, horiz_y, M_inv, out_refined_corners);
+            return true;
+          }
+        }
       }
     }
-    if (best_candidate_idx == -1) return false;
-    LOG_INFO << "Selected best candidate #" << best_candidate_idx << " with score " << best_score;
-    cv::Mat M_best = cv::getPerspectiveTransform(best_candidate_f, getBoardCornersCorrected(bgr_image.cols, bgr_image.rows));
-    cv::Mat M_inv;
-    cv::invert(M_best, M_inv);
-    cv::Mat best_corrected_img;
-    cv::warpPerspective(bgr_image, best_corrected_img, M_best, bgr_image.size());
-    cv::Mat gray;
-    cv::cvtColor(best_corrected_img, gray, cv::COLOR_BGR2GRAY);
+  }
 
-    // --- STRATEGY 1: Corner Detection (for High-Quality Images) ---
-    LOG_INFO << "Attempting refinement using primary method (goodFeaturesToTrack)...";
-    std::vector<cv::Point2f> corners;
-    cv::goodFeaturesToTrack(gray, corners, 500, 0.01, 10);
+  // STRATEGY 2: Masked Median-based Fallback
+  LOG_WARN << "Primary method failed or was rejected. Falling back to MASKED "
+              "Hough Median method.";
+  cv::Mat edges;
+  cv::Canny(bilateral, edges, low_threshold, high_threshold, 3);
+  cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(3, 3));
+  cv::morphologyEx(edges, edges, cv::MORPH_CLOSE, kernel);
 
-    if (corners.size() >= 100) {
-        std::vector<float> vert_x = find_sharp_grid_lines(create_histogram(corners, 0, gray.cols), 19);
-        std::vector<float> horiz_y = find_sharp_grid_lines(create_histogram(corners, 1, gray.rows), 19);
+  cv::Mat mask = cv::Mat::zeros(bilateral.size(), CV_8UC1);
+  // Change to std::vector<cv::Point2f> for floating-point coordinates
+  std::vector<cv::Point2f> corrected_candidate_corners;
+  // Validate inputs
+  if (best_candidate_f.size() != 4) {
+    LOG_ERROR << "Invalid best_candidate_f size: " << best_candidate_f.size()
+              << ". Expected 4 corners.";
+    return false;
+  }
+  if (M_best.empty() || M_best.type() != CV_64F || M_best.rows != 3 ||
+      M_best.cols != 3) {
+    LOG_ERROR << "Invalid M_best matrix: empty=" << M_best.empty()
+              << ", type=" << M_best.type() << ", size=" << M_best.size();
+    return false;
+  }
+  cv::perspectiveTransform(best_candidate_f, corrected_candidate_corners,
+                           M_best);
+  cv::Mat mask_poly;
+  cv::fillConvexPoly(mask,
+                     std::vector<cv::Point>(corrected_candidate_corners.begin(),
+                                            corrected_candidate_corners.end()),
+                     cv::Scalar(255));
+  cv::Mat masked_edges;
+  cv::bitwise_and(edges, mask, masked_edges);
 
-        if (vert_x.size() == 19 && horiz_y.size() == 19) {
-            double avg_x_spacing = (vert_x.back() - vert_x.front()) / 18.0;
-            double avg_y_spacing = (horiz_y.back() - horiz_y.front()) / 18.0;
-            double stddev_x = calculate_spacing_stddev(vert_x);
-            double stddev_y = calculate_spacing_stddev(horiz_y);
-            double aspect_ratio_error = std::abs(avg_x_spacing - avg_y_spacing) / std::max(avg_x_spacing, avg_y_spacing);
+  if (bDebug) {
+    cv::imwrite("share/Debug/P2_Fallback_Masked_Edges.jpg", masked_edges);
+    cv::imwrite("share/Debug/P2_Mask.jpg", mask);
+  }
 
-            if (stddev_x < (avg_x_spacing * 0.20) && stddev_y < (avg_y_spacing * 0.20) && aspect_ratio_error < 0.20) {
-                LOG_INFO << "Primary method successful with a high-quality grid.";
-                finalize_corners(vert_x, horiz_y, M_inv, out_refined_corners);
-                return true;
-            } else {
-                 LOG_WARN << "Primary method found 19x19 lines, but grid quality is poor. Rejecting.";
-            }
+  std::vector<cv::Vec4i> lines;
+  int hough_threshold = std::max(10, static_cast<int>(bilateral.cols * 0.02));
+  int min_line_length = std::max(10, static_cast<int>(bilateral.cols * 0.03));
+  cv::HoughLinesP(masked_edges, lines, 1, CV_PI / 180, hough_threshold,
+                  min_line_length, 5);
+
+  if (lines.size() < 20) {
+    LOG_ERROR
+        << "Fallback failed: Not enough Hough lines found within the mask ("
+        << lines.size() << ").";
+    return false;
+  }
+
+  std::vector<float> horizontal_y_coords, vertical_x_coords;
+  for (const auto &l : lines) {
+    double angle =
+        std::abs(std::atan2(l[3] - l[1], l[2] - l[0]) * 180.0 / CV_PI);
+    if (angle < 45 || angle > 135) {
+      horizontal_y_coords.push_back((l[1] + l[3]) * 0.5f);
+    } else {
+      vertical_x_coords.push_back((l[0] + l[2]) * 0.5f);
+    }
+  }
+
+  if (horizontal_y_coords.size() < 19 || vertical_x_coords.size() < 19) {
+    LOG_ERROR << "Fallback failed: Insufficient lines (H="
+              << horizontal_y_coords.size()
+              << ", V=" << vertical_x_coords.size() << ").";
+    return false;
+  }
+
+  // Validate coordinate values
+  for (const auto &val : horizontal_y_coords) {
+    if (std::isnan(val) || std::isinf(val)) {
+      LOG_ERROR << "Invalid value in horizontal_y_coords";
+      return false;
+    }
+  }
+  for (const auto &val : vertical_x_coords) {
+    if (std::isnan(val) || std::isinf(val)) {
+      LOG_ERROR << "Invalid value in vertical_x_coords";
+      return false;
+    }
+  }
+
+  // K-Means Clustering with additional validation
+  cv::Mat y_data(horizontal_y_coords.size(), 1, CV_32F,
+                 horizontal_y_coords.data());
+  cv::Mat x_data(vertical_x_coords.size(), 1, CV_32F, vertical_x_coords.data());
+  cv::Mat labels, centers;
+  LOG_DEBUG << "y_data size: " << y_data.size() << ", type: " << y_data.type();
+  LOG_DEBUG << "x_data size: " << x_data.size() << ", type: " << x_data.type();
+
+  // Try k-means clustering
+  bool kmeans_success = false;
+  std::vector<float> y_centers, x_centers;
+  try {
+    cv::kmeans(y_data, 19, labels,
+               cv::TermCriteria(cv::TermCriteria::EPS + cv::TermCriteria::COUNT,
+                                10, 1.0),
+               3, cv::KMEANS_PP_CENTERS, centers);
+    LOG_DEBUG << "y_centers size: " << centers.size()
+              << ", type: " << centers.type();
+    if (centers.rows == 19 && centers.type() == CV_32F) {
+      y_centers.assign(centers.begin<float>(), centers.end<float>());
+      std::sort(y_centers.begin(), y_centers.end());
+      // Clamp coordinates to image bounds
+      for (auto &y : y_centers) {
+        y = std::max(0.0f, std::min(static_cast<float>(bilateral.rows - 1), y));
+      }
+      kmeans_success = true;
+    } else {
+      LOG_ERROR << "K-Means failed for y_data: invalid centers (size="
+                << centers.rows << ", type=" << centers.type() << ")";
+    }
+  } catch (const cv::Exception &e) {
+    LOG_ERROR << "K-Means failed for y_data: " << e.what();
+  }
+
+  if (kmeans_success) {
+    try {
+      cv::kmeans(x_data, 19, labels,
+                 cv::TermCriteria(
+                     cv::TermCriteria::EPS + cv::TermCriteria::COUNT, 10, 1.0),
+                 3, cv::KMEANS_PP_CENTERS, centers);
+      LOG_DEBUG << "x_centers size: " << centers.size()
+                << ", type: " << centers.type();
+      if (centers.rows == 19 && centers.type() == CV_32F) {
+        x_centers.assign(centers.begin<float>(), centers.end<float>());
+        std::sort(x_centers.begin(), x_centers.end());
+        // Clamp coordinates to image bounds
+        for (auto &x : x_centers) {
+          x = std::max(0.0f,
+                       std::min(static_cast<float>(bilateral.cols - 1), x));
         }
+      } else {
+        LOG_ERROR << "K-Means failed for x_data: invalid centers (size="
+                  << centers.rows << ", type=" << centers.type() << ")";
+        kmeans_success = false;
+      }
+    } catch (const cv::Exception &e) {
+      LOG_ERROR << "K-Means failed for x_data: " << e.what();
+      kmeans_success = false;
     }
+  }
 
-    // --- STRATEGY 2: Masked Median-based Fallback ---
-    LOG_WARN << "Primary method failed or was rejected. Falling back to MASKED Hough Median method.";
-    cv::Mat edges;
-    cv::Canny(gray, edges, 50, 150, 3);
+  if (kmeans_success && y_centers.size() == 19 && x_centers.size() == 19) {
+    float top_y = y_centers.front();
+    float bottom_y = y_centers.back();
+    float left_x = x_centers.front();
+    float right_x = x_centers.back();
 
-    // *** NEW: Create a mask from the Pass 1 candidate to constrain the search ***
-    cv::Mat mask = cv::Mat::zeros(gray.size(), CV_8UC1);
-    // Get the corners of the board in the *corrected* image space
-    std::vector<cv::Point> corrected_candidate_corners;
-    cv::perspectiveTransform(best_candidate_f, corrected_candidate_corners, M_best);
-    // Draw a filled polygon to create the mask
-    cv::fillConvexPoly(mask, corrected_candidate_corners, cv::Scalar(255));
-    
-    cv::Mat masked_edges;
-    cv::bitwise_and(edges, mask, masked_edges);
-
-    if (bDebug) {
-        cv::imwrite("share/Debug/P2_Fallback_Masked_Edges.jpg", masked_edges);
+    // Validate coordinates
+    if (top_y >= 0 && top_y < bilateral.rows && bottom_y >= 0 &&
+        bottom_y < bilateral.rows && left_x >= 0 && left_x < bilateral.cols &&
+        right_x >= 0 && right_x < bilateral.cols) {
+      std::vector<cv::Point2f> pass2_corners_corrected = {{left_x, top_y},
+                                                          {right_x, top_y},
+                                                          {right_x, bottom_y},
+                                                          {left_x, bottom_y}};
+      std::vector<cv::Point2f> pass2_corners_raw;
+      cv::perspectiveTransform(pass2_corners_corrected, pass2_corners_raw,
+                               M_inv);
+      out_refined_corners.assign(pass2_corners_raw.begin(),
+                                 pass2_corners_raw.end());
+      LOG_INFO << "Fallback method successful with k-means clustering.";
+      return true;
+    } else {
+      LOG_ERROR << "Invalid k-means coordinates: top_y=" << top_y
+                << ", bottom_y=" << bottom_y << ", left_x=" << left_x
+                << ", right_x=" << right_x;
     }
+  }
 
-    std::vector<cv::Vec4i> lines;
-    cv::HoughLinesP(masked_edges, lines, 1, CV_PI / 180, 20, gray.cols * 0.05, 10);
-
-    if (lines.size() < 20) {
-        LOG_ERROR << "Fallback failed: Not enough Hough lines found within the mask (" << lines.size() << ").";
-        return false;
+  // Fallback to Median-Based Approach
+  LOG_WARN << "K-Means clustering failed. Reverting to median-based fallback.";
+  auto find_median_boundary = [](std::vector<float> &coords,
+                                 bool get_min) -> float {
+    std::sort(coords.begin(), coords.end());
+    size_t n = coords.size();
+    if (n == 0)
+      return 0.0f;
+    if (get_min) {
+      size_t count = n / 4;
+      if (count == 0)
+        return coords[0];
+      return (count % 2 != 0)
+                 ? coords[count / 2]
+                 : (coords[count / 2 - 1] + coords[count / 2]) / 2.0f;
+    } else {
+      size_t start = n - (n / 4);
+      if (start >= n)
+        return coords.back();
+      std::vector<float> sub_vec(coords.begin() + start, coords.end());
+      size_t count = sub_vec.size();
+      return (count % 2 != 0)
+                 ? sub_vec[count / 2]
+                 : (sub_vec[count / 2 - 1] + sub_vec[count / 2]) / 2.0f;
     }
+  };
 
-    std::vector<float> horizontal_y_coords, vertical_x_coords;
-    for(const auto& l : lines) {
-        double angle = std::abs(std::atan2(l[3] - l[1], l[2] - l[0]) * 180.0 / CV_PI);
-        if (angle < 45 || angle > 135) {
-            horizontal_y_coords.push_back((l[1] + l[3]) * 0.5f);
-        } else {
-            vertical_x_coords.push_back((l[0] + l[2]) * 0.5f);
-        }
-    }
-    
-    if (horizontal_y_coords.size() < 10 || vertical_x_coords.size() < 10) {
-        LOG_ERROR << "Fallback failed: Not enough horizontal/vertical lines after separation.";
-        return false;
-    }
+  float top_y = find_median_boundary(horizontal_y_coords, true);
+  float bottom_y = find_median_boundary(horizontal_y_coords, false);
+  float left_x = find_median_boundary(vertical_x_coords, true);
+  float right_x = find_median_boundary(vertical_x_coords, false);
 
-    auto find_median_boundary = [](std::vector<float>& coords, bool get_min) -> float {
-        std::sort(coords.begin(), coords.end());
-        size_t n = coords.size();
-        if (n == 0) return 0.0f;
-        
-        if (get_min) {
-            // Find the median of the first 25% of lines
-            size_t count = n / 4;
-            if (count == 0) return coords[0];
-            return (count % 2 != 0) ? coords[count/2] : (coords[count/2 - 1] + coords[count/2]) / 2.0f;
-        } else {
-            // Find the median of the last 25% of lines
-            size_t start = n - (n / 4);
-            if (start >= n) return coords.back();
-            std::vector<float> sub_vec(coords.begin() + start, coords.end());
-            size_t count = sub_vec.size();
-            return (count % 2 != 0) ? sub_vec[count/2] : (sub_vec[count/2 - 1] + sub_vec[count/2]) / 2.0f;
-        }
-    };
+  // Clamp coordinates to image bounds
+  top_y =
+      std::max(0.0f, std::min(static_cast<float>(bilateral.rows - 1), top_y));
+  bottom_y = std::max(
+      0.0f, std::min(static_cast<float>(bilateral.rows - 1), bottom_y));
+  left_x =
+      std::max(0.0f, std::min(static_cast<float>(bilateral.cols - 1), left_x));
+  right_x =
+      std::max(0.0f, std::min(static_cast<float>(bilateral.cols - 1), right_x));
 
-    float top_y = find_median_boundary(horizontal_y_coords, true);
-    float bottom_y = find_median_boundary(horizontal_y_coords, false);
-    float left_x = find_median_boundary(vertical_x_coords, true);
-    float right_x = find_median_boundary(vertical_x_coords, false);
-
-    std::vector<cv::Point2f> pass2_corners_corrected = { {left_x, top_y}, {right_x, top_y}, {right_x, bottom_y}, {left_x, bottom_y} };
-    std::vector<cv::Point2f> pass2_corners_raw;
-    cv::perspectiveTransform(pass2_corners_corrected, pass2_corners_raw, M_inv);
-
-    LOG_INFO << "Fallback method successful.";
-    out_refined_corners.assign(pass2_corners_raw.begin(), pass2_corners_raw.end());
-    return true;
+  std::vector<cv::Point2f> pass2_corners_corrected = {{left_x, top_y},
+                                                      {right_x, top_y},
+                                                      {right_x, bottom_y},
+                                                      {left_x, bottom_y}};
+  std::vector<cv::Point2f> pass2_corners_raw;
+  cv::perspectiveTransform(pass2_corners_corrected, pass2_corners_raw, M_inv);
+  out_refined_corners.assign(pass2_corners_raw.begin(),
+                             pass2_corners_raw.end());
+  LOG_INFO << "Median-based fallback method successful.";
+  return true;
 }
 
 /**
